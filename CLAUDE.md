@@ -170,6 +170,7 @@ Step 10: 10-stop-all.sh                  전체 서비스 중지
 Step 11: 11-verify.sh                    검증 (헬스체크)
 Step 12: 12-setup-multi-account.sh       멀티 어카운트 설정 (선택, Aggregator + 교차 계정 IAM 역할)
 Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd 유닛 등록 (Restart=always, 부팅 시 자동 시작)
+Step 14: 14-setup-health-alerts.sh        헬스 알림 워치독 (Lambda + EventBridge 3규칙 + SSM + IAM, 관리자 Mac에서 실행)
 ```
 ※ Step 13 적용 후 Steampipe는 반드시 `sudo systemctl {start|stop|restart} steampipe`로 관리 — CLI `steampipe service stop`은 Restart=always가 자동으로 되돌림.
 
@@ -369,6 +370,7 @@ Step 10: 10-stop-all.sh                  Stop all services
 Step 11: 11-verify.sh                    Verification (health check)
 Step 12: 12-setup-multi-account.sh       Multi-account setup (optional, Aggregator + cross-account IAM role)
 Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd unit (Restart=always, starts on boot)
+Step 14: 14-setup-health-alerts.sh        Health-alert watchdog (Lambda + 3 EventBridge rules + SSM + IAM, run from admin Mac)
 ```
 Note: after Step 13, manage Steampipe only via `sudo systemctl {start|stop|restart} steampipe` — a bare CLI `steampipe service stop` is auto-undone by Restart=always.
 

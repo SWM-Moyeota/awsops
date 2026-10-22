@@ -281,6 +281,23 @@ export class AwsopsStack extends cdk.Stack {
       resources: ['*'],
     }));
 
+    // 헬스 알림: 대시보드 헬스 프로브가 19개 도구 Lambda 를 호출 (scripts/14-setup-health-alerts.sh 와 동일)
+    // Health alerts: dashboard health probe may invoke the 19 tool Lambdas (parity with scripts/14-setup-health-alerts.sh)
+    const healthMonitorLambdas = [
+      'awsops-network-mcp', 'awsops-reachability-analyzer', 'awsops-flow-monitor',
+      'awsops-eks-mcp', 'awsops-ecs-mcp', 'awsops-iac-mcp', 'awsops-terraform-mcp',
+      'awsops-iam-mcp', 'awsops-cloudwatch-mcp', 'awsops-cloudtrail-mcp', 'awsops-cost-mcp',
+      'awsops-aws-knowledge', 'awsops-core-mcp', 'awsops-dynamodb-mcp', 'awsops-rds-mcp',
+      'awsops-valkey-mcp', 'awsops-msk-mcp', 'awsops-steampipe-query', 'awsops-istio-mcp',
+    ];
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      sid: 'HealthMonitorProbe',
+      actions: ['lambda:InvokeFunction'],
+      resources: healthMonitorLambdas.map(
+        (fn) => `arn:aws:lambda:${this.region}:${this.account}:function:${fn}`,
+      ),
+    }));
+
     // -------------------------------------------------------
     // EC2 Instance (Private Subnet, ARM64 Graviton by default)
     // -------------------------------------------------------
