@@ -45,6 +45,12 @@ AgentCore 게이트웨이 MCP 도구용 19개 Lambda 함수 + 1개 공유 모듈
 - `aws_core_mcp.py` — 프롬프트 이해, AWS CLI 실행 (Prompt understanding, AWS CLI execution, 3 tools)
 - `steampipe-query` — Steampipe SQL 쿼리 (1 tool, VPC Lambda)
 
+### Health Alerts (게이트웨이 타겟 아님 / not a Gateway target)
+- `health_watchdog.py` — 서버 외부 워치독 Lambda: EC2 중지/시작, ALB 타겟 헬스, 하트비트(`AWSops/Health` `Heartbeat`) 정체, 공개 URL→Cognito 302 여부를 감시하고 상태 전이 시에만 Slack 발송. EventBridge(5분 schedule, EC2 state-change, CloudTrail Stop/Terminate) 트리거. 단독 패키징 — `cross_account` import 금지, boto3 지연 import. 순수 함수 `decide(prev, obs, now)` + `lambda_handler`. 환경변수: `INSTANCE_ID`, `ALB_NAME`, `DASHBOARD_URL`, `WEBHOOK_PARAM`, `STATE_PARAM`. 상태는 SSM Parameter(JSON). Webhook URL은 로그 금지.
+  (Out-of-server watchdog Lambda: alerts to Slack only on state transitions. Standalone, no `cross_account`. State kept in SSM; never log the webhook URL. Note: this one writes SSM state — an exception to the read-only rule below.)
+- `test_health_watchdog.py` — `decide()` 단위 테스트, stdlib unittest, AWS 불필요. 실행: `cd agent/lambda && python3 -m unittest test_health_watchdog -v`
+  (Unit tests for `decide()`, stdlib only, no AWS.)
+
 ## 규칙 / Rules
 - 게이트웨이 타겟: Python/boto3 사용 필수 — CLI는 inlinePayload 문제 있음
   (Gateway Targets: must use Python/boto3 — CLI has inlinePayload issues)
