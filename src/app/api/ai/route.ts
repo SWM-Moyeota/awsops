@@ -774,7 +774,11 @@ async function invokeAgentCore(
     return result;
   } catch (err: any) {
     console.error('[AgentCore Error]', err?.message || err);
-    reportAgentcoreInvoke(requestId, 'error', `${err?.name || 'Error'}: ${err?.message || err}`);
+    // ValidationException = bad client-side request (e.g. payload/session id), not an AgentCore outage:
+    // log only, don't count it. / 클라이언트 측 요청 오류는 장애로 집계하지 않는다.
+    if (err?.name !== 'ValidationException') {
+      reportAgentcoreInvoke(requestId, 'error', `${err?.name || 'Error'}: ${err?.message || err}`);
+    }
     return null;
   } finally {
     if (timer) clearTimeout(timer);
