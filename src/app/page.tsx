@@ -4,11 +4,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Header from '@/components/layout/Header';
 import StatsCard from '@/components/dashboard/StatsCard';
+import SystemHealthCard from '@/components/dashboard/SystemHealthCard';
 import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import {
   Server, Database, DollarSign, Box, Shield, Network,
-  Bell, Container, ShieldCheck, AlertTriangle, Zap, Table,
+  Bell, ShieldCheck, AlertTriangle, Zap, Table,
   FileSearch, Globe, Package, HardDrive, Radio, Search, RefreshCw,
 } from 'lucide-react';
 import { queries as ec2Q } from '@/lib/queries/ec2';
@@ -232,10 +233,7 @@ export default function DashboardPage() {
             <StatsCard label={t('dashboard.lambdaLabel')} value={Number(lambda?.total_functions) || 0} icon={Zap} color="purple"
               change={t('dashboard.lambdaChange', { runtimes: Number(lambda?.unique_runtimes) || 0, longTimeout: Number(lambda?.long_timeout_functions) || 0 })} />
           </CardLink>
-          <CardLink href="/agentcore">
-            <StatsCard label={t('dashboard.agentcoreLabel')} value="8 GW" icon={Container} color="orange"
-              change={t('dashboard.agentcoreChange')} />
-          </CardLink>
+          <SystemHealthCard />
           <CardLink href="/ecr">
             <StatsCard label={t('dashboard.ecrLabel')} value={Number(ecrSum?.total_repos) || 0} icon={Package} color="green"
               change={t('dashboard.ecrChange', { scan: Number(ecrSum?.scan_enabled) || 0, immutable: Number(ecrSum?.immutable_tags) || 0 })} />

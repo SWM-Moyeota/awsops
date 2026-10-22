@@ -91,6 +91,10 @@ if [ -f /etc/systemd/system/awsops.service ]; then
 [Unit]
 Wants=steampipe.service
 After=steampipe.service
+
+[Service]
+# Start the health monitor right after boot, without waiting for a dashboard visit
+ExecStartPost=/bin/sh -c 'for i in 1 2 3 4 5 6; do sleep 5; curl -sf -o /dev/null http://localhost:3000/api/health && exit 0; done; exit 0'
 EOF
     echo -e "  ${GREEN}Drop-in installed (awsops starts after steampipe on boot)${NC}"
 else

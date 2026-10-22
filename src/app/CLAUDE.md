@@ -60,7 +60,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `security/page.tsx` — Public S3, Open SG, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 벤치마크
 
-## API 라우트 (17개)
+## API 라우트 (18개)
 
 | API | 설명 |
 |-----|------|
@@ -81,6 +81,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 | `api/k8s/route.ts` | EKS kubeconfig 등록 |
 | `api/report/route.ts` | AI 종합 진단 리포트 생성 + S3 저장 + 스케줄링 + DOCX/MD/PDF 다운로드 (`download-pdf`는 Puppeteer 서버 렌더링) |
 | `api/notification/route.ts` | SNS 이메일 알림 (토픽/구독 관리, 진단 완료 알림) |
+| `api/health/route.ts` | 헬스 모니터 상태 조회(GET, 모니터 기동) + 테스트 알림/즉시 점검(POST, admin 전용) |
 
 ## 규칙
 - 모든 페이지 파일은 `'use client'`로 시작
@@ -153,7 +154,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `security/page.tsx` — Public S3, Open SGs, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 benchmarks (431 controls)
 
-## API Routes (17)
+## API Routes (18)
 
 | API | Description |
 |-----|------------|
@@ -174,6 +175,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 | `api/k8s/route.ts` | EKS kubeconfig registration |
 | `api/report/route.ts` | AI diagnosis report generation + S3 storage + scheduling + DOCX/MD/PDF download (`download-pdf` renders server-side via Puppeteer) |
 | `api/notification/route.ts` | SNS email notifications (topic/subscription management, diagnosis completion alerts) |
+| `api/health/route.ts` | Health monitor status (GET, starts the monitor) + test alert / run-now (POST, admin-only) |
 
 ## Rules
 - All page files start with `'use client'`
