@@ -22,6 +22,8 @@ import type { DatasourceType } from '@/lib/app-config';
 import { queryDatasource } from '@/lib/datasource-client';
 import { detectDatasourceTypes, DATASOURCE_TYPES } from '@/lib/datasource-registry';
 import { DATASOURCE_QUERY_PROMPTS } from '@/lib/datasource-prompts';
+import { reportAgentcoreInvoke } from '@/lib/health/monitor';
+import { randomUUID } from 'crypto';
 
 // Service configuration — config 파일에서 읽거나 자동 감지
 // Service config — read from data/config.json or auto-detect
@@ -726,7 +728,9 @@ async function invokeAgentCore(
   accountId?: string,
   accountAlias?: string,
   skill?: string,
+  requestId: string = randomUUID(),
 ): Promise<string | null> {
+  let timer: NodeJS.Timeout | undefined;
   try {
     const recentMessages = messages.slice(-10);
     const payload: Record<string, any> = {
@@ -743,7 +747,11 @@ async function invokeAgentCore(
     });
 
     const timeoutPromise = new Promise<null>((resolve) =>
-      setTimeout(() => { console.warn(`[AgentCore] Timeout after ${AGENTCORE_TIMEOUT_MS}ms for gateway=${gateway}`); resolve(null); }, AGENTCORE_TIMEOUT_MS)
+      timer = setTimeout(() => {
+        console.warn(`[AgentCore] Timeout after ${AGENTCORE_TIMEOUT_MS}ms for gateway=${gateway}`);
+        reportAgentcoreInvoke(requestId, 'timeout');
+        resolve(null);
+      }, AGENTCORE_TIMEOUT_MS)
     );
 
     const agentPromise = (async () => {
@@ -761,10 +769,15 @@ async function invokeAgentCore(
       return text as string;
     })();
 
-    return await Promise.race([agentPromise, timeoutPromise]);
+    const result = await Promise.race([agentPromise, timeoutPromise]);
+    if (result) reportAgentcoreInvoke(requestId, 'success');
+    return result;
   } catch (err: any) {
     console.error('[AgentCore Error]', err?.message || err);
+    reportAgentcoreInvoke(requestId, 'error', `${err?.name || 'Error'}: ${err?.message || err}`);
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -1016,6 +1029,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = randomUUID(); // health hook: all AgentCore calls of this request count once
   let reqBody;
   try {
     reqBody = await request.json();
@@ -1063,7 +1077,7 @@ export async function POST(request: NextRequest) {
   // Non-streaming mode: return JSON (backward compatible for test scripts)
   // 비스트리밍 모드: JSON 반환 (테스트 스크립트 하위 호환)
   if (!useStream) {
-    return handleNonStreaming(messages, modelKey, clientLang, accountId, account?.alias);
+    return handleNonStreaming(messages, modelKey, clientLang, accountId, account?.alias, requestId);
   }
 
   // Streaming mode: SSE events / 스트리밍 모드: SSE 이벤트
@@ -1343,7 +1357,7 @@ export async function POST(request: NextRequest) {
           }, 15000);
 
           const results = await Promise.allSettled(
-            routes.map(r => handleSingleRoute(r, messages, modelKey, clientLang, accountId, account?.alias))
+            routes.map(r => handleSingleRoute(r, messages, modelKey, clientLang, accountId, account?.alias, requestId))
           );
           clearInterval(multiKeepInterval);
           const successful: { route: string; content: string; via: string }[] = [];
@@ -1423,7 +1437,7 @@ export async function POST(request: NextRequest) {
           send('status', { step: 'agentcore', message: STATUS.agentcoreProgress(config.display, keepaliveCount * 15) });
         }, 15000);
 
-        const agentResponse = await invokeAgentCore(messages, gateway, accountId, account?.alias, config.skill);
+        const agentResponse = await invokeAgentCore(messages, gateway, accountId, account?.alias, config.skill, requestId);
         clearInterval(keepaliveInterval);
 
         if (agentResponse) {
@@ -1487,7 +1501,7 @@ export async function POST(request: NextRequest) {
 // ============================================================================
 async function handleSingleRoute(
   route: RouteType, messages: Array<{role: string; content: string}>, modelKey?: string, lang?: string,
-  accountId?: string, accountAlias?: string
+  accountId?: string, accountAlias?: string, requestId?: string
 ): Promise<{ content: string; via: string; queriedResources: string[]; usedTools?: string[] } | null> {
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   const config = ROUTE_REGISTRY[route];
@@ -1641,7 +1655,7 @@ async function handleSingleRoute(
 
   // AgentCore Gateway / AgentCore 게이트웨이
   const gateway = config.gateway || 'ops';
-  const agentResponse = await invokeAgentCore(messages, gateway, accountId, accountAlias, config.skill);
+  const agentResponse = await invokeAgentCore(messages, gateway, accountId, accountAlias, config.skill, requestId);
   if (agentResponse) {
     const usedTools = extractUsedTools(agentResponse);
     const cleaned = agentResponse.replace(/<tool_call>[\s\S]*?<\/tool_call>\s*/g, '').replace(/<tool_response>[\s\S]*?<\/tool_response>\s*/g, '').trim();
@@ -1710,7 +1724,7 @@ async function synthesizeResponsesStreaming(
 // ============================================================================
 // Non-streaming handler — supports multi-route / 비스트리밍 — 멀티 라우트 지원
 // ============================================================================
-async function handleNonStreaming(messages: Array<{role: string; content: string}>, modelKey?: string, lang?: string, accountId?: string, accountAlias?: string) {
+async function handleNonStreaming(messages: Array<{role: string; content: string}>, modelKey?: string, lang?: string, accountId?: string, accountAlias?: string, requestId?: string) {
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   try {
     const classifyResult = await classifyIntent(messages);
@@ -1720,7 +1734,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
 
     // Single route (most common) / 단일 라우트 (일반적)
     if (routes.length === 1) {
-      const result = await handleSingleRoute(primaryRoute, messages, modelKey, lang, accountId, accountAlias);
+      const result = await handleSingleRoute(primaryRoute, messages, modelKey, lang, accountId, accountAlias, requestId);
       if (result) {
         return NextResponse.json({
           content: result.content, model: getBedrockModelLabel(),
@@ -1748,7 +1762,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
     // Multi-route: parallel execution + synthesis / 멀티 라우트: 병렬 실행 + 합성
     console.log(`[Multi-Route] ${routes.join(' + ')}`);
     const results = await Promise.allSettled(
-      routes.map(r => handleSingleRoute(r, messages, modelKey, lang, accountId, accountAlias))
+      routes.map(r => handleSingleRoute(r, messages, modelKey, lang, accountId, accountAlias, requestId))
     );
 
     const successful: { route: string; content: string; via: string }[] = [];

@@ -129,6 +129,36 @@ function newDiagClient(): Client {
   });
 }
 
+// Health probe: `select 1` on a dedicated short-lived Client — bypasses the pool, cache and 40s
+// hard timeout so it answers "is Steampipe up?" even when the pool is exhausted. Never throws.
+// 헬스 점검용 — 풀/캐시를 거치지 않는 단기 Client로 `select 1`. 예외를 던지지 않는다.
+const PING_HARD_TIMEOUT_MS = 8000;
+
+export async function pingSteampipe(): Promise<{ ok: boolean; message: string }> {
+  const client = newDiagClient();
+  const started = Date.now();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const probe = (async () => {
+      await client.connect();
+      await client.query('select 1');
+    })();
+    const hardTimeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`ping timed out after ${PING_HARD_TIMEOUT_MS}ms`)), PING_HARD_TIMEOUT_MS);
+    });
+    await Promise.race([probe, hardTimeout]);
+    return { ok: true, message: `select 1 ok (${Date.now() - started}ms)` };
+  } catch (err) {
+    // AggregateError (dual-stack connect) has an empty message — fall back to its code (ECONNREFUSED).
+    const code = (err as { code?: string } | null)?.code;
+    const message = err instanceof Error ? err.message || code || err.name : String(err);
+    return { ok: false, message: message || 'unknown error' };
+  } finally {
+    if (timer) clearTimeout(timer);
+    try { await client.end(); } catch { /* ignore */ }
+  }
+}
+
 // Attempt to terminate stuck backends. NOTE: pg_terminate_backend returns true once the signal is
 // SENT, not once the backend dies — FDW-hung backends ignore it and survive. So the returned count
 // is "termination attempts", not confirmed kills. Survivors are reaped by the watchdog restart.

@@ -8,6 +8,9 @@ Slack 헬스 알림의 기반. 점검 결과로부터 항목별 상태(ok/fail/u
 - `state.ts` — 상태 머신: `initialState()`, `applyResults(prev, results, now)`, `loadState(path)`, `saveState(path, s)`, `FAIL_THRESHOLD`
 - `slack.ts` — Slack 알림: `CHECK_TITLES`, `REMEDIATION`, `formatSlackMessage(transitions, {dashboardUrl, now})`(KST, 전이 묶음 1메시지), `postSlack(url, payload)`(10s 타임아웃, 예외 없음), `getWebhookUrl()`(SSM `/awsops/slack-webhook-url`, 5분 캐시, 없으면 null), `sendTestMessage()` — 웹훅 URL은 로그/에러에 절대 포함하지 않는다
 - `__tests__/state.test.ts` — 상태 머신/저장 단위 테스트 (vitest)
+- `checks.ts` — 서버 안 점검 (예외 없음, AWS SDK v3만 사용): `checkSteampipe()`(`steampipe.ts`의 `pingSteampipe()` — 풀 밖 단기 Client로 `select 1`), `checkBedrock()`(`getBedrockModelId()`, max_tokens 1), `checkAgentcoreRuntime()`(`agentRuntimeArn` 마지막 경로 세그먼트로 `GetAgentRuntime`, READY만 정상), `checkLambdas()`(`TOOL_LAMBDAS` 명시적 19개, `{"tool_name":"__healthcheck__"}`, 동시 4개, 호출당 20s), `classifyLambdaProbe()`(Runtime.ImportModuleError/HandlerNotFound/UserCodeSyntaxError/ExitError 또는 timed out만 실패)
+- `monitor.ts` — 5분 루프 + AgentCore 호출 훅: `ensureHealthMonitorStarted()`(`globalThis.__awsopsHealthMonitor` 싱글턴, 첫 실행 즉시, Bedrock·Lambda는 첫 회와 6회마다), `runOnce({includeSlow})`(진행 중 실행 공유), `reportAgentcoreInvoke(requestId, outcome)`(error는 요청당 1회, timeout은 로그만, success는 리셋 — 즉시 상태 머신 반영), `getHealthSnapshot()`. 루프와 훅은 `processResults()` 하나를 공유(applyResults → 저장 → 전이 묶음당 Slack 1건). 매 실행 후 CloudWatch `AWSops/Health` `Heartbeat=1`(차원 없음)
+- `__tests__/checks.test.ts`, `__tests__/monitor.test.ts` — 점검/모니터 단위 테스트 (AWS SDK는 `vi.mock`)
 - `__tests__/slack.test.ts` — Slack 포맷/전송 단위 테스트 (vitest)
 
 ## 규칙
@@ -17,6 +20,8 @@ Slack 헬스 알림의 기반. 점검 결과로부터 항목별 상태(ok/fail/u
 - `since`는 마지막 상태 변경 시각(ISO)
 - 상태 파일(`data/health-status.json`)은 `.tmp`에 쓴 뒤 `renameSync`로 원자적 교체, 파일이 없거나 깨져 있으면 `initialState()`로 폴백
 - 상태 파일은 런타임 산출물이므로 git에 커밋하지 않는다 (`.gitignore`)
+- 모니터는 `/api/ai` import로 시작되지 않는다 — 시작은 `/api/health`·기동 스크립트 담당(Task 4). `reportAgentcoreInvoke`는 모니터 시작 여부와 무관하게 상태를 갱신한다
+- 웹훅 미설정 경고는 프로세스당 1회, 웹훅 URL은 절대 로그에 남기지 않는다
 
 ---
 
@@ -30,6 +35,9 @@ Foundation of the Slack health alerts. Pure logic that updates per-item status (
 - `state.ts` — State machine: `initialState()`, `applyResults(prev, results, now)`, `loadState(path)`, `saveState(path, s)`, `FAIL_THRESHOLD`
 - `slack.ts` — Slack delivery: `CHECK_TITLES`, `REMEDIATION`, `formatSlackMessage(transitions, {dashboardUrl, now})` (KST, all transitions bundled into one message), `postSlack(url, payload)` (10s timeout, never throws), `getWebhookUrl()` (SSM `/awsops/slack-webhook-url`, 5-min cache, null if missing), `sendTestMessage()` — the webhook URL is never logged or returned in errors
 - `__tests__/state.test.ts` — State machine / persistence unit tests (vitest)
+- `checks.ts` — In-server checks (never throw, AWS SDK v3 only): `checkSteampipe()` (`pingSteampipe()` in `steampipe.ts` — `select 1` on a short-lived Client outside the pool), `checkBedrock()` (`getBedrockModelId()`, max_tokens 1), `checkAgentcoreRuntime()` (`GetAgentRuntime` on the last path segment of `agentRuntimeArn`, only READY is ok), `checkLambdas()` (explicit 19-name `TOOL_LAMBDAS`, `{"tool_name":"__healthcheck__"}`, concurrency 4, 20s per call), `classifyLambdaProbe()` (fails only on Runtime.ImportModuleError/HandlerNotFound/UserCodeSyntaxError/ExitError or timed out)
+- `monitor.ts` — 5-min loop + AgentCore invoke hook: `ensureHealthMonitorStarted()` (singleton on `globalThis.__awsopsHealthMonitor`, first run immediately, Bedrock + Lambda on the first and every 6th run), `runOnce({includeSlow})` (concurrent calls share the in-flight run), `reportAgentcoreInvoke(requestId, outcome)` (error counts once per request, timeout only logs, success resets — applied immediately), `getHealthSnapshot()`. Loop and hook share one `processResults()` (applyResults → persist → one Slack message per batch of transitions). After every run: CloudWatch `AWSops/Health` `Heartbeat=1` (no dimensions)
+- `__tests__/checks.test.ts`, `__tests__/monitor.test.ts` — Check / monitor unit tests (AWS SDK mocked with `vi.mock`)
 - `__tests__/slack.test.ts` — Slack formatting / delivery unit tests (vitest)
 
 ## Rules
@@ -39,3 +47,5 @@ Foundation of the Slack health alerts. Pure logic that updates per-item status (
 - `since` is the ISO time of the last status change
 - The state file (`data/health-status.json`) is written to `.tmp` then swapped in with `renameSync`; a missing or corrupt file falls back to `initialState()`
 - The state file is a runtime artifact — never commit it (`.gitignore`)
+- Importing `/api/ai` does not start the monitor — `/api/health` and the startup scripts do (Task 4). `reportAgentcoreInvoke` updates state whether or not the loop is running
+- The missing-webhook warning is logged at most once per process; the webhook URL is never logged
