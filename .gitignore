@@ -87,3 +87,6 @@ data/memory/
 
 # reports (auto-generated)
 reports/
+
+# health monitor runtime state
+data/health-status.json
