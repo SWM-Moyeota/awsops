@@ -4,8 +4,10 @@ AWSops 헬스 워치독 람다 - 서버 외부에서 동작하는 Slack 헬스 �
 
 Triggered by EventBridge (schedule every 5 min, EC2 state-change, CloudTrail Stop/Terminate API call).
 Detects: EC2 stop/start, dashboard unhealthy behind the ALB, stale in-server heartbeat,
-public URL not redirecting to Cognito. Posts to Slack only on state transitions.
-EventBridge(5분 주기, EC2 상태 변경, CloudTrail Stop/Terminate API 호출)로 실행되며 상태 전이 시에만 Slack으로 알린다.
+public URL not redirecting to Cognito. Posts to Slack only on state transitions (ok->fail after 2
+consecutive failing runs), at most one bundled message per invocation.
+EventBridge(5분 주기, EC2 상태 변경, CloudTrail Stop/Terminate API 호출)로 실행되며 상태 전이 시에만
+(장애는 연속 2회 실패 시) 실행당 1건으로 묶어 Slack으로 알린다.
 
 Standalone: does NOT import cross_account (packaged alone). boto3 is imported lazily so
 decide() can be unit-tested without AWS credentials or boto3.
@@ -23,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 HEARTBEAT_NAMESPACE = "AWSops/Health"
 HEARTBEAT_METRIC = "Heartbeat"
 HEARTBEAT_STALE_SEC = 900      # heartbeat considered stale beyond 15 min / 15분 초과 시 stale
-LAUNCH_GRACE_SEC = 900         # no heartbeat alert within 15 min of launch / 기동 후 15분 유예
+LAUNCH_GRACE_SEC = 900         # no dashboard/heartbeat/external judgement within 15 min of launch / 기동 후 15분 유예
 ACTOR_TTL_SEC = 600            # api-call actor valid for the following state-change / actor 유효시간
 STOPPED_STATES = ("stopping", "stopped", "shutting-down", "terminated")
 KST = timezone(timedelta(hours=9))
@@ -32,34 +34,71 @@ KST = timezone(timedelta(hours=9))
 # ---------------------------------------------------------------------------
 # Pure decision logic / 순수 판정 로직
 # ---------------------------------------------------------------------------
+# Same remediation command as REMEDIATION.steampipe in src/lib/health/slack.ts / 서버 내 알림과 동일한 명령
+START_CMD = 'SSM 접속 후 `sudo su - ec2-user -c "cd ~/awsops && bash scripts/09-start-all.sh"`'
+FAIL_THRESHOLD = 2             # ok|unknown -> fail needs 2 consecutive failing runs / 연속 2회 실패 시 장애
+JUDGED_ITEMS = ("dashboard", "heartbeat", "external")
+# Observation sentinel: the AWS lookup itself failed (throttling, network, AccessDenied).
+# The item is left unchanged — no counter change, no alert. / 조회 자체 실패: 항목 상태를 바꾸지 않음
+LOOKUP_ERROR = "lookup-error"
+
+
 def _fmt_time(now):
     return datetime.fromtimestamp(now, KST).strftime("%Y-%m-%d %H:%M KST")
 
 
-def _msg(emoji, title, cause, now, action):
-    link = os.environ.get("DASHBOARD_URL", "")
-    lines = [
-        f"{emoji} [AWSops] {title}",
-        f"원인: {cause}",
-        f"시각: {_fmt_time(now)}",
-        f"조치: {action}",
-    ]
-    if link:
-        lines.append(f"대시보드: {link}")
+def _block(emoji, title, cause=None, action=None):
+    """One item block, same labels as formatSlackMessage (slack.ts). / slack.ts와 같은 항목 블록"""
+    lines = [f"{emoji} [AWSops] {title}"]
+    if cause:
+        lines.append(f"• 원인: {cause}")
+    if action:
+        lines.append(f"• 조치: {action}")
     return "\n".join(lines)
 
 
-def _transition(prev_val, new_val, fail_title, fail_cause, ok_title, ok_cause, fail_action, now, texts):
-    """Emit once per ok<->fail transition. unknown->ok is silent. / ok<->fail 전이 시 1회만 발송."""
-    if new_val == "fail" and prev_val != "fail":
-        texts.append(_msg("🔴", fail_title, fail_cause, now, fail_action))
-    elif new_val == "ok" and prev_val == "fail":
-        texts.append(_msg("🟢", ok_title, ok_cause, now, "별도 조치 불필요"))
+def format_message(blocks, now):
+    """Bundle all blocks of one run into one Slack text, time + link once at the end (slack.ts layout).
+    한 번의 실행에서 나온 블록을 하나의 메시지로 묶는다 (시각·대시보드 링크는 끝에 1회)."""
+    lines = []
+    for b in blocks:
+        lines.append(b)
+        lines.append("")
+    lines.append(f"🕐 {_fmt_time(now)}")
+    link = os.environ.get("DASHBOARD_URL", "")
+    if link:
+        lines.append(f"🔗 대시보드: {link}")
+    return "\n".join(lines)
+
+
+def _reset_items(state):
+    """Forget pre-stop observations on stop/start transitions. / 중지·시작 전이 시 항목 상태·카운터 초기화"""
+    for k in JUDGED_ITEMS:
+        state[k] = "unknown"
+    state["fails"] = {k: 0 for k in JUDGED_ITEMS}
+
+
+def _judge(state, item, observed, fail_title, fail_cause, fail_action, ok_title, texts):
+    """Debounced transition: fail after FAIL_THRESHOLD consecutive failures, recover on 1 success.
+    unknown->ok is silent; LOOKUP_ERROR leaves the item untouched. / 디바운스된 전이 판정"""
+    if observed == LOOKUP_ERROR:
+        return
+    fails = state["fails"]
+    if observed == "ok":
+        fails[item] = 0
+        if state[item] == "fail":
+            texts.append(_block("🟢", ok_title))
+        state[item] = "ok"
+        return
+    fails[item] = fails.get(item, 0) + 1
+    if state[item] != "fail" and fails[item] >= FAIL_THRESHOLD:
+        texts.append(_block("🔴", fail_title, fail_cause, fail_action))
+        state[item] = "fail"
 
 
 def decide(prev, obs, now):
-    """Return (new_state, slack_texts) from previous state and current observation.
-    이전 상태와 현재 관측값으로 (새 상태, Slack 메시지 목록)을 반환."""
+    """Return (new_state, slack_blocks) from previous state and current observation.
+    이전 상태와 현재 관측값으로 (새 상태, Slack 블록 목록)을 반환. 발송 시 format_message()로 묶는다."""
     state = {
         "server": "unknown",
         "dashboard": "unknown",
@@ -67,6 +106,9 @@ def decide(prev, obs, now):
         "external": "unknown",
     }
     state.update(prev or {})
+    fails = {k: 0 for k in JUDGED_ITEMS}
+    fails.update((prev or {}).get("fails") or {})
+    state["fails"] = fails  # fresh dict: never mutate prev / prev 불변
     texts = []
     source = obs.get("source")
 
@@ -81,14 +123,16 @@ def decide(prev, obs, now):
     ec2_state = obs.get("ec2_state")
 
     if ec2_state in STOPPED_STATES:
-        if state["server"] == "running":
-            actor = None
-            if state.get("last_actor") and now - state.get("last_actor_at", 0) <= ACTOR_TTL_SEC:
-                actor = state["last_actor"]
-            cause = "EC2 인스턴스가 중지되었습니다"
-            if actor:
-                cause += f" (실행자: {actor})"
-            texts.append(_msg("🛑", "서버 중지", cause, now, "의도한 중지가 아니라면 EC2 인스턴스를 시작하세요"))
+        if state["server"] != "stopped":
+            if state["server"] == "running":
+                actor = None
+                if state.get("last_actor") and now - state.get("last_actor_at", 0) <= ACTOR_TTL_SEC:
+                    actor = state["last_actor"]
+                cause = "EC2 인스턴스가 중지되었습니다"
+                if actor:
+                    cause += f" (실행자: {actor})"
+                texts.append(_block("🛑", "서버 중지", cause, "의도한 중지가 아니라면 EC2 인스턴스를 시작하세요"))
+            _reset_items(state)
         state["server"] = "stopped"
         state.pop("last_actor", None)
         state.pop("last_actor_at", None)
@@ -97,7 +141,8 @@ def decide(prev, obs, now):
     if ec2_state == "running":
         if state["server"] == "stopped":
             state["server"] = "running"
-            texts.append(_msg("▶️", "서버 시작", "EC2 인스턴스가 다시 실행되었습니다", now, "09-start-all.sh 실행 필요"))
+            _reset_items(state)
+            texts.append(_block("▶️", "서버 시작", "EC2 인스턴스가 다시 실행되었습니다", START_CMD))
             return state, texts  # services are not up yet; evaluate from the next run / 서비스 기동 전이므로 다음 실행부터 평가
         state["server"] = "running"
     else:
@@ -105,47 +150,56 @@ def decide(prev, obs, now):
         # 상태를 알 수 없거나 pending이면 판정하지 않는다.
         return state, texts
 
+    # Post-launch grace (or launch time unknown): boot noise is not judged at all.
+    # 기동 후 15분 유예(또는 기동 시각 미상) 동안은 대시보드·하트비트·외부 접속을 판정하지 않는다.
+    launch = obs.get("launch_epoch")
+    if launch is None or now - launch < LAUNCH_GRACE_SEC:
+        return state, texts
+
     # --- Server is running: evaluate the rest / 서버 실행 중: 나머지 항목 평가 ---
     targets = obs.get("targets")
-    dash = "ok" if targets and all(v == "healthy" for v in targets.values()) else "fail"
-    if targets is None:
-        detail = "ALB 또는 타겟 그룹을 찾을 수 없음"
-    elif not targets:
-        detail = "등록된 타겟이 없음"
+    if targets == LOOKUP_ERROR:
+        dash, detail = LOOKUP_ERROR, ""
     else:
-        bad = [f"{k}={v}" for k, v in targets.items() if v != "healthy"]
-        detail = "unhealthy 타겟: " + ", ".join(bad[:3]) if bad else ""
-    _transition(
-        state["dashboard"], dash,
-        "대시보드 비정상", f"ALB 타겟 헬스체크 실패 ({detail})",
-        "대시보드 복구", "ALB 타겟이 모두 healthy 상태로 돌아왔습니다",
-        "서버에서 대시보드 프로세스(09-start-all.sh)와 nginx 상태를 확인하세요", now, texts,
+        dash = "ok" if targets and all(v == "healthy" for v in targets.values()) else "fail"
+        if targets is None:
+            detail = "ALB 또는 타겟 그룹을 찾을 수 없음"
+        elif not targets:
+            detail = "등록된 타겟이 없음"
+        else:
+            bad = [f"{k}={v}" for k, v in targets.items() if v != "healthy"]
+            detail = "unhealthy 타겟: " + ", ".join(bad[:3]) if bad else ""
+    _judge(
+        state, "dashboard", dash,
+        "대시보드 장애", f"ALB 타겟 헬스체크 실패 ({detail})",
+        "서버에서 대시보드 프로세스(09-start-all.sh)와 nginx 상태를 확인하세요",
+        "대시보드 복구", texts,
     )
-    state["dashboard"] = dash
 
-    launch = obs.get("launch_epoch")
     age = obs.get("heartbeat_age_sec")
-    if launch is not None and now - launch >= LAUNCH_GRACE_SEC:
+    if age == LOOKUP_ERROR:
+        hb = LOOKUP_ERROR
+    else:
         hb = "fail" if (age is None or age > HEARTBEAT_STALE_SEC) else "ok"
-        _transition(
-            state["heartbeat"], hb,
-            "모니터 하트비트 중단",
-            "서버 내부 모니터의 하트비트가 15분 넘게 들어오지 않았습니다",
-            "모니터 하트비트 복구", "서버 내부 모니터의 하트비트가 다시 들어오고 있습니다",
-            "서버 내부 헬스 모니터(5분 주기) 동작 상태를 확인하세요", now, texts,
-        )
-        state["heartbeat"] = hb
-    # else: within launch grace (or launch time unknown) -> leave unchanged / 유예 기간 중에는 변경하지 않음
-
-    ext = "ok" if (obs.get("url_status") == 302 and "amazoncognito.com" in (obs.get("url_location") or "")) else "fail"
-    _transition(
-        state["external"], ext,
-        "외부 접속 이상",
-        f"공개 URL이 Cognito 로그인으로 리다이렉트되지 않습니다 (HTTP {obs.get('url_status')})",
-        "외부 접속 복구", "공개 URL이 Cognito 로그인으로 정상 리다이렉트됩니다",
-        "ALB 리스너(authenticate-cognito) 규칙과 Cognito 설정을 확인하세요", now, texts,
+    _judge(
+        state, "heartbeat", hb,
+        "모니터 하트비트 장애", "서버 내부 모니터의 하트비트가 15분 넘게 들어오지 않았습니다",
+        "Next.js가 실행되지 않았을 수 있습니다 — 위 09-start-all.sh 명령 실행",
+        "모니터 하트비트 복구", texts,
     )
-    state["external"] = ext
+
+    status = obs.get("url_status")
+    ext = "ok" if (status == 302 and "amazoncognito.com" in (obs.get("url_location") or "")) else "fail"
+    if status is None:
+        ext_cause = "공개 URL 응답 없음 (DNS/인증서/타임아웃)"
+    else:
+        ext_cause = f"공개 URL이 Cognito 로그인으로 리다이렉트되지 않습니다 (HTTP {status})"
+    _judge(
+        state, "external", ext,
+        "외부 접속 장애", ext_cause,
+        "ALB 리스너(authenticate-cognito) 규칙과 Cognito 설정을 확인하세요",
+        "외부 접속 복구", texts,
+    )
 
     return state, texts
 
@@ -173,8 +227,24 @@ def _describe_instance(instance_id):
         return None, None
 
 
+NOT_FOUND_CODES = (
+    "LoadBalancerNotFound", "LoadBalancerNotFoundException",
+    "TargetGroupNotFound", "TargetGroupNotFoundException",
+)
+
+
+def _error_code(e):
+    """botocore ClientError code, or None. / ClientError 코드 추출"""
+    resp = getattr(e, "response", None)
+    if isinstance(resp, dict):
+        return (resp.get("Error") or {}).get("Code")
+    return None
+
+
 def _get_targets(alb_name):
-    """Return {tg:target -> state} or None if ALB/TG not found or on error. / 못 찾거나 오류 시 None"""
+    """Return {tg:target -> state}; None if the ALB/TG does not exist (a real failure);
+    LOOKUP_ERROR on any other API error (throttling, network, AccessDenied).
+    ALB/TG가 없으면 None(실패), 그 외 API 오류는 LOOKUP_ERROR(판정 보류)."""
     try:
         elbv2 = _client("elbv2")
         lbs = elbv2.describe_load_balancers(Names=[alb_name])["LoadBalancers"]
@@ -192,12 +262,17 @@ def _get_targets(alb_name):
                 out[f"{tg['TargetGroupName']}:{d['Target']['Id']}"] = d["TargetHealth"]["State"]
         return out
     except Exception as e:
-        _log(f"target health lookup failed: {type(e).__name__}")
-        return None
+        code = _error_code(e)
+        if code in NOT_FOUND_CODES:
+            _log(f"target health lookup: {code}")
+            return None
+        _log(f"target health lookup failed: {code or type(e).__name__}")
+        return LOOKUP_ERROR
 
 
 def _heartbeat_age(now):
-    """Seconds since newest Heartbeat datapoint in the last 20 min; None if none/error. / 최신 하트비트 경과 초"""
+    """Seconds since newest Heartbeat datapoint in the last 20 min; None if there is none;
+    LOOKUP_ERROR if the API call failed. / 최신 하트비트 경과 초 (없으면 None, 조회 실패는 LOOKUP_ERROR)"""
     try:
         end = datetime.fromtimestamp(now, timezone.utc)
         res = _client("cloudwatch").get_metric_data(
@@ -218,8 +293,8 @@ def _heartbeat_age(now):
             return None
         return max(0.0, now - max(t.timestamp() for t in stamps))
     except Exception as e:
-        _log(f"get_metric_data failed: {type(e).__name__}")
-        return None
+        _log(f"get_metric_data failed: {_error_code(e) or type(e).__name__}")
+        return LOOKUP_ERROR
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -228,7 +303,8 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _check_url(url):
-    """GET without following redirects. Return (status, location) or (None, None). / 리다이렉트 미추적 GET"""
+    """GET without following redirects. Return (status, location), or (None, None) when there is no
+    HTTP response (DNS/cert/timeout) — a real external failure, judged as such. / 리다이렉트 미추적 GET"""
     if not url:
         return None, None
     try:
@@ -333,8 +409,10 @@ def lambda_handler(event, context):
         "heartbeat_age_sec": None, "targets": None, "url_status": None, "url_location": None,
     }
     if source != "api-call":
+        # Prefer the live state: a delayed/stale event must not override what EC2 reports now.
+        # 실시간 상태 우선 — 지연된 이벤트가 현재 상태를 덮어쓰지 않도록. describe 실패 시에만 이벤트 상태 사용.
         ec2_state, launch = _describe_instance(instance_id)
-        obs["ec2_state"] = event_state or ec2_state
+        obs["ec2_state"] = ec2_state or event_state
         obs["launch_epoch"] = launch
         if obs["ec2_state"] == "running":
             obs["targets"] = _get_targets(alb_name)
@@ -351,11 +429,10 @@ def lambda_handler(event, context):
         if not webhook:
             _log("no webhook; state not saved so alerts are retried on the next run")
             return {"ok": False, "error": "webhook unavailable"}
-        for t in texts:
-            if not _post_slack(webhook, t):
-                # State is not saved -> the next scheduled run re-evaluates and re-sends.
-                # 상태를 저장하지 않으므로 다음 주기 실행에서 재평가·재발송된다.
-                return {"ok": False, "error": "slack post failed"}
+        # One post per invocation: all-or-nothing, so a retry never re-sends half a batch.
+        # 실행당 Slack 1건 — 실패 시 상태를 저장하지 않으므로 다음 실행에서 묶음 전체가 재평가·재발송된다.
+        if not _post_slack(webhook, format_message(texts, now)):
+            return {"ok": False, "error": "slack post failed"}
 
     if new_state != prev:
         _save_state(state_param, new_state)
