@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatSlackMessage, postSlack, REMEDIATION, CHECK_TITLES } from '../slack';
+
+const ssmSend = vi.hoisted(() => vi.fn(async (..._a: unknown[]) => ({ Parameter: { Value: ' https://hooks.slack.com/services/T/B/S ' } })));
+vi.mock('@aws-sdk/client-ssm', () => ({
+  SSMClient: class { send = ssmSend; },
+  GetParameterCommand: class { constructor(public input: unknown) {} },
+}));
+
+import { formatSlackMessage, postSlack, getWebhookUrl, REMEDIATION, CHECK_TITLES } from '../slack';
 import type { Transition } from '../types';
 
 const URL_ = 'https://hooks.slack.com/services/T000/B000/SECRETXYZ';
@@ -70,5 +77,14 @@ describe('postSlack', () => {
         expect(call.map(String).join(' ')).not.toContain('SECRETXYZ');
       }
     }
+  });
+});
+
+describe('getWebhookUrl', () => {
+  it('ssmLookupHasAbortSignalTimeout', async () => {
+    await expect(getWebhookUrl()).resolves.toBe('https://hooks.slack.com/services/T/B/S');
+    expect(ssmSend).toHaveBeenCalledTimes(1);
+    const opts2 = ssmSend.mock.calls[0][1] as { abortSignal?: unknown } | undefined;
+    expect(opts2?.abortSignal).toBeInstanceOf(AbortSignal);
   });
 });

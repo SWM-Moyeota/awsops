@@ -23,6 +23,7 @@ const WEBHOOK_PARAM = '/awsops/slack-webhook-url';
 const SSM_REGION = 'ap-northeast-2';
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const POST_TIMEOUT_MS = 10_000;
+const SSM_TIMEOUT_MS = 10_000;
 
 /** Format a Date as `YYYY-MM-DD HH:mm KST` (UTC+9, no DST). */
 function formatKst(d: Date): string {
@@ -82,7 +83,11 @@ export async function getWebhookUrl(): Promise<string | null> {
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.url;
   try {
     const client = new SSMClient({ region: SSM_REGION });
-    const out = await client.send(new GetParameterCommand({ Name: WEBHOOK_PARAM, WithDecryption: true }));
+    // Bounded: a stuck SSM call must never stall the Slack chain. / SSM 조회가 멈춰도 10초 후 중단
+    const out = await client.send(
+      new GetParameterCommand({ Name: WEBHOOK_PARAM, WithDecryption: true }),
+      { abortSignal: AbortSignal.timeout(SSM_TIMEOUT_MS) },
+    );
     const url = out.Parameter?.Value?.trim() || null;
     cached = { url, at: Date.now() };
     return url;

@@ -16,6 +16,7 @@ const SLOW_EVERY = 6;
 const REGION = 'ap-northeast-2';
 const DEFAULT_DASHBOARD_URL = 'https://awsops.moyeota.co.kr/';
 const MAX_TRACKED_REQUESTS = 500;
+const HEARTBEAT_TIMEOUT_MS = 10_000;
 
 type InvokeOutcome = 'success' | 'error' | 'timeout';
 
@@ -101,7 +102,10 @@ async function notify(m: MonitorState, transitions: Transition[], now: Date): Pr
 
 /**
  * Shared pipeline for the loop and the AgentCore hook: apply results to the state machine,
- * persist, and send one Slack message for the whole batch of transitions. Never throws.
+ * persist, and queue one Slack message for the whole batch of transitions. Never throws.
+ * The Slack send is chained on `m.slackChain` but NOT awaited, so a slow or stuck Slack/SSM
+ * path can never hold up the loop, the heartbeat, or `m.inflight`.
+ * Slack 전송은 slackChain에 이어 붙이되 기다리지 않는다 — Slack/SSM이 멈춰도 루프·하트비트는 계속된다.
  */
 async function processResults(results: CheckResult[], now: Date = new Date()): Promise<void> {
   try {
@@ -116,7 +120,6 @@ async function processResults(results: CheckResult[], now: Date = new Date()): P
         console.warn(`[health] Slack notify failed (${errName(err)})`);
       });
       m.slackChain = send;
-      await send;
     }
   } catch (err) {
     console.error(`[health] processResults failed (${errName(err)})`);
@@ -138,7 +141,7 @@ async function sendHeartbeat(): Promise<void> {
     await cwClient.send(new PutMetricDataCommand({
       Namespace: 'AWSops/Health',
       MetricData: [{ MetricName: 'Heartbeat', Value: 1, Unit: 'Count' }],
-    }));
+    }), { abortSignal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS) });
   } catch (err) {
     console.warn(`[health] heartbeat PutMetricData failed (${errName(err)})`);
   }

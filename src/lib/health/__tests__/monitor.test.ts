@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const cwSend = vi.fn(async () => ({}));
+const cwSend = vi.fn(async (..._a: unknown[]) => ({}));
 const getWebhookUrl = vi.fn(async (): Promise<string | null> => null);
 const postSlack = vi.fn(async () => ({ ok: true }));
 const checks = vi.hoisted(() => ({
@@ -121,6 +121,7 @@ describe('runOnce', () => {
     checks.checkAgentcoreRuntime.mockResolvedValue({ id: 'agentcore-runtime', ok: false, message: 'UPDATE_FAILED' });
     await runOnce();
     await runOnce();
+    await flush(); // Slack is queued, not awaited, by runOnce
     expect(postSlack).toHaveBeenCalledTimes(1);
     const text = (postSlack.mock.calls[0] as unknown as [string, { text: string }])[1].text;
     expect(text).toContain('down');
@@ -156,6 +157,30 @@ describe('runOnce', () => {
     expect(input.MetricData[0].Dimensions).toBeUndefined();
   });
 
+  it('heartbeatSendHasAbortSignalTimeout', async () => {
+    await runOnce();
+    const opts = cwSend.mock.calls[0][1] as { abortSignal?: unknown } | undefined;
+    expect(opts?.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('stuckWebhookLookupNeverBlocksRunOnceOrHeartbeat', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    getWebhookUrl.mockReturnValue(new Promise<string | null>(() => {})); // never resolves
+    checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: false, message: 'down' });
+    const within = (p: Promise<unknown>) => Promise.race([
+      p.then(() => 'resolved'),
+      new Promise((r) => setTimeout(() => r('hung'), 500)),
+    ]);
+    expect(await within(runOnce())).toBe('resolved');
+    expect(await within(runOnce())).toBe('resolved'); // 2nd failure -> transition -> stuck Slack path
+    expect(getHealthSnapshot().state.steampipe.status).toBe('fail');
+    expect(cwSend).toHaveBeenCalledTimes(2);
+    expect(globalThis.__awsopsHealthMonitor?.inflight).toBeNull();
+    expect(await within(runOnce())).toBe('resolved'); // a later run is not blocked either
+    expect(cwSend).toHaveBeenCalledTimes(3);
+    checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: true, message: 'ok' });
+  });
+
   it('heartbeatFailureDoesNotThrow', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     cwSend.mockRejectedValueOnce(new Error('AccessDenied'));
@@ -174,6 +199,7 @@ describe('secrecy', () => {
     checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: false, message: 'down' });
     await runOnce();
     await runOnce();
+    await flush(); // Slack is queued, not awaited, by runOnce
     expect(postSlack).toHaveBeenCalledTimes(1);
     expect(getHealthSnapshot().lastSlack).toMatchObject({ ok: false, error: 'Slack responded 404' });
     expect(JSON.stringify(calls)).not.toContain('SECRET');
