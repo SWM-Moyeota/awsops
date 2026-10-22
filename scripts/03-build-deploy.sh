@@ -6,12 +6,12 @@ set -e
 #                                                                              #
 #   Actions:                                                                   #
 #     1. Pre-build validation (basePath, fetch URLs, eslint, imports)          #
-#     2. Production build (npm run build, NOT dev)                             #
+#     2. npm install + production build (npm run build, NOT dev)               #
 #     3. Start server (nohup, port 3000) + verify HTTP 200                    #
 #                                                                              #
 #   Known issues handled:                                                      #
-#     - basePath: /awsops in next.config.mjs                                   #
-#     - fetch URLs must use /awsops/api/* prefix                               #
+#     - no basePath in next.config.mjs (dashboard served at /)                 #
+#     - fetch URLs must use /api/* (no /awsops prefix)                         #
 #     - .eslintrc.json: no-explicit-any off (Steampipe results are dynamic)   #
 #     - Components: default exports (not named)                                #
 #     - Production build required (dev mode = ALB health check failures)       #
@@ -38,27 +38,23 @@ CHECKS_PASSED=0
 CHECKS_WARNED=0
 
 # Check basePath in next.config.mjs
-#   FIX: basePath must be '/awsops' for CloudFront routing.
-#   Next.js <Link> auto-adds basePath, but fetch() does NOT.
-#   See: docs/TROUBLESHOOTING.md #5 (basePath 이슈)
-if grep -q "basePath.*awsops" next.config.mjs 2>/dev/null; then
-    echo -e "  ${GREEN}OK${NC}  basePath: /awsops in next.config.mjs"
-    CHECKS_PASSED=$((CHECKS_PASSED+1))
-else
-    echo -e "  ${RED}WARN${NC} basePath not set to /awsops in next.config.mjs"
+#   This fork serves the dashboard at the root behind the ALB (ADR-009);
+#   upstream's '/awsops' basePath must NOT be present.
+if grep -q "basePath" next.config.mjs 2>/dev/null; then
+    echo -e "  ${RED}WARN${NC} basePath is set in next.config.mjs (dashboard must be served at /)"
     CHECKS_WARNED=$((CHECKS_WARNED+1))
+else
+    echo -e "  ${GREEN}OK${NC}  no basePath in next.config.mjs (served at /)"
+    CHECKS_PASSED=$((CHECKS_PASSED+1))
 fi
 
-# Check fetch URLs include /awsops prefix
-#   FIX: All fetch() calls must manually include /awsops prefix.
-#   Next.js basePath only applies to <Link>, NOT to fetch().
-#   See: docs/TROUBLESHOOTING.md #5
-BAD_FETCH=$(grep -r "'/api/steampipe" src/app/ 2>/dev/null | grep -v "/awsops/api" | wc -l)
+# Check fetch URLs do not carry upstream's /awsops prefix
+BAD_FETCH=$(grep -r "/awsops/api" src/app/ 2>/dev/null | wc -l)
 if [ "$BAD_FETCH" -gt 0 ]; then
-    echo -e "  ${RED}WARN${NC} $BAD_FETCH pages have fetch without /awsops prefix"
+    echo -e "  ${RED}WARN${NC} $BAD_FETCH fetch URLs still use the /awsops/api prefix"
     CHECKS_WARNED=$((CHECKS_WARNED+1))
 else
-    echo -e "  ${GREEN}OK${NC}  fetch URLs: all use /awsops/api/* prefix"
+    echo -e "  ${GREEN}OK${NC}  fetch URLs: all use /api/*"
     CHECKS_PASSED=$((CHECKS_PASSED+1))
 fi
 
@@ -96,6 +92,11 @@ echo ""
 echo -e "${CYAN}[2/3] Building production (npm run build)...${NC}"
 echo -e "  ${YELLOW}NOTE: Production build required. Dev mode causes ALB health check failures.${NC}"
 
+# Sync node_modules with package.json first (idempotent) — new deps (e.g. @aws-sdk clients, vitest)
+# would otherwise fail the build's type-check. / 빌드 전 의존성 동기화 (멱등)
+echo "  Installing dependencies (npm install)..."
+npm install --no-audit --no-fund 2>&1 | tail -3
+
 npm run build 2>&1 | tail -5
 
 if [ ! -f ".next/BUILD_ID" ]; then
@@ -117,9 +118,9 @@ nohup sh -c "PORT=3000 npm run start" > /tmp/awsops-server.log 2>&1 &
 sleep 3
 
 # Verify server is responding
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/awsops 2>/dev/null)
+HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ 2>/dev/null)
 if [ "$HTTP_CODE" = "200" ]; then
-    echo -e "  ${GREEN}Server running: http://localhost:3000/awsops (HTTP 200)${NC}"
+    echo -e "  ${GREEN}Server running: http://localhost:3000/ (HTTP 200)${NC}"
 else
     echo -e "${RED}ERROR: Server not responding (HTTP $HTTP_CODE).${NC}"
     echo "  Log output:"
@@ -133,7 +134,7 @@ echo -e "${GREEN}===============================================================
 echo -e "${GREEN}   Step 3 Complete: Production server running${NC}"
 echo -e "${GREEN}=================================================================${NC}"
 echo ""
-echo "  Server:  http://localhost:3000/awsops"
+echo "  Server:  http://localhost:3000/"
 echo "  Log:     /tmp/awsops-server.log"
 echo "  Build:   production (npm run build + npm run start)"
 echo ""

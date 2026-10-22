@@ -2,7 +2,7 @@
 // 외부 데이터소스 CRUD + 연결 테스트 + 쿼리 API
 // Supports: Prometheus, Loki, Tempo, ClickHouse
 import { NextRequest, NextResponse } from 'next/server';
-import { getConfig, saveConfig, getDatasources, getDatasourceById, getDatasourceAllowedNetworks } from '@/lib/app-config';
+import { getConfig, saveConfig, getDatasources, getDatasourceById, getDatasourceAllowedNetworks, getBedrockModelId } from '@/lib/app-config';
 import type { DatasourceConfig, DatasourceType } from '@/lib/app-config';
 import { queryDatasource, testConnection } from '@/lib/datasource-client';
 import { getUserFromRequest } from '@/lib/auth-utils';
@@ -281,7 +281,7 @@ export async function POST(request: NextRequest) {
           messages: [{ role: 'user', content: naturalLanguage }],
         });
         const response = await bedrockClient.send(new InvokeModelCommand({
-          modelId: 'global.anthropic.claude-opus-4-8',
+          modelId: getBedrockModelId(),
           contentType: 'application/json',
           accept: 'application/json',
           body: new TextEncoder().encode(bedrockBody),

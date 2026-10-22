@@ -17,12 +17,12 @@ import ipaddress
 from urllib.parse import urlparse
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from cross_account import get_client, get_role_arn
+from cross_account import get_client, get_role_arn, resolve_tool_name
 
 
 def lambda_handler(event, context):
     params = event if isinstance(event, dict) else json.loads(event)
-    t = params.get("tool_name", "")
+    t = resolve_tool_name(params, context)
     args = params.get("arguments", params)
     target_account_id = args.pop('target_account_id', None)
     role_arn = get_role_arn(target_account_id) if target_account_id else None

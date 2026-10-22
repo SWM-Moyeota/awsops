@@ -4,6 +4,7 @@ AWS 문서 검색, 추천, 리전 정보를 위한 AWS Knowledge MCP 프록시 �
 """
 import json
 import urllib.request
+from cross_account import resolve_tool_name
 
 # AWS Knowledge MCP endpoint URL / AWS Knowledge MCP 엔드포인트 URL
 MCP_URL = "https://knowledge-mcp.global.api.aws"
@@ -49,7 +50,7 @@ def lambda_handler(event, context):
     params = event if isinstance(event, dict) else json.loads(event)
 
     # Determine tool name / 도구 이름 결정
-    tool_name = params.get("tool_name", "")
+    tool_name = resolve_tool_name(params, context)
     arguments = params.get("arguments", params)
     arguments.pop('target_account_id', None)  # strip — not applicable to HTTP proxy
 

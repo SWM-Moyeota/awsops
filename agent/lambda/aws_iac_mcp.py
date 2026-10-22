@@ -6,7 +6,7 @@ import json
 import urllib.request
 import re
 import html
-from cross_account import get_client, get_role_arn
+from cross_account import get_client, get_role_arn, resolve_tool_name
 
 
 # Static content tools / 정적 콘텐츠 도구
@@ -180,7 +180,7 @@ def read_doc_page(url, max_length=10000):
 def lambda_handler(event, context):
     """Lambda entry point for IaC MCP tools. / IaC MCP 도구의 람다 진입점."""
     params = event if isinstance(event, dict) else json.loads(event)
-    tool_name = params.get("tool_name", "")
+    tool_name = resolve_tool_name(params, context)
     args = params.get("arguments", params)
     target_account_id = args.pop('target_account_id', None)
     role_arn = get_role_arn(target_account_id) if target_account_id else None

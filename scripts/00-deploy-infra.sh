@@ -15,6 +15,7 @@ set -e
 #     VSCODE_PASSWORD      - VSCode 비밀번호 / VSCode password                  #
 #     INSTANCE_TYPE        - EC2 타입 [t4g.2xlarge]                             #
 #     CUSTOM_DOMAIN        - 커스텀 도메인 (Route53) / Custom domain             #
+#     CERTIFICATE_ARN      - 외부 DNS용 ACM 인증서 ARN (Route53 생략)            #
 #     TRANSIT_GATEWAY_ID   - Transit Gateway ID (선택)                           #
 #     TGW_ROUTE_CIDR       - TGW 라우트 CIDR [10.254.0.0/16]                    #
 #                                                                              #
@@ -588,7 +589,8 @@ CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-}"
 if [ -z "$CUSTOM_DOMAIN" ]; then
     echo ""
     echo -e "  ${CYAN}커스텀 도메인 설정 (필수) / Custom domain (required)${NC}"
-    echo -e "  Route 53 호스팅 존이 있어야 합니다 / Requires Route 53 hosted zone"
+    echo -e "  Route 53 호스팅 존이 있어야 합니다 (없으면 CERTIFICATE_ARN 지정)"
+    echo -e "  Requires Route 53 hosted zone (or set CERTIFICATE_ARN for external DNS)"
     read -p "  도메인 [awsops.dev1.musinsa.io]: " CUSTOM_DOMAIN
     CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-awsops.dev1.musinsa.io}"
 fi
@@ -608,6 +610,7 @@ else
 fi
 echo "  │  비밀번호 / PW:     $(printf '*%.0s' $(seq 1 ${#VSCODE_PASSWORD}))"
 echo "  │  도메인 / Domain:   $CUSTOM_DOMAIN"
+[ -n "$CERTIFICATE_ARN" ] && echo "  │  인증서 / Cert:     외부 DNS / external DNS (Route 53 생략)"
 if [ -n "$TRANSIT_GATEWAY_ID" ]; then
     echo "  │  TGW:               $TRANSIT_GATEWAY_ID"
     [ -n "$TGW_ROUTE_CIDRS" ] && echo "  │  TGW Routes:         $TGW_ROUTE_CIDRS"
@@ -641,6 +644,9 @@ fi
 if [ -n "$CUSTOM_DOMAIN" ]; then
     CDK_CONTEXT="$CDK_CONTEXT -c customDomain=$CUSTOM_DOMAIN"
     # hostedZoneName auto-derived from customDomain in CDK stack
+fi
+if [ -n "$CERTIFICATE_ARN" ]; then
+    CDK_CONTEXT="$CDK_CONTEXT -c certificateArn=$CERTIFICATE_ARN"
 fi
 if [ -n "$TRANSIT_GATEWAY_ID" ]; then
     CDK_CONTEXT="$CDK_CONTEXT -c transitGatewayId=$TRANSIT_GATEWAY_ID"

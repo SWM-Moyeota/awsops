@@ -45,6 +45,12 @@ AgentCore 게이트웨이 MCP 도구용 19개 Lambda 함수 + 1개 공유 모듈
 - `aws_core_mcp.py` — 프롬프트 이해, AWS CLI 실행 (Prompt understanding, AWS CLI execution, 3 tools)
 - `steampipe-query` — Steampipe SQL 쿼리 (1 tool, VPC Lambda)
 
+### Health Alerts (게이트웨이 타겟 아님 / not a Gateway target)
+- `health_watchdog.py` — 서버 외부 워치독 Lambda: EC2 중지/시작, ALB 타겟 헬스, 하트비트(`AWSops/Health` `Heartbeat`) 정체, 공개 URL→Cognito 302 여부를 감시하고 상태 전이 시에만 Slack 발송(대시보드·하트비트·외부 접속은 연속 2회 실패 시 장애, 1회 성공 시 복구 / EC2 기동 후 15분 유예 / 중지·시작 시 카운터 초기화 / AWS 조회 오류(`LOOKUP_ERROR`)는 판정 보류 / EC2 상태는 `describe_instances` 우선 / 실행당 Slack 1건으로 묶음). EventBridge(5분 schedule, EC2 state-change, CloudTrail Stop/Terminate) 트리거. 단독 패키징 — `cross_account` import 금지, boto3 지연 import. 순수 함수 `decide(prev, obs, now)`(블록 목록 반환) + `format_message(blocks, now)`(slack.ts와 같은 레이아웃) + `lambda_handler`. 환경변수: `INSTANCE_ID`, `ALB_NAME`, `DASHBOARD_URL`, `WEBHOOK_PARAM`, `STATE_PARAM`. 상태는 SSM Parameter(JSON). Webhook URL은 로그 금지.
+  (Out-of-server watchdog Lambda: alerts to Slack only on state transitions — 2 consecutive failures to alert, 15-min post-launch grace, counters reset on stop/start, API lookup errors leave items unchanged, live EC2 state preferred over the event, one bundled post per run. Standalone, no `cross_account`. State kept in SSM; never log the webhook URL. Note: this one writes SSM state — an exception to the read-only rule below.)
+- `test_health_watchdog.py` — `decide()`·`format_message()`·조회 헬퍼·핸들러(가짜 boto3 클라이언트) 단위 테스트, stdlib unittest, AWS 불필요. 실행: `cd agent/lambda && python3 -m unittest test_health_watchdog -v`
+  (Unit tests for `decide()`, `format_message()`, lookup helpers and the handler with fake boto3 clients; stdlib only, no AWS.)
+
 ## 규칙 / Rules
 - 게이트웨이 타겟: Python/boto3 사용 필수 — CLI는 inlinePayload 문제 있음
   (Gateway Targets: must use Python/boto3 — CLI has inlinePayload issues)

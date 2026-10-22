@@ -69,6 +69,20 @@ else
 fi
 echo -e "  ${GREEN}PDF deps ready${NC}"
 
+# -- [1.6/3] Diagram tab deps ---------------------------------------------------
+#   /diagram renders PNGs via tools/diagram/generate_diagrams.py, which needs the
+#   Python `diagrams` package (mingrammer) and the Graphviz `dot` binary.
+#   Next.js runs as this user, so the package is installed with --user.
+echo ""
+echo -e "${CYAN}[1.6/3] Installing Diagram rendering deps (graphviz + diagrams)...${NC}"
+sudo dnf install -y --quiet graphviz python3-pip 2>&1 | tail -2
+python3 -m pip install --user --quiet diagrams 2>&1 | tail -2
+if python3 -c "import diagrams" 2>/dev/null && command -v dot >/dev/null; then
+    echo -e "  ${GREEN}Diagram deps ready${NC}"
+else
+    echo -e "  ${YELLOW}WARN: diagrams/graphviz not available — /diagram tab will fail to render${NC}"
+fi
+
 # -- [2/3] Start Steampipe as PostgreSQL service --------------------------------
 #   NOTE: PostgreSQL 별도 설치 불필요
 #   Steampipe에 PostgreSQL이 내장되어 있음 (~/.steampipe/db/)

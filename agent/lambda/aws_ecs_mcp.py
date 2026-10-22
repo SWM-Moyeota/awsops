@@ -6,13 +6,13 @@ AWS ECS MCP Lambda - 클러스터/서비스/태스크 관리, 트러블슈팅, E
 # 3개의 도구 핸들러 제공: 리소스 관리, 트러블슈팅, 서비스 준비 상태 확인.
 """
 import json
-from cross_account import get_client, get_role_arn
+from cross_account import get_client, get_role_arn, resolve_tool_name
 
 
 def lambda_handler(event, context):
     # Parse event and extract tool name and arguments / 이벤트를 파싱하고 도구 이름과 인자를 추출
     params = event if isinstance(event, dict) else json.loads(event)
-    t = params.get("tool_name", "")
+    t = resolve_tool_name(params, context)
     args = params.get("arguments", params)
     target_account_id = args.pop('target_account_id', None)
     role_arn = get_role_arn(target_account_id) if target_account_id else None

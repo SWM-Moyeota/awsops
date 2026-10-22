@@ -5,9 +5,9 @@
 // PNG는 편집 가능한 모델이 없어 패치 경로 없이 재생성 옵션만 지원.
 import { NextRequest, NextResponse } from 'next/server';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { getBedrockModelId } from '@/lib/app-config';
 
 const bedrockClient = new BedrockRuntimeClient({ region: 'ap-northeast-2' });
-const MODEL_ID = 'global.anthropic.claude-opus-4-8';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -49,7 +49,7 @@ Respond with ONLY a JSON object, no prose:
     });
     const response = await bedrockClient.send(
       new InvokeModelCommand({
-        modelId: MODEL_ID,
+        modelId: getBedrockModelId(),
         contentType: 'application/json',
         accept: 'application/json',
         body: new TextEncoder().encode(body),

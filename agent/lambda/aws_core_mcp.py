@@ -4,7 +4,7 @@ AWS Core MCP Lambda - prompt_understanding + call_aws + suggest_aws_commands
 """
 import json
 import shlex
-from cross_account import get_client, get_role_arn
+from cross_account import get_client, get_role_arn, resolve_tool_name
 
 
 PROMPT_UNDERSTANDING = """# AWS Solution Design Guide
@@ -142,7 +142,7 @@ def suggest_aws_commands(query):
 def lambda_handler(event, context):
     """Lambda entry point for Core MCP tools. / Core MCP 도구의 람다 진입점."""
     params = event if isinstance(event, dict) else json.loads(event)
-    tool_name = params.get("tool_name", "")
+    tool_name = resolve_tool_name(params, context)
     arguments = params.get("arguments", params)
     target_account_id = arguments.pop('target_account_id', None)
     role_arn = get_role_arn(target_account_id) if target_account_id else None

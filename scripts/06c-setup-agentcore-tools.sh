@@ -121,7 +121,10 @@ for entry in "${STANDARD_LAMBDAS[@]}"; do
         continue
     fi
 
-    cd /tmp && zip -j "${HANDLER}.zip" "$SRC" 2>/dev/null
+    # 대부분의 핸들러가 cross_account.py를 import한다 — 같이 넣지 않으면 ImportModuleError
+    # Most handlers import cross_account.py; omitting it fails with Runtime.ImportModuleError
+    rm -f "/tmp/${HANDLER}.zip"
+    cd /tmp && zip -j "${HANDLER}.zip" "$SRC" "$WORK_DIR/agent/lambda/cross_account.py" 2>/dev/null
 
     aws lambda create-function \
         --function-name "$FUNC_NAME" --runtime python3.12 \
@@ -219,7 +222,7 @@ for FUNC in "awsops-steampipe-query:steampipe_query" "awsops-istio-mcp:aws_istio
 
     # Copy source into pkg dir
     if [ "$HANDLER" = "aws_istio_mcp" ]; then
-        cp "$WORK_DIR/agent/lambda/aws_istio_mcp.py" /tmp/vpc-lambda-pkg/
+        cp "$WORK_DIR/agent/lambda/aws_istio_mcp.py" "$WORK_DIR/agent/lambda/cross_account.py" /tmp/vpc-lambda-pkg/
     fi
 
     cd /tmp/vpc-lambda-pkg

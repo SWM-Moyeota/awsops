@@ -8,6 +8,7 @@ Istio 서비스 메시 MCP Lambda - Steampipe Kubernetes CRD 테이블 + EKS API
 import json
 import os
 import pg8000
+from cross_account import resolve_tool_name
 
 
 # Steampipe PostgreSQL connection config (VPC-only, same as steampipe-query Lambda)
@@ -44,7 +45,7 @@ def run_sql(sql):
 def lambda_handler(event, context):
     # Parse event and extract tool name and arguments / 이벤트를 파싱하고 도구 이름과 인자를 추출
     params = event if isinstance(event, dict) else json.loads(event)
-    t = params.get("tool_name", "")
+    t = resolve_tool_name(params, context)
     args = params.get("arguments", params)
     args.pop('target_account_id', None)  # not used — Steampipe-only Lambda
 

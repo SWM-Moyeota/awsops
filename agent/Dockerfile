@@ -4,13 +4,15 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends libpq-dev gcc && rm -rf /var/lib/apt/lists/*
 
+# mcp 2.x dropped names streamable_http_sigv4.py imports (GetSessionIdCallback) — stay on 1.x.
+# NOTE: this list, not requirements.txt, is what the image installs — keep both in sync.
 RUN pip install --no-cache-dir \
     strands-agents \
     strands-agents-tools \
     boto3 \
     psycopg2-binary \
     "bedrock-agentcore<=0.1.5" \
-    mcp \
+    "mcp>=1.23,<2" \
     httpx \
     httpx-sse \
     aws-requests-auth

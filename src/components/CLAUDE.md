@@ -13,12 +13,13 @@
 ### providers/ — 프로바이더 (1)
 - `providers/ClientProviders.tsx` — 클라이언트 프로바이더 래퍼 (LanguageProvider + AccountProvider)
 
-### dashboard/ — 대시보드 카드 (5)
+### dashboard/ — 대시보드 카드 (6)
 - `dashboard/StatsCard.tsx` — 통계 카드 (color prop: 이름 문자열)
 - `dashboard/LiveResourceCard.tsx` — 실시간 리소스 카드
 - `dashboard/CategoryCard.tsx` — 카테고리 카드
 - `dashboard/StatusBadge.tsx` — 상태 배지 (`status` prop만 받음 — `text` prop 없음)
 - `dashboard/AccountBadge.tsx` — 어카운트 배지 (accountId로 alias + 컬러 도트 표시)
+- `dashboard/SystemHealthCard.tsx` — 시스템 상태 카드 (/api/health 60초 폴링, 항목별 상태 패널, admin 테스트 알림 버튼)
 
 ### charts/ — Recharts 차트 래퍼 (3)
 - `charts/BarChartCard.tsx` — 바 차트
@@ -57,12 +58,13 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 ### providers/ — Providers (1)
 - `providers/ClientProviders.tsx` — Client provider wrapper (LanguageProvider + AccountProvider)
 
-### dashboard/ — Dashboard Cards (5)
+### dashboard/ — Dashboard Cards (6)
 - `dashboard/StatsCard.tsx` — Stats card (color prop: name strings)
 - `dashboard/LiveResourceCard.tsx` — Live resource card
 - `dashboard/CategoryCard.tsx` — Category card
 - `dashboard/StatusBadge.tsx` — Status badge (`status` prop only — no `text` prop)
 - `dashboard/AccountBadge.tsx` — Account badge (shows alias + colored dot from accountId)
+- `dashboard/SystemHealthCard.tsx` — System health card (polls /api/health every 60s, per-item status panel, admin test-alert button)
 
 ### charts/ — Recharts Chart Wrappers (3)
 - `charts/BarChartCard.tsx` — Bar chart

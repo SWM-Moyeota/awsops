@@ -3,13 +3,13 @@ AWS DynamoDB MCP Lambda - table management, query, scan, data modeling
 AWS DynamoDB MCP 람다 - 테이블 관리, 쿼리, 스캔, 데이터 모델링
 """
 import json
-from cross_account import get_client, get_resource, get_role_arn
+from cross_account import get_client, get_resource, get_role_arn, resolve_tool_name
 
 
 def lambda_handler(event, context):
     # Parse event and route to appropriate tool handler / 이벤트 파싱 후 적절한 도구 핸들러로 라우팅
     params = event if isinstance(event, dict) else json.loads(event)
-    t = params.get("tool_name", "")
+    t = resolve_tool_name(params, context)
     args = params.get("arguments", params)
     target_account_id = args.pop('target_account_id', None)
     role_arn = get_role_arn(target_account_id) if target_account_id else None

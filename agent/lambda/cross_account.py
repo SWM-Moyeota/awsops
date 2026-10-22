@@ -88,3 +88,22 @@ def get_resource(service, region='ap-northeast-2', role_arn=None):
 
     creds = _assume_role(role_arn, service)
     return boto3.resource(service, region_name=region, **creds)
+
+
+def resolve_tool_name(params, context):
+    """Return the MCP tool being invoked.
+
+    AgentCore Gateway does not put the tool name in the event; it arrives in
+    context.client_context.custom['bedrockAgentCoreToolName'] as '<target>___<tool>'.
+    An explicit event['tool_name'] (direct/test invocation) still wins.
+    Gateway는 도구 이름을 이벤트가 아닌 Lambda context로 전달한다 — 인자 없는 도구가
+    파라미터 추측에 의존해 엉뚱한 도구로 빠지던 문제의 수정.
+    """
+    name = params.get("tool_name", "") if isinstance(params, dict) else ""
+    if name:
+        return name
+    try:
+        full = (context.client_context.custom or {}).get("bedrockAgentCoreToolName", "")
+    except AttributeError:
+        return ""
+    return full.split("___")[-1] if full else ""

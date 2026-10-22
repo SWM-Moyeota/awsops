@@ -222,6 +222,30 @@ export class AwsopsStack extends cdk.Stack {
       ],
     }));
 
+    // AgentCore 호출 권한 (설치 권한 아님 — 생성/삭제는 TempAgentCoreSetup으로 임시 부여)
+    // AgentCore *invoke* permissions. Without these every AI request silently falls back
+    // to plain Bedrock. Create/update/delete stay out of the instance role on purpose.
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      sid: 'AgentCoreRuntimeAccess',
+      actions: [
+        'bedrock-agentcore:InvokeAgentRuntime',
+        'bedrock-agentcore:StopRuntimeSession',
+        'bedrock-agentcore:StartCodeInterpreterSession',
+        'bedrock-agentcore:InvokeCodeInterpreter',
+        'bedrock-agentcore:StopCodeInterpreterSession',
+      ],
+      resources: [
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:runtime/awsops_agent-*`,
+        `arn:aws:bedrock-agentcore:${this.region}:${this.account}:code-interpreter-custom/awsops_code_interpreter-*`,
+      ],
+    }));
+    // /agentcore 상태 페이지가 쓰는 조회 API / read-only calls behind the /agentcore status page
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      sid: 'AgentCoreReadStatus',
+      actions: ['bedrock-agentcore:Get*', 'bedrock-agentcore:List*'],
+      resources: ['*'],
+    }));
+
     // S3 report upload (diagnosis report PPTX → awsops-deploy bucket)
     ec2Role.addToPolicy(new iam.PolicyStatement({
       actions: ['s3:PutObject', 's3:GetObject'],
@@ -255,6 +279,23 @@ export class AwsopsStack extends cdk.Stack {
         'elasticloadbalancing:ModifyRule',
       ],
       resources: ['*'],
+    }));
+
+    // 헬스 알림: 대시보드 헬스 프로브가 19개 도구 Lambda 를 호출 (scripts/14-setup-health-alerts.sh 와 동일)
+    // Health alerts: dashboard health probe may invoke the 19 tool Lambdas (parity with scripts/14-setup-health-alerts.sh)
+    const healthMonitorLambdas = [
+      'awsops-network-mcp', 'awsops-reachability-analyzer', 'awsops-flow-monitor',
+      'awsops-eks-mcp', 'awsops-ecs-mcp', 'awsops-iac-mcp', 'awsops-terraform-mcp',
+      'awsops-iam-mcp', 'awsops-cloudwatch-mcp', 'awsops-cloudtrail-mcp', 'awsops-cost-mcp',
+      'awsops-aws-knowledge', 'awsops-core-mcp', 'awsops-dynamodb-mcp', 'awsops-rds-mcp',
+      'awsops-valkey-mcp', 'awsops-msk-mcp', 'awsops-steampipe-query', 'awsops-istio-mcp',
+    ];
+    ec2Role.addToPolicy(new iam.PolicyStatement({
+      sid: 'HealthMonitorProbe',
+      actions: ['lambda:InvokeFunction'],
+      resources: healthMonitorLambdas.map(
+        (fn) => `arn:aws:lambda:${this.region}:${this.account}:function:${fn}`,
+      ),
     }));
 
     // -------------------------------------------------------
@@ -370,13 +411,17 @@ export class AwsopsStack extends cdk.Stack {
       'SVCEOF',
       'systemctl daemon-reload && systemctl enable code-server && systemctl start code-server',
       '',
-      '# nginx: /vscode 접두사 제거 중계 (ALB → 8889 → code-server 8888)',
+      // NOTE: user-data 문자열은 ASCII만 — CloudFormation이 비ASCII를 '?'로 저장해서
+      //       매 배포마다 UserData 변경(=EC2 중단/교체)으로 잡힌다.
+      // NOTE: keep user-data strings ASCII-only. CloudFormation stores non-ASCII as '?',
+      //       so every later deploy sees a UserData change and interrupts/replaces the instance.
+      '# nginx: strip the /vscode prefix and relay (ALB -> 8889 -> code-server 8888)',
       '# nginx path-stripping proxy for /vscode (ALB cannot strip path prefixes)',
       'dnf install -y nginx',
       "cat > /etc/nginx/conf.d/vscode-proxy.conf <<'NGEOF'",
       'server {',
       '    listen 8889;',
-      '    # 리다이렉트에 8889 포트가 붙으면 외부에서 접속 불가 → 상대 경로로 응답',
+      '    # a redirect carrying port 8889 is unreachable from outside -> answer with relative paths',
       '    # Without these, redirects leak the internal port 8889 and time out externally',
       '    absolute_redirect off;',
       '    port_in_redirect off;',
@@ -451,18 +496,27 @@ export class AwsopsStack extends cdk.Stack {
     if (!customDomain) {
       throw new Error('customDomain context is required (e.g. -c customDomain=awsops.dev1.musinsa.io) — ALB Cognito auth needs an HTTPS listener');
     }
-    const hostedZoneNameCtx = this.node.tryGetContext('hostedZoneName') as string | undefined;
-    // 'awsops.dev1.musinsa.io' → 'dev1.musinsa.io'
-    const zoneName = hostedZoneNameCtx || customDomain.split('.').slice(1).join('.');
-    const hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
-      domainName: zoneName,
-    });
+    // 외부 DNS(Route 53 호스팅 존 없음): 미리 발급한 인증서 ARN을 넘기면 존 조회·인증서·A 레코드를 건너뛴다
+    // External DNS (no Route 53 zone): -c certificateArn=arn:aws:acm:... skips zone lookup, cert and A record
+    const certificateArn = this.node.tryGetContext('certificateArn') as string | undefined;
+    let hostedZone: route53.IHostedZone | undefined;
+    let certificate: acm.ICertificate;
+    if (certificateArn) {
+      certificate = acm.Certificate.fromCertificateArn(this, 'Certificate', certificateArn);
+    } else {
+      const hostedZoneNameCtx = this.node.tryGetContext('hostedZoneName') as string | undefined;
+      // 'awsops.dev1.musinsa.io' → 'dev1.musinsa.io'
+      const zoneName = hostedZoneNameCtx || customDomain.split('.').slice(1).join('.');
+      hostedZone = route53.HostedZone.fromLookup(this, 'HostedZone', {
+        domainName: zoneName,
+      });
 
-    // ALB용 리전 인증서 (CloudFront 미사용 → us-east-1 불필요)
-    const certificate = new acm.Certificate(this, 'Certificate', {
-      domainName: customDomain,
-      validation: acm.CertificateValidation.fromDns(hostedZone),
-    });
+      // ALB용 리전 인증서 (CloudFront 미사용 → us-east-1 불필요)
+      certificate = new acm.Certificate(this, 'Certificate', {
+        domainName: customDomain,
+        validation: acm.CertificateValidation.fromDns(hostedZone),
+      });
+    }
 
     // nginx(8889)가 /vscode 접두사를 벗겨 code-server(8888)로 중계
     const vscodeTg = new elbv2.ApplicationTargetGroup(this, 'VSCodeProxyTargetGroup', {
@@ -548,13 +602,17 @@ export class AwsopsStack extends cdk.Stack {
     // -------------------------------------------------------
     // Route 53 A record (alias) — 커스텀 도메인 → ALB
     // -------------------------------------------------------
-    new route53.ARecord(this, 'DomainARecord', {
-      zone: hostedZone,
-      recordName: customDomain,
-      target: route53.RecordTarget.fromAlias(
-        new route53targets.LoadBalancerTarget(this.alb),
-      ),
-    });
+    if (hostedZone) {
+      new route53.ARecord(this, 'DomainARecord', {
+        zone: hostedZone,
+        recordName: customDomain,
+        target: route53.RecordTarget.fromAlias(
+          new route53targets.LoadBalancerTarget(this.alb),
+        ),
+      });
+    }
+    // 외부 DNS면 PublicALBEndpoint 출력값으로 CNAME을 직접 등록한다
+    // With external DNS, point a CNAME at the PublicALBEndpoint output yourself
 
     // -------------------------------------------------------
     // Outputs

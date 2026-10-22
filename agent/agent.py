@@ -26,15 +26,21 @@ GATEWAY_REGION = os.environ.get("AWS_REGION", "ap-northeast-2")
 SERVICE = "bedrock-agentcore"
 
 def _discover_gateways():
-    """AWS CLI로 Gateway URL 자동 감지 / Auto-discover gateway URLs via AWS CLI"""
+    """boto3로 Gateway URL 자동 감지 / Auto-discover gateway URLs via boto3.
+
+    (이미지에 AWS CLI가 없어 subprocess `aws ...` 방식은 항상 실패했다 /
+     the image ships no AWS CLI, so the old subprocess-based discovery never worked.)
+    """
     gateways = {}
     try:
-        import subprocess, json as _json
-        result = subprocess.run(
-            ["aws", "bedrock-agentcore-control", "list-gateways", "--region", GATEWAY_REGION, "--output", "json"],
-            capture_output=True, text=True, timeout=15
-        )
-        items = _json.loads(result.stdout).get("items", [])
+        client = boto3.client("bedrock-agentcore-control", region_name=GATEWAY_REGION)
+        items, token = [], None
+        while True:
+            resp = client.list_gateways(**({"nextToken": token} if token else {}))
+            items.extend(resp.get("items", []))
+            token = resp.get("nextToken")
+            if not token:
+                break
         for g in items:
             # awsops-network-gateway → network
             short = g["name"].replace("awsops-", "").replace("-gateway", "")
@@ -65,7 +71,8 @@ GATEWAYS = _discover_gateways()
 
 # Bedrock Model / Bedrock 모델
 model = BedrockModel(
-    model_id="global.anthropic.claude-opus-4-8",
+    # 계정마다 접근 가능한 모델이 달라 환경변수로 교체 가능 / overridable per account
+    model_id=os.environ.get("BEDROCK_MODEL_ID", "global.anthropic.claude-opus-4-8"),
     region_name="ap-northeast-2",
 )
 
@@ -395,7 +402,7 @@ def handler(payload):
 
     gateway_role = payload.get("gateway", DEFAULT_GATEWAY)
     skill_role = payload.get("skill", gateway_role)  # skill override for SKILL_BASE / SKILL_BASE용 스킬 오버라이드
-    gateway_url = GATEWAYS.get(gateway_role, GATEWAYS[DEFAULT_GATEWAY])
+    gateway_url = GATEWAYS.get(gateway_role) or GATEWAYS.get(DEFAULT_GATEWAY)
 
     # Extract cross-account info / 크로스 어카운트 정보 추출
     account_id = payload.get('accountId', '')
@@ -409,6 +416,8 @@ def handler(payload):
     logging.info(f"Gateway: {gateway_role} -> {gateway_url} (history: {len(history)} messages, account: {account_id or 'default'})")
 
     try:
+        if not gateway_url:
+            raise RuntimeError("no gateway URL discovered")
         mcp_client = MCPClient(lambda: create_gateway_transport(gateway_url))
 
         with mcp_client:

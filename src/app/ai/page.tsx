@@ -28,6 +28,9 @@ const TOKEN_PRICING: Record<string, { input: number; output: number }> = {
   // 레거시 키 — 과거 대화 이력의 비용 표시용 / legacy keys for historical messages
   'sonnet-4.6': { input: 3, output: 15 },
   'opus-4.6': { input: 15, output: 75 },
+  'haiku-4.5': { input: 1, output: 5 },
+  'sonnet-4.5': { input: 3, output: 15 },
+  'opus-4.5': { input: 5, output: 25 },
 };
 
 function calcTokenCost(model: string, inputTokens: number, outputTokens: number): string {
@@ -44,6 +47,11 @@ export default function AIPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [model, setModel] = useState<'opus-4.8'>('opus-4.8');
+  // 서버가 실제로 호출하는 모델 (config.bedrockModelId) / model the server actually invokes
+  const [modelLabel, setModelLabel] = useState('opus-4.8');
+  useEffect(() => {
+    fetch('/api/ai').then(r => r.json()).then(d => { if (d?.model) setModelLabel(d.model); }).catch(() => {});
+  }, []);
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [historyData, setHistoryData] = useState<any[]>([]);
@@ -240,7 +248,7 @@ export default function AIPage() {
         <div className="flex items-center gap-4">
           <select value={model} onChange={(e) => setModel(e.target.value as any)}
             className="bg-navy-900 border border-navy-600 rounded-lg px-3 py-2 text-xs text-gray-300 focus:ring-accent-cyan focus:border-accent-cyan">
-            <option value="opus-4.8">Claude Opus 4.8</option>
+            <option value="opus-4.8">Claude {modelLabel.replace(/^([a-z])([a-z]*)-/, (_, a, b) => `${a.toUpperCase()}${b} `)}</option>
           </select>
           <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-accent-green/10 text-accent-green border border-accent-green/20">
             <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />

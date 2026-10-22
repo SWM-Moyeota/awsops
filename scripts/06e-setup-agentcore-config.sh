@@ -101,6 +101,21 @@ if [ "$CI_ID" != "NONE" ]; then
     echo "  ✓ CODE_INTERPRETER_ID = ${CI_ID}"
 fi
 
+# 앱은 이 값들을 data/config.json에서 읽는다 (위 sed는 상수가 남아 있는 구버전 소스용)
+# The app reads these from data/config.json (the sed above only matters for older sources)
+CONFIG_FILE="$WORK_DIR/data/config.json"
+mkdir -p "$WORK_DIR/data"
+python3 - "$CONFIG_FILE" "$RUNTIME_ARN" "$CI_ID" <<'PYEOF'
+import json, os, sys
+path, arn, ci = sys.argv[1:4]
+cfg = json.load(open(path)) if os.path.exists(path) else {}
+cfg['agentRuntimeArn'] = arn
+if ci and ci != 'NONE':
+    cfg['codeInterpreterName'] = ci
+json.dump(cfg, open(path, 'w'), indent=2)
+PYEOF
+echo "  ✓ data/config.json: agentRuntimeArn / codeInterpreterName"
+
 # 계정 ID 확인 (이미 올바른 경우 스킵) / Verify account ID
 if grep -q "605134447633\|730335239360" "$ROUTE_FILE"; then
     sed -i "s|605134447633|${ACCOUNT_ID}|g; s|730335239360|${ACCOUNT_ID}|g" "$ROUTE_FILE"
@@ -135,7 +150,9 @@ import re
 with open('${AGENT_FILE}', 'r') as f:
     content = f.read()
 # '\"${GW_KEY}\"' 키의 URL을 새 URL로 교체 / Replace URL for this key
-pattern = r'(\"${GW_KEY}\":\s*\")https://[^\"]+(\",?)'
+# 줄 맨 앞의 딕셔너리 항목만 교체 — 주석 안의 예시 URL은 건드리지 않는다 (git pull 충돌 방지)
+# Only rewrite real dict entries at line start, never example URLs inside comments
+pattern = r'(?m)(^[ \t]*\"${GW_KEY}\":\s*\")https://[^\"]+(\",?)'
 replacement = r'\g<1>${NEW_URL}\g<2>'
 content = re.sub(pattern, replacement, content)
 with open('${AGENT_FILE}', 'w') as f:

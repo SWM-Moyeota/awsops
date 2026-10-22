@@ -50,11 +50,11 @@ check() {
 echo -e "${CYAN}[1/5] Services${NC}"
 
 # Steampipe
-SP=$(steampipe service status 2>&1 | grep -q "running" && echo "OK" || echo "NOT RUNNING")
+SP=$(steampipe service status 2>&1 | grep -q "is running" && echo "OK" || echo "NOT RUNNING")
 check "Steampipe service (port 9193)" "$SP"
 
 # Next.js
-NJ=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/awsops 2>/dev/null)
+NJ=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/ 2>/dev/null)
 check "Next.js server (port 3000)" "$([ "$NJ" = "200" ] && echo OK || echo "HTTP $NJ")"
 
 # -- [2/5] Steampipe Queries --------------------------------------------------
@@ -63,7 +63,7 @@ echo -e "${CYAN}[2/5] Steampipe Queries (18 tables)${NC}"
 
 test_query() {
     local name="$1" sql="$2"
-    RESULT=$(curl -s --max-time 30 -X POST http://localhost:3000/awsops/api/steampipe \
+    RESULT=$(curl -s --max-time 30 -X POST http://localhost:3000/api/steampipe \
         -H "Content-Type: application/json" \
         -d "{\"queries\":{\"test\":\"$sql\"}}" 2>/dev/null | \
         python3 -c "
@@ -119,9 +119,9 @@ while IFS= read -r page; do
 done < <(find "$WORK_DIR/src/app" -name "page.tsx" -not -path "*/api/*" 2>/dev/null | sort)
 
 for page in "${PAGES[@]}"; do
-    HTTP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/awsops${page}" 2>/dev/null)
-    LABEL="/awsops${page}"
-    [ -z "$page" ] && LABEL="/awsops/"
+    HTTP=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000${page}" 2>/dev/null)
+    LABEL="${page}"
+    [ -z "$page" ] && LABEL="/"
     check "$LABEL" "$([ "$HTTP" = "200" ] && echo OK || echo "HTTP $HTTP")"
 done
 
@@ -132,7 +132,7 @@ echo -e "${CYAN}[4/5] API Endpoints${NC}"
 # Auto-discover API routes and test each
 while IFS= read -r api_route; do
     API_NAME=$(echo "$api_route" | sed "s|$WORK_DIR/src/app/api/||;s|/route.ts||")
-    API_PATH="/awsops/api/$API_NAME"
+    API_PATH="/api/$API_NAME"
 
     # Try GET first (most routes are GET-only), fallback to POST
     RESP=$(curl -s --max-time 15 "http://localhost:3000${API_PATH}" 2>/dev/null)
@@ -160,8 +160,8 @@ echo ""
 echo -e "${CYAN}[5/5] Configuration${NC}"
 
 # basePath
-BP=$(grep -q "basePath.*awsops" "$WORK_DIR/next.config.mjs" 2>/dev/null && echo "OK" || echo "MISSING")
-check "next.config.mjs basePath: /awsops" "$BP"
+BP=$(grep -q "basePath" "$WORK_DIR/next.config.mjs" 2>/dev/null && echo "SET" || echo "OK")
+check "next.config.mjs has no basePath (served at /)" "$BP"
 
 # eslint no-explicit-any
 ES=$(grep -q "no-explicit-any" "$WORK_DIR/.eslintrc.json" 2>/dev/null && echo "OK" || echo "MISSING")
@@ -171,9 +171,9 @@ check ".eslintrc.json no-explicit-any: off" "$ES"
 SC=$(grep -q "ignore_error_codes" ~/.steampipe/config/aws.spc 2>/dev/null && echo "OK" || echo "MISSING")
 check "aws.spc ignore_error_codes (SCP fix)" "$SC"
 
-# fetch URLs with /awsops prefix
-BF=$(grep -r "'/api/steampipe" "$WORK_DIR/src/app/" 2>/dev/null | grep -v "/awsops/api" | wc -l)
-check "fetch URLs all use /awsops prefix" "$([ "$BF" = "0" ] && echo OK || echo "$BF BAD")"
+# fetch URLs must not carry upstream's /awsops prefix
+BF=$(grep -r "/awsops/api" "$WORK_DIR/src/app/" 2>/dev/null | wc -l)
+check "fetch URLs all use /api/* (no /awsops prefix)" "$([ "$BF" = "0" ] && echo OK || echo "$BF BAD")"
 
 # -- Summary -------------------------------------------------------------------
 echo ""

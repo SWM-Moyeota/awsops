@@ -1525,5 +1525,17 @@
   "ai.followup.dsdiag3": "NLB 타겟 헬스 상태 확인해줘",
   "ai.followup.general1": "서울 리전에서 사용 가능한 서비스를 확인해줘",
   "ai.followup.general2": "ECS와 EKS 차이점을 알려줘",
-  "ai.followup.general3": "서버리스 아키텍처를 추천해줘"
+  "ai.followup.general3": "서버리스 아키텍처를 추천해줘",
+  "health.title": "시스템 상태",
+  "health.allOk": "정상",
+  "health.failing": "{count}개 이상",
+  "health.testButton": "테스트 알림 보내기",
+  "health.testSent": "테스트 알림을 보냈습니다",
+  "health.testFailed": "테스트 알림 전송 실패",
+  "health.lastRun": "마지막 점검",
+  "health.item.steampipe": "Steampipe 데이터베이스",
+  "health.item.bedrock": "Bedrock 모델 호출",
+  "health.item.agentcoreRuntime": "AgentCore 런타임",
+  "health.item.agentcoreInvoke": "AgentCore 에이전트 호출",
+  "health.item.lambda": "Lambda 도구"
 }

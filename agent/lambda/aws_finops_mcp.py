@@ -3,12 +3,12 @@ AWS FinOps Optimization MCP Lambda - Compute Optimizer, RI/SP Recommendations, C
 AWS FinOps 최적화 MCP 람다 - Compute Optimizer, RI/SP 추천, Cost Optimization Hub, Trusted Advisor
 """
 import json
-from cross_account import get_client, get_role_arn
+from cross_account import get_client, get_role_arn, resolve_tool_name
 
 
 def lambda_handler(event, context):
     params = event if isinstance(event, dict) else json.loads(event)
-    t = params.get("tool_name", "")
+    t = resolve_tool_name(params, context)
     args = params.get("arguments", params)
     target_account_id = args.pop('target_account_id', None)
     role_arn = get_role_arn(target_account_id) if target_account_id else None

@@ -1525,5 +1525,17 @@
   "ai.followup.dsdiag3": "Check the NLB target health",
   "ai.followup.general1": "Check available services in Seoul region",
   "ai.followup.general2": "Explain the difference between ECS and EKS",
-  "ai.followup.general3": "Recommend a serverless architecture"
+  "ai.followup.general3": "Recommend a serverless architecture",
+  "health.title": "System Health",
+  "health.allOk": "All OK",
+  "health.failing": "{count} failing",
+  "health.testButton": "Send test alert",
+  "health.testSent": "Test alert sent",
+  "health.testFailed": "Test alert failed",
+  "health.lastRun": "Last check",
+  "health.item.steampipe": "Steampipe database",
+  "health.item.bedrock": "Bedrock model invocation",
+  "health.item.agentcoreRuntime": "AgentCore runtime",
+  "health.item.agentcoreInvoke": "AgentCore agent invocation",
+  "health.item.lambda": "Lambda tools"
 }

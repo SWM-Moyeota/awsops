@@ -1434,5 +1434,17 @@
   "ai.followup.dsdiag3": "检查 NLB 目标健康状态",
   "ai.followup.general1": "查看首尔区域可用的服务",
   "ai.followup.general2": "说明 ECS 与 EKS 的区别",
-  "ai.followup.general3": "推荐一个无服务器架构"
+  "ai.followup.general3": "推荐一个无服务器架构",
+  "health.title": "系统状态",
+  "health.allOk": "正常",
+  "health.failing": "{count} 项异常",
+  "health.testButton": "发送测试告警",
+  "health.testSent": "测试告警已发送",
+  "health.testFailed": "测试告警发送失败",
+  "health.lastRun": "上次检查",
+  "health.item.steampipe": "Steampipe 数据库",
+  "health.item.bedrock": "Bedrock 模型调用",
+  "health.item.agentcoreRuntime": "AgentCore 运行时",
+  "health.item.agentcoreInvoke": "AgentCore 代理调用",
+  "health.item.lambda": "Lambda 工具"
 }

@@ -13,7 +13,7 @@ import {
   StopCodeInterpreterSessionCommand,
 } from '@aws-sdk/client-bedrock-agentcore';
 import { runQuery } from '@/lib/steampipe';
-import { getConfig, validateAccountId, getAccountById } from '@/lib/app-config';
+import { getConfig, validateAccountId, getAccountById, getBedrockModelId, getBedrockModelLabel } from '@/lib/app-config';
 import { recordCall } from '@/lib/agentcore-stats';
 import { saveConversation } from '@/lib/agentcore-memory';
 import { getUserFromRequest } from '@/lib/auth-utils';
@@ -22,6 +22,8 @@ import type { DatasourceType } from '@/lib/app-config';
 import { queryDatasource } from '@/lib/datasource-client';
 import { detectDatasourceTypes, DATASOURCE_TYPES } from '@/lib/datasource-registry';
 import { DATASOURCE_QUERY_PROMPTS } from '@/lib/datasource-prompts';
+import { reportAgentcoreInvoke } from '@/lib/health/monitor';
+import { randomUUID } from 'crypto';
 
 // Service configuration — config 파일에서 읽거나 자동 감지
 // Service config — read from data/config.json or auto-detect
@@ -41,10 +43,11 @@ function getCodeInterpreterName(): string {
 // Available Bedrock models / 사용 가능한 Bedrock 모델
 // Seoul region uses global.* prefix for cross-region inference / 서울 리전은 global.* 접두사 사용
 // Opus 4.8 단일 모델 (레거시 키는 과거 요청 호환용) / single model; legacy keys kept for compatibility
+// getter로 매 요청마다 config(bedrockModelId)를 반영 / getters pick up config.bedrockModelId per request
 const MODELS: Record<string, string> = {
-  'opus-4.8': 'global.anthropic.claude-opus-4-8',
-  'sonnet-4.6': 'global.anthropic.claude-opus-4-8',
-  'opus-4.6': 'global.anthropic.claude-opus-4-8',
+  get 'opus-4.8'() { return getBedrockModelId(); },
+  get 'sonnet-4.6'() { return getBedrockModelId(); },
+  get 'opus-4.6'() { return getBedrockModelId(); },
 };
 
 // AWS SDK clients / AWS SDK 클라이언트
@@ -725,7 +728,9 @@ async function invokeAgentCore(
   accountId?: string,
   accountAlias?: string,
   skill?: string,
+  requestId: string = randomUUID(),
 ): Promise<string | null> {
+  let timer: NodeJS.Timeout | undefined;
   try {
     const recentMessages = messages.slice(-10);
     const payload: Record<string, any> = {
@@ -742,7 +747,11 @@ async function invokeAgentCore(
     });
 
     const timeoutPromise = new Promise<null>((resolve) =>
-      setTimeout(() => { console.warn(`[AgentCore] Timeout after ${AGENTCORE_TIMEOUT_MS}ms for gateway=${gateway}`); resolve(null); }, AGENTCORE_TIMEOUT_MS)
+      timer = setTimeout(() => {
+        console.warn(`[AgentCore] Timeout after ${AGENTCORE_TIMEOUT_MS}ms for gateway=${gateway}`);
+        reportAgentcoreInvoke(requestId, 'timeout');
+        resolve(null);
+      }, AGENTCORE_TIMEOUT_MS)
     );
 
     const agentPromise = (async () => {
@@ -760,10 +769,19 @@ async function invokeAgentCore(
       return text as string;
     })();
 
-    return await Promise.race([agentPromise, timeoutPromise]);
+    const result = await Promise.race([agentPromise, timeoutPromise]);
+    if (result) reportAgentcoreInvoke(requestId, 'success');
+    return result;
   } catch (err: any) {
     console.error('[AgentCore Error]', err?.message || err);
+    // ValidationException = bad client-side request (e.g. payload/session id), not an AgentCore outage:
+    // log only, don't count it. / 클라이언트 측 요청 오류는 장애로 집계하지 않는다.
+    if (err?.name !== 'ValidationException') {
+      reportAgentcoreInvoke(requestId, 'error', `${err?.name || 'Error'}: ${err?.message || err}`);
+    }
     return null;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -1009,7 +1027,13 @@ function recordAndSave(p: {
 // POST handler — SSE streaming with step-by-step progress events
 // POST 핸들러 — 단계별 진행 이벤트를 포함한 SSE 스트리밍
 // ============================================================================
+// 실제 사용 중인 모델을 UI에 알려준다 (config.bedrockModelId 반영) / tells the UI which model is actually in use
+export async function GET() {
+  return NextResponse.json({ model: getBedrockModelLabel() });
+}
+
 export async function POST(request: NextRequest) {
+  const requestId = randomUUID(); // health hook: all AgentCore calls of this request count once
   let reqBody;
   try {
     reqBody = await request.json();
@@ -1057,7 +1081,7 @@ export async function POST(request: NextRequest) {
   // Non-streaming mode: return JSON (backward compatible for test scripts)
   // 비스트리밍 모드: JSON 반환 (테스트 스크립트 하위 호환)
   if (!useStream) {
-    return handleNonStreaming(messages, modelKey, clientLang, accountId, account?.alias);
+    return handleNonStreaming(messages, modelKey, clientLang, accountId, account?.alias, requestId);
   }
 
   // Streaming mode: SSE events / 스트리밍 모드: SSE 이벤트
@@ -1113,13 +1137,13 @@ export async function POST(request: NextRequest) {
             // Send execution result as chunk / 실행 결과를 chunk로 전송
             send('chunk', { delta: executionBlock });
             send('done', {
-              content: aiText + executionBlock, model: modelKey || 'opus-4.8',
+              content: aiText + executionBlock, model: getBedrockModelLabel(),
               via: `Bedrock + ${config.display}`, queriedResources: ['code-interpreter'], route,
               inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
             });
           } else {
             send('done', {
-              content: aiText, model: modelKey || 'opus-4.8',
+              content: aiText, model: getBedrockModelLabel(),
               via: 'Bedrock (code request)', queriedResources: [], route,
               inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
             });
@@ -1135,7 +1159,7 @@ export async function POST(request: NextRequest) {
           const { params, vpcs, error } = await generateTopologyParams(messages, accountId);
           const content = topologyContent(params, vpcs, isEn, error);
           send('done', {
-            content, model: modelKey || 'opus-4.8',
+            content, model: getBedrockModelLabel(),
             via: config.display, queriedResources: ['steampipe'], route,
             inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
           });
@@ -1216,9 +1240,9 @@ export async function POST(request: NextRequest) {
               const dsTools = successResults.map(s => `${s.dsType}: ${s.dsQuery}`);
               const viaStr = successResults.map(s => `${DATASOURCE_TYPES[s.dsType].label} (${s.result.rows.length} rows)`).join(' + ');
               const dsTimeMs = Date.now() - callStartTime;
-              recordAndSave({ route, gateway: `datasource:${successResults.map(s => s.dsType).join('+')}`, responseTimeMs: dsTimeMs, usedTools: dsTools, success: true, via: viaStr, question: lastMessage, summary: dsContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: modelKey || 'opus-4.8' });
+              recordAndSave({ route, gateway: `datasource:${successResults.map(s => s.dsType).join('+')}`, responseTimeMs: dsTimeMs, usedTools: dsTools, success: true, via: viaStr, question: lastMessage, summary: dsContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
               send('done', {
-                content: dsContent, model: modelKey || 'opus-4.8',
+                content: dsContent, model: getBedrockModelLabel(),
                 via: `Datasource Analytics: ${viaStr}`,
                 queriedResources: successResults.map(s => s.dsType), route,
                 usedTools: dsTools,
@@ -1258,9 +1282,9 @@ export async function POST(request: NextRequest) {
             totalOutputTokens += streamResult.outputTokens;
 
             const timeMs = Date.now() - callStartTime;
-            recordAndSave({ route, gateway: route, responseTimeMs: timeMs, usedTools: data.usedTools, success: true, via: data.viaSummary, question: lastMessage, summary: streamResult.content || '', userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: modelKey || 'opus-4.8' });
+            recordAndSave({ route, gateway: route, responseTimeMs: timeMs, usedTools: data.usedTools, success: true, via: data.viaSummary, question: lastMessage, summary: streamResult.content || '', userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
             send('done', {
-              content: streamResult.content || 'No response', model: modelKey || 'opus-4.8',
+              content: streamResult.content || 'No response', model: getBedrockModelLabel(),
               via: data.viaSummary, queriedResources: data.queriedResources, route,
               usedTools: data.usedTools,
               inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
@@ -1311,9 +1335,9 @@ export async function POST(request: NextRequest) {
             const sqlTools = extractUsedTools(sqlContent);
             if (sql) sqlTools.push(`steampipe: ${sql.match(/FROM\s+(\w+)/i)?.[1] || 'query'}`);
             const sqlTimeMs = Date.now() - callStartTime;
-            recordAndSave({ route, gateway: 'steampipe', responseTimeMs: sqlTimeMs, usedTools: sqlTools, success: true, via: `${config.display} (${queryResult.rowCount} rows)`, question: lastMessage, summary: sqlContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: modelKey || 'opus-4.8' });
+            recordAndSave({ route, gateway: 'steampipe', responseTimeMs: sqlTimeMs, usedTools: sqlTools, success: true, via: `${config.display} (${queryResult.rowCount} rows)`, question: lastMessage, summary: sqlContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
             send('done', {
-              content: sqlContent, model: modelKey || 'opus-4.8',
+              content: sqlContent, model: getBedrockModelLabel(),
               via: `${config.display} (${queryResult.rowCount} rows)`, queriedResources: ['steampipe'], route,
               usedTools: sqlTools,
               inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
@@ -1337,7 +1361,7 @@ export async function POST(request: NextRequest) {
           }, 15000);
 
           const results = await Promise.allSettled(
-            routes.map(r => handleSingleRoute(r, messages, modelKey, clientLang, accountId, account?.alias))
+            routes.map(r => handleSingleRoute(r, messages, modelKey, clientLang, accountId, account?.alias, requestId))
           );
           clearInterval(multiKeepInterval);
           const successful: { route: string; content: string; via: string }[] = [];
@@ -1363,9 +1387,9 @@ export async function POST(request: NextRequest) {
             const finalTools = Array.from(new Set([...dedupedTools, ...synthesizedTools]));
             const viaList = successful.map(s => s.via).join(' + ');
             const multiTimeMs = Date.now() - callStartTime;
-            recordAndSave({ route, gateway: `multi:${routes.join('+')}`, responseTimeMs: multiTimeMs, usedTools: finalTools, success: true, via: `Multi-Route: ${viaList}`, question: lastMsg, summary: synthesized, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: modelKey || 'opus-4.8' });
+            recordAndSave({ route, gateway: `multi:${routes.join('+')}`, responseTimeMs: multiTimeMs, usedTools: finalTools, success: true, via: `Multi-Route: ${viaList}`, question: lastMsg, summary: synthesized, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
             send('done', {
-              content: synthesized, model: modelKey || 'opus-4.8',
+              content: synthesized, model: getBedrockModelLabel(),
               via: `Multi-Route: ${viaList}`, queriedResources: allResources, route, routes,
               usedTools: finalTools,
               inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
@@ -1373,7 +1397,7 @@ export async function POST(request: NextRequest) {
           } else if (successful.length === 1) {
             await simulateStreaming(successful[0].content, send);
             send('done', {
-              content: successful[0].content, model: modelKey || 'opus-4.8',
+              content: successful[0].content, model: getBedrockModelLabel(),
               via: successful[0].via, queriedResources: allResources, route, routes,
               usedTools: dedupedTools,
               inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
@@ -1392,7 +1416,7 @@ export async function POST(request: NextRequest) {
               const mfContent = mfStreamResult.content || 'No response';
               const mfTools = extractUsedTools(mfContent);
               send('done', {
-                content: mfContent, model: modelKey || 'opus-4.8',
+                content: mfContent, model: getBedrockModelLabel(),
                 via: `Bedrock Direct (multi-route fallback: ${routes.join('+')} timed out)`, queriedResources: [], route, routes,
                 usedTools: mfTools,
                 inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
@@ -1417,7 +1441,7 @@ export async function POST(request: NextRequest) {
           send('status', { step: 'agentcore', message: STATUS.agentcoreProgress(config.display, keepaliveCount * 15) });
         }, 15000);
 
-        const agentResponse = await invokeAgentCore(messages, gateway, accountId, account?.alias, config.skill);
+        const agentResponse = await invokeAgentCore(messages, gateway, accountId, account?.alias, config.skill, requestId);
         clearInterval(keepaliveInterval);
 
         if (agentResponse) {
@@ -1430,9 +1454,9 @@ export async function POST(request: NextRequest) {
           const finalContent = cleanedResponse || agentResponse;
           // Simulate streaming for AgentCore responses / AgentCore 응답 타이핑 시뮬레이션
           await simulateStreaming(finalContent, send);
-          recordAndSave({ route, gateway, responseTimeMs, usedTools, success: true, via: `AgentCore → ${config.display}`, question: lastMessage, summary: finalContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: modelKey || 'opus-4.8' });
+          recordAndSave({ route, gateway, responseTimeMs, usedTools, success: true, via: `AgentCore → ${config.display}`, question: lastMessage, summary: finalContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
           send('done', {
-            content: finalContent, model: 'opus-4.8',
+            content: finalContent, model: getBedrockModelLabel(),
             via: `AgentCore → ${config.display}`, queriedResources: [`${gateway}-gateway`], route, routes,
             usedTools,
             inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
@@ -1453,9 +1477,9 @@ export async function POST(request: NextRequest) {
         const fallbackContent = fbStreamResult.content || 'No response';
         const fallbackTools = extractUsedTools(fallbackContent);
         const fbTimeMs = Date.now() - callStartTime;
-        recordAndSave({ route, gateway: 'bedrock-fallback', responseTimeMs: fbTimeMs, usedTools: fallbackTools, success: false, via: `Bedrock Direct (fallback)`, question: lastMessage, summary: fallbackContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: modelKey || 'opus-4.8' });
+        recordAndSave({ route, gateway: 'bedrock-fallback', responseTimeMs: fbTimeMs, usedTools: fallbackTools, success: false, via: `Bedrock Direct (fallback)`, question: lastMessage, summary: fallbackContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
         send('done', {
-          content: fallbackContent, model: modelKey || 'opus-4.8',
+          content: fallbackContent, model: getBedrockModelLabel(),
           via: `Bedrock Direct (fallback from ${config.display})`, queriedResources: [], route,
           usedTools: fallbackTools,
           inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
@@ -1481,7 +1505,7 @@ export async function POST(request: NextRequest) {
 // ============================================================================
 async function handleSingleRoute(
   route: RouteType, messages: Array<{role: string; content: string}>, modelKey?: string, lang?: string,
-  accountId?: string, accountAlias?: string
+  accountId?: string, accountAlias?: string, requestId?: string
 ): Promise<{ content: string; via: string; queriedResources: string[]; usedTools?: string[] } | null> {
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   const config = ROUTE_REGISTRY[route];
@@ -1635,7 +1659,7 @@ async function handleSingleRoute(
 
   // AgentCore Gateway / AgentCore 게이트웨이
   const gateway = config.gateway || 'ops';
-  const agentResponse = await invokeAgentCore(messages, gateway, accountId, accountAlias, config.skill);
+  const agentResponse = await invokeAgentCore(messages, gateway, accountId, accountAlias, config.skill, requestId);
   if (agentResponse) {
     const usedTools = extractUsedTools(agentResponse);
     const cleaned = agentResponse.replace(/<tool_call>[\s\S]*?<\/tool_call>\s*/g, '').replace(/<tool_response>[\s\S]*?<\/tool_response>\s*/g, '').trim();
@@ -1704,7 +1728,7 @@ async function synthesizeResponsesStreaming(
 // ============================================================================
 // Non-streaming handler — supports multi-route / 비스트리밍 — 멀티 라우트 지원
 // ============================================================================
-async function handleNonStreaming(messages: Array<{role: string; content: string}>, modelKey?: string, lang?: string, accountId?: string, accountAlias?: string) {
+async function handleNonStreaming(messages: Array<{role: string; content: string}>, modelKey?: string, lang?: string, accountId?: string, accountAlias?: string, requestId?: string) {
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   try {
     const classifyResult = await classifyIntent(messages);
@@ -1714,10 +1738,10 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
 
     // Single route (most common) / 단일 라우트 (일반적)
     if (routes.length === 1) {
-      const result = await handleSingleRoute(primaryRoute, messages, modelKey, lang, accountId, accountAlias);
+      const result = await handleSingleRoute(primaryRoute, messages, modelKey, lang, accountId, accountAlias, requestId);
       if (result) {
         return NextResponse.json({
-          content: result.content, model: modelKey || 'opus-4.8',
+          content: result.content, model: getBedrockModelLabel(),
           via: result.via, queriedResources: result.queriedResources,
           usedTools: result.usedTools || [], route: primaryRoute, routes,
         });
@@ -1734,7 +1758,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
       }));
       const fallbackResult = JSON.parse(new TextDecoder().decode(response.body));
       return NextResponse.json({
-        content: fallbackResult.content?.[0]?.text || 'No response', model: modelKey || 'opus-4.8',
+        content: fallbackResult.content?.[0]?.text || 'No response', model: getBedrockModelLabel(),
         via: `Bedrock Direct (fallback)`, queriedResources: [], route: primaryRoute, routes,
       });
     }
@@ -1742,7 +1766,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
     // Multi-route: parallel execution + synthesis / 멀티 라우트: 병렬 실행 + 합성
     console.log(`[Multi-Route] ${routes.join(' + ')}`);
     const results = await Promise.allSettled(
-      routes.map(r => handleSingleRoute(r, messages, modelKey, lang, accountId, accountAlias))
+      routes.map(r => handleSingleRoute(r, messages, modelKey, lang, accountId, accountAlias, requestId))
     );
 
     const successful: { route: string; content: string; via: string }[] = [];
@@ -1756,7 +1780,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
 
     if (successful.length === 0) {
       return NextResponse.json({
-        content: 'All routes failed. Please try again.', model: modelKey || 'opus-4.8',
+        content: 'All routes failed. Please try again.', model: getBedrockModelLabel(),
         via: 'Multi-route (all failed)', queriedResources: [], route: primaryRoute, routes,
       });
     }
@@ -1764,7 +1788,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
     // Single success → return directly / 1개만 성공 → 직접 반환
     if (successful.length === 1) {
       return NextResponse.json({
-        content: successful[0].content, model: modelKey || 'opus-4.8',
+        content: successful[0].content, model: getBedrockModelLabel(),
         via: successful[0].via, queriedResources: allResources, route: primaryRoute, routes,
       });
     }
@@ -1775,7 +1799,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
     const viaList = successful.map(s => s.via).join(' + ');
 
     return NextResponse.json({
-      content: synthesized, model: modelKey || 'opus-4.8',
+      content: synthesized, model: getBedrockModelLabel(),
       via: `Multi-Route: ${viaList}`, queriedResources: allResources, route: primaryRoute, routes,
     });
   } catch (err: any) {

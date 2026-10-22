@@ -51,7 +51,7 @@ echo -e "${CYAN}[2/2] Stopping Steampipe service...${NC}"
 if [ -f /etc/systemd/system/steampipe.service ]; then
     sudo systemctl stop steampipe.service
     echo -e "  ${GREEN}Stopped via systemd (steampipe.service)${NC}"
-elif steampipe service status 2>&1 | grep -q "running"; then
+elif steampipe service status 2>&1 | grep -q "is running"; then
     steampipe service stop --force 2>/dev/null || true
     echo -e "  ${GREEN}Stopped${NC}"
 else
@@ -72,7 +72,7 @@ else
 fi
 
 # Verify Steampipe stopped
-if steampipe service status 2>&1 | grep -q "running"; then
+if steampipe service status 2>&1 | grep -q "is running"; then
     echo -e "  ${RED}WARN${NC} Steampipe still running"
 else
     echo -e "  ${GREEN}OK${NC}  Steampipe stopped"

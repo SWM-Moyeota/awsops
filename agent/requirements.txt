@@ -1,5 +1,7 @@
 strands-agents
 strands-agents-tools
+# mcp 2.x removed names streamable_http_sigv4.py imports (GetSessionIdCallback) — stay on 1.x
+mcp>=1.23,<2
 boto3
 bedrock-agentcore<=0.1.5
 bedrock-agentcore-starter-toolkit==0.1.14

@@ -19,7 +19,7 @@ set -e
 #   Environment variables:                                                     #
 #     APP_DOMAIN             - App domain [auto: CFN DashboardURL output]      #
 #     ADMIN_EMAIL            - Admin email [admin@awsops.local]                #
-#     ADMIN_PASSWORD         - Admin password [!234Qwer]                       #
+#     ADMIN_PASSWORD         - Admin password [prompted if unset]              #
 #     COGNITO_DOMAIN_PREFIX  - Domain prefix [ops-dashboard-<account>]         #
 #                                                                              #
 #   Known issues handled:                                                      #
@@ -38,7 +38,19 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/nu
 
 APP_DOMAIN="${APP_DOMAIN:-}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@awsops.local}"
-ADMIN_PASSWORD="${ADMIN_PASSWORD:-!234Qwer}"
+# 기본 비밀번호는 공개 저장소에 노출되므로 두지 않는다 — 없으면 직접 입력받는다
+# No default password (it would be public in the repo) — prompt when not provided
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+if [ -z "$ADMIN_PASSWORD" ]; then
+    if [ -t 0 ]; then
+        read -sp "  관리자 비밀번호 (8자 이상) / Admin password (min 8 chars) for $ADMIN_EMAIL: " ADMIN_PASSWORD
+        echo ""
+    fi
+    if [ ${#ADMIN_PASSWORD} -lt 8 ]; then
+        echo "ERROR: ADMIN_PASSWORD (8+ chars) is required — set the env var or run interactively."
+        exit 1
+    fi
+fi
 # Cognito 도메인은 전체 AWS에서 고유해야 함 → 계정 ID 포함
 # Cognito domain must be globally unique → include account ID
 COGNITO_DOMAIN_PREFIX="${COGNITO_DOMAIN_PREFIX:-ops-dashboard-${ACCOUNT_ID}}"
@@ -175,8 +187,8 @@ aws cognito-idp admin-set-user-password \
 echo "  Admin: $ADMIN_EMAIL (permanent password set)"
 
 # -- [5/6] Attach authenticate-cognito to ALB HTTPS listener -------------------
-#   기본 액션(VSCode)과 /awsops* 규칙(대시보드) 모두에 인증 부착
-#   Attach auth to both default action (VSCode) and /awsops* rule (Dashboard)
+#   기본 액션(대시보드)과 forward 규칙(/vscode/*) 모두에 인증 부착
+#   Attach auth to the default action (dashboard) and every forwarding rule (/vscode/*)
 echo ""
 echo -e "${CYAN}[5/6] Attaching Cognito auth to ALB listener...${NC}"
 
@@ -190,24 +202,24 @@ aws elbv2 modify-listener --listener-arn "$LISTENER_ARN" --region "$REGION" \
     --default-actions \
     "Type=authenticate-cognito,Order=1,AuthenticateCognitoConfig={${AUTH_CONFIG}}" \
     "Type=forward,Order=2,TargetGroupArn=${DEFAULT_TG}" > /dev/null
-echo "  Default action (VSCode): Cognito auth attached"
+echo "  Default action (dashboard): Cognito auth attached"
 
-# /awsops* 규칙 (priority 1) / Dashboard rule at priority 1
-RULE_INFO=$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --region "$REGION" \
-    --query "Rules[?Priority=='1'] | [0].[RuleArn, Actions[?Type=='forward'].TargetGroupArn | [0]]" \
+# forward 규칙 전체에 인증 부착 (CDK: /vscode/* = priority 10) — redirect 규칙은 제외
+# Attach auth to every forwarding rule (CDK puts /vscode/* at priority 10); redirect-only rules are skipped
+RULES=$(aws elbv2 describe-rules --listener-arn "$LISTENER_ARN" --region "$REGION" \
+    --query "Rules[?Priority!='default'].[RuleArn, Priority, Actions[?Type=='forward'].TargetGroupArn | [0]]" \
     --output text)
-RULE_ARN=$(echo "$RULE_INFO" | awk '{print $1}')
-RULE_TG=$(echo "$RULE_INFO" | awk '{print $2}')
-
-if [ -n "$RULE_ARN" ] && [ "$RULE_ARN" != "None" ]; then
+RULE_COUNT=0
+while read -r RULE_ARN RULE_PRIO RULE_TG; do
+    [ -z "$RULE_ARN" ] || [ "$RULE_TG" = "None" ] || [ -z "$RULE_TG" ] && continue
     aws elbv2 modify-rule --rule-arn "$RULE_ARN" --region "$REGION" \
         --actions \
         "Type=authenticate-cognito,Order=1,AuthenticateCognitoConfig={${AUTH_CONFIG}}" \
         "Type=forward,Order=2,TargetGroupArn=${RULE_TG}" > /dev/null
-    echo "  Dashboard rule (/awsops*): Cognito auth attached"
-else
-    echo -e "  ${YELLOW}WARN: /awsops* rule (priority 1) not found — dashboard auth NOT attached${NC}"
-fi
+    echo "  Rule priority ${RULE_PRIO}: Cognito auth attached"
+    RULE_COUNT=$((RULE_COUNT+1))
+done <<< "$RULES"
+[ "$RULE_COUNT" -eq 0 ] && echo -e "  ${YELLOW}WARN: no forwarding rules found — only the default action is protected${NC}"
 
 # -- [6/6] Verify --------------------------------------------------------------
 echo ""

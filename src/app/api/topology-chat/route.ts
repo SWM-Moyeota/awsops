@@ -6,11 +6,11 @@
 // ② 생성기 옵션 변경(레이어 토글·VPC 전환) ③ 일반 답변으로 번역한다.
 import { NextRequest, NextResponse } from 'next/server';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { getBedrockModelId } from '@/lib/app-config';
 import { applyPatch, PatchOp } from '@/lib/fossflow/patch';
 import { validateFossflowModel } from '@/lib/fossflow/validate';
 
 const bedrockClient = new BedrockRuntimeClient({ region: 'ap-northeast-2' });
-const MODEL_ID = 'global.anthropic.claude-opus-4-8';
 const MAX_OPS = 200;
 
 interface ChatMessage {
@@ -79,7 +79,7 @@ async function callModel(system: string, messages: ChatMessage[]): Promise<any> 
   });
   const response = await bedrockClient.send(
     new InvokeModelCommand({
-      modelId: MODEL_ID,
+      modelId: getBedrockModelId(),
       contentType: 'application/json',
       accept: 'application/json',
       body: new TextEncoder().encode(body),

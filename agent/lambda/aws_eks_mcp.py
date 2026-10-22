@@ -6,13 +6,13 @@ AWS EKS MCP Lambda - EKS 클러스터 관리, K8s 리소스, CloudWatch, IAM
 # AgentCore Gateway MCP를 통해 9개 이상의 EKS 운영 도구를 제공합니다.
 """
 import json
-from cross_account import get_client, get_role_arn
+from cross_account import get_client, get_role_arn, resolve_tool_name
 
 
 def lambda_handler(event, context):
     # Parse event and extract tool name and arguments / 이벤트를 파싱하고 도구 이름과 인자를 추출
     params = event if isinstance(event, dict) else json.loads(event)
-    t = params.get("tool_name", "")
+    t = resolve_tool_name(params, context)
     args = params.get("arguments", params)
     target_account_id = args.pop('target_account_id', None)
     role_arn = get_role_arn(target_account_id) if target_account_id else None

@@ -98,6 +98,10 @@ run_or_fail "IAM put-role-policy (ECRAndLambda)" \
             \"Effect\": \"Allow\",
             \"Action\": [\"ecr:*\", \"lambda:InvokeFunction\", \"lambda:GetFunction\", \"bedrock-agentcore:*\"],
             \"Resource\": \"*\"
+        }, {
+            \"Effect\": \"Allow\",
+            \"Action\": [\"logs:CreateLogGroup\", \"logs:CreateLogStream\", \"logs:PutLogEvents\", \"logs:DescribeLogGroups\", \"logs:DescribeLogStreams\"],
+            \"Resource\": \"arn:aws:logs:*:*:log-group:/aws/bedrock-agentcore/runtimes/*\"
         }]
     }"
 
@@ -145,8 +149,18 @@ echo ""
 echo -e "${CYAN}[4/5] Creating AgentCore Runtime (Strands agent)...${NC}"
 sleep 5
 
+# data/config.json의 bedrockModelId를 에이전트 컨테이너에 전달 (없으면 agent.py 기본값)
+# Pass config.json bedrockModelId to the agent container (agent.py default when unset)
+AGENT_MODEL_ID=$(python3 -c "import json;print(json.load(open('$WORK_DIR/data/config.json')).get('bedrockModelId',''))" 2>/dev/null || echo "")
+RT_ENV_ARGS=()
+if [ -n "$AGENT_MODEL_ID" ]; then
+    RT_ENV_ARGS=(--environment-variables "BEDROCK_MODEL_ID=${AGENT_MODEL_ID}")
+    echo "  Model: $AGENT_MODEL_ID (from data/config.json)"
+fi
+
 RT_RESULT=$(aws bedrock-agentcore-control create-agent-runtime \
     --agent-runtime-name awsops_agent \
+    "${RT_ENV_ARGS[@]}" \
     --role-arn "arn:aws:iam::${ACCOUNT_ID}:role/AWSopsAgentCoreRole" \
     --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"${ECR_URI}:latest\"}}" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
@@ -173,6 +187,20 @@ fi
 # -- [5/5] Create Runtime Endpoint / 런타임 엔드포인트 생성 --------------------
 echo ""
 echo -e "${CYAN}[5/5] Creating Runtime Endpoint...${NC}"
+
+# 런타임이 CREATING이면 엔드포인트 생성이 실패한다 — READY까지 대기 (최대 5분)
+# Endpoint creation fails while the runtime is CREATING — wait for READY (up to 5 min)
+for _ in $(seq 1 30); do
+    RT_STATUS=$(aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id "$RT_ID" \
+        --region "$REGION" --query status --output text 2>/dev/null || echo "UNKNOWN")
+    [ "$RT_STATUS" = "READY" ] && break
+    if [ "$RT_STATUS" = "CREATE_FAILED" ]; then
+        echo -e "  ${RED}ERROR: Runtime entered CREATE_FAILED / 런타임 생성 실패${NC}"
+        exit 1
+    fi
+    echo "  Runtime status: $RT_STATUS — waiting..."
+    sleep 10
+done
 
 EP_RESULT=$(aws bedrock-agentcore-control create-agent-runtime-endpoint \
     --agent-runtime-id "$RT_ID" --name awsops_endpoint \
