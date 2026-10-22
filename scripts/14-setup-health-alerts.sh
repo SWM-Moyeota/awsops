@@ -390,9 +390,11 @@ echo -e "${CYAN}[6/7] EventBridge 규칙 / EventBridge rules...${NC}"
 cat > "$TMP_DIR/pattern-state.json" <<EOF
 {"source":["aws.ec2"],"detail-type":["EC2 Instance State-change Notification"],"detail":{"instance-id":["${INSTANCE_ID}"],"state":["running","stopping","stopped","shutting-down","terminated"]}}
 EOF
-# 인스턴스 필터링은 핸들러(decide)에서 수행 / instance filtering happens in the handler (decide)
+# 대상 인스턴스만 매칭 — 다른 팀의 Stop/Start 이벤트가 동시성 1 워치독을 소모하지 않도록 (핸들러도 재확인)
+# match only our instance so other teams' Stop/Start calls don't consume the concurrency-1 watchdog
+# (the handler re-checks the instance id as well)
 cat > "$TMP_DIR/pattern-api.json" <<EOF
-{"source":["aws.ec2"],"detail-type":["AWS API Call via CloudTrail"],"detail":{"eventSource":["ec2.amazonaws.com"],"eventName":["StopInstances","StartInstances","TerminateInstances"]}}
+{"source":["aws.ec2"],"detail-type":["AWS API Call via CloudTrail"],"detail":{"eventSource":["ec2.amazonaws.com"],"eventName":["StopInstances","StartInstances","TerminateInstances"],"requestParameters":{"instancesSet":{"items":{"instanceId":["${INSTANCE_ID}"]}}}}}
 EOF
 
 # put_rule <name> <description> <schedule|pattern> <value-or-file>
