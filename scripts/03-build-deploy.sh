@@ -6,7 +6,7 @@ set -e
 #                                                                              #
 #   Actions:                                                                   #
 #     1. Pre-build validation (basePath, fetch URLs, eslint, imports)          #
-#     2. Production build (npm run build, NOT dev)                             #
+#     2. npm install + production build (npm run build, NOT dev)               #
 #     3. Start server (nohup, port 3000) + verify HTTP 200                    #
 #                                                                              #
 #   Known issues handled:                                                      #
@@ -91,6 +91,11 @@ echo "  Validation: $CHECKS_PASSED passed, $CHECKS_WARNED warnings"
 echo ""
 echo -e "${CYAN}[2/3] Building production (npm run build)...${NC}"
 echo -e "  ${YELLOW}NOTE: Production build required. Dev mode causes ALB health check failures.${NC}"
+
+# Sync node_modules with package.json first (idempotent) — new deps (e.g. @aws-sdk clients, vitest)
+# would otherwise fail the build's type-check. / 빌드 전 의존성 동기화 (멱등)
+echo "  Installing dependencies (npm install)..."
+npm install --no-audit --no-fund 2>&1 | tail -3
 
 npm run build 2>&1 | tail -5
 

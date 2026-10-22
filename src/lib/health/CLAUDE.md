@@ -20,7 +20,7 @@ Slack 헬스 알림의 기반. 점검 결과로부터 항목별 상태(ok/fail/u
 - `since`는 마지막 상태 변경 시각(ISO)
 - 상태 파일(`data/health-status.json`)은 `.tmp`에 쓴 뒤 `renameSync`로 원자적 교체, 파일이 없거나 깨져 있으면 `initialState()`로 폴백
 - 상태 파일은 런타임 산출물이므로 git에 커밋하지 않는다 (`.gitignore`)
-- 모니터는 `/api/ai` import로 시작되지 않는다 — 시작은 `/api/health`·기동 스크립트 담당(Task 4). `reportAgentcoreInvoke`는 모니터 시작 여부와 무관하게 상태를 갱신한다
+- 모니터는 `/api/ai` import로 시작되지 않는다 — 시작은 `/api/health`·`/api/steampipe`(캐시 워머와 함께 지연 시작)·기동 스크립트(09 재시도, 13 ExecStartPost) 담당. `reportAgentcoreInvoke`는 모니터 시작 여부와 무관하게 상태를 갱신한다
 - 웹훅 미설정 경고는 프로세스당 1회, 웹훅 URL은 절대 로그에 남기지 않는다
 
 ---
@@ -47,5 +47,5 @@ Foundation of the Slack health alerts. Pure logic that updates per-item status (
 - `since` is the ISO time of the last status change
 - The state file (`data/health-status.json`) is written to `.tmp` then swapped in with `renameSync`; a missing or corrupt file falls back to `initialState()`
 - The state file is a runtime artifact — never commit it (`.gitignore`)
-- Importing `/api/ai` does not start the monitor — `/api/health` and the startup scripts do (Task 4). `reportAgentcoreInvoke` updates state whether or not the loop is running
+- Importing `/api/ai` does not start the monitor — `/api/health` and `/api/steampipe` (lazily, next to the cache warmer) and the startup scripts (09 with retries, 13 ExecStartPost) do. `reportAgentcoreInvoke` updates state whether or not the loop is running
 - The missing-webhook warning is logged at most once per process; the webhook URL is never logged

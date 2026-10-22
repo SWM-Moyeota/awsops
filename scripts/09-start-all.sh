@@ -70,10 +70,23 @@ else
     echo -e "  ${GREEN}Started (log: /tmp/awsops-server.log)${NC}"
 fi
 
-# Wake the in-server health monitor (starts its 5-min loop on first request)
-# 서버 내장 헬스 모니터 기동 (첫 요청에서 5분 루프 시작) — 실패해도 스크립트는 계속
-curl -s -o /dev/null --max-time 20 http://localhost:3000/api/health || true
-echo -e "  ${GREEN}Health monitor: started${NC}"
+# Wake the in-server health monitor (starts its 5-min loop on first request).
+# Next.js may need a few seconds to listen, so retry like 13's ExecStartPost (6 x 5s). Non-fatal.
+# 서버 내장 헬스 모니터 기동 (첫 요청에서 5분 루프 시작) — 최대 30초 재시도, 실패해도 스크립트는 계속
+HEALTH_OK=0
+for i in 1 2 3 4 5 6; do
+    if curl -sf -o /dev/null --max-time 20 http://localhost:3000/api/health; then
+        HEALTH_OK=1
+        break
+    fi
+    sleep 5
+done
+if [ "$HEALTH_OK" = "1" ]; then
+    echo -e "  ${GREEN}Health monitor: started${NC}"
+else
+    echo -e "  ${YELLOW}WARNING: Health monitor not started yet (http://localhost:3000/api/health did not respond)${NC}"
+    echo -e "  ${YELLOW}         Start it manually once the dashboard is up: curl -s http://localhost:3000/api/health${NC}"
+fi
 
 # -- [3/3] OpenCost port-forward (if OpenCost installed) ----------------------
 echo ""

@@ -8,6 +8,7 @@ import { saveCostSnapshot, getLatestCostSnapshot } from '@/lib/cost-snapshot';
 import { getConfig, saveConfig, validateAccountId, getAccounts, isMultiAccount } from '@/lib/app-config';
 import type { AccountConfig } from '@/lib/app-config';
 import { getCacheWarmerStatus, ensureCacheWarmerStarted } from '@/lib/cache-warmer';
+import { ensureHealthMonitorStarted } from '@/lib/health/monitor';
 import { getUserFromRequest } from '@/lib/auth-utils';
 
 const COST_QUERY_KEYS = ['monthlyCost', 'costSummary', 'dailyCost', 'serviceCost', 'costDetail'];
@@ -30,8 +31,9 @@ function checkRateLimit(userId: string): boolean {
 }
 
 export async function GET(request: NextRequest) {
-  // Auto-start cache warmer on first request / 첫 요청 시 캐시 워머 자동 시작
+  // Auto-start cache warmer + health monitor on first request / 첫 요청 시 캐시 워머·헬스 모니터 자동 시작
   ensureCacheWarmerStarted();
+  ensureHealthMonitorStarted();
 
   const { searchParams } = new URL(request.url);
   const action = searchParams.get('action');
@@ -447,8 +449,9 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  // Auto-start cache warmer on first request / 첫 요청 시 캐시 워머 자동 시작
+  // Auto-start cache warmer + health monitor on first request / 첫 요청 시 캐시 워머·헬스 모니터 자동 시작
   ensureCacheWarmerStarted();
+  ensureHealthMonitorStarted();
 
   try {
     const { searchParams } = new URL(request.url);
