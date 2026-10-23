@@ -7,7 +7,7 @@ Steampipe용 SQL 쿼리 정의. 각 파일은 특정 AWS/K8s 서비스에 대한
 - `bedrock.ts` — Bedrock 파운데이션 모델 (참고용, 주요 메트릭은 CloudWatch API)
 - `ebs.ts` — EBS 볼륨/스냅샷 (암호화, 어태치먼트, 인스턴스 조회)
 - `ec2.ts` — EC2 인스턴스
-- `idle-resources.ts` — 유휴 리소스 탐지 SQL 상수 (미사용 EBS/EIP, gp2, 멈춘 EC2, 오래된 스냅샷, 미사용 SG) — `collectors/idle-scan.ts`와 비용 레이더 공용
+- `idle-resources.ts` — 유휴 리소스 탐지 SQL 상수 (미사용 EBS/EIP, gp2, 멈춘 EC2, 오래된 스냅샷, 미사용 SG) — `collectors/idle-scan.ts` 전용 SQL. 비용 레이더는 이 SQL이 아니라 자체 수집 쿼리(`cost-radar/collect.ts`)를 쓰고, 금액은 같은 가격 함수(`cost-radar/pricing.ts`)로 계산
 - `msk.ts` — MSK 클러스터 (`provisioned` JSONB에서 Kafka 버전/브로커/암호화 추출)
 - `opensearch.ts` — OpenSearch 도메인 (`encryption_at_rest_options`, 클러스터 구성)
 - `elasticache.ts` — ElastiCache 클러스터 (Valkey/Redis/Memcached, `cache_nodes` JSONB)
@@ -49,7 +49,7 @@ SQL query definitions for Steampipe. Each file exports queries for a specific AW
 - `bedrock.ts` — Bedrock foundation models (reference only, main metrics via CloudWatch API)
 - `ebs.ts` — EBS volumes/snapshots (encryption, attachments, instance lookup)
 - `ec2.ts` — EC2 instances
-- `idle-resources.ts` — idle-resource detection SQL constants (unattached EBS/EIP, gp2, stopped EC2, old snapshots, unused SGs), shared by `collectors/idle-scan.ts` and Cost Radar
+- `idle-resources.ts` — idle-resource detection SQL constants (unattached EBS/EIP, gp2, stopped EC2, old snapshots, unused SGs), used by `collectors/idle-scan.ts`. Cost Radar does not run this SQL (its own queries live in `cost-radar/collect.ts`); both price with the same functions (`cost-radar/pricing.ts`)
 - `msk.ts` — MSK clusters (extract Kafka version/brokers/encryption from `provisioned` JSONB)
 - `opensearch.ts` — OpenSearch domains (`encryption_at_rest_options`, cluster config)
 - `elasticache.ts` — ElastiCache clusters (Valkey/Redis/Memcached, `cache_nodes` JSONB)

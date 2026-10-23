@@ -1,5 +1,8 @@
-// Idle/unused resource detection SQL — shared by the idle-scan collector and Cost Radar.
-// 유휴/미사용 리소스 탐지 SQL — idle-scan 컬렉터와 비용 레이더가 함께 사용.
+// Idle/unused resource detection SQL used by the idle-scan collector (src/lib/collectors/idle-scan.ts).
+// Cost Radar does not run this SQL (it has its own inventory queries in src/lib/cost-radar/collect.ts);
+// the two share the same pricing functions (src/lib/cost-radar/pricing.ts), so their amounts match.
+// 유휴/미사용 리소스 탐지 SQL — idle-scan 컬렉터 전용. 비용 레이더는 이 SQL이 아니라 자체 수집 쿼리
+// (cost-radar/collect.ts)를 쓰고, 금액 계산은 같은 가격 함수(cost-radar/pricing.ts)를 공유한다.
 
 export const SQL_UNATTACHED_EBS = `
 SELECT volume_id, volume_type, size, create_time, account_id, region

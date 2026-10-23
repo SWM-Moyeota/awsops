@@ -3,7 +3,7 @@
 ## 역할
 Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 라우트 세그먼트.
 
-## 페이지 (40개)
+## 페이지 (43개)
 
 ### Overview (5)
 - `page.tsx` — 대시보드 홈 (20 StatsCards, Cost 가용성 감지, 인벤토리 스냅샷, 캐시 워머 상태 바)
@@ -23,11 +23,13 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 ### EKS 하위 (4)
 - `k8s/pods/page.tsx`, `k8s/nodes/page.tsx`, `k8s/deployments/page.tsx`, `k8s/services/page.tsx`
 
-### Network & CDN (4)
+### Network & CDN (6)
 - `vpc/page.tsx` — VPC/Subnet/SG/TGW/ELB/NAT/IGW + 리소스 맵
 - `cloudfront-cdn/page.tsx` — CloudFront 배포
 - `waf/page.tsx` — WAF Web ACL/규칙
 - `topology/page.tsx` — 인프라 맵 + K8s 맵 (React Flow)
+- `topology-view/page.tsx` — 편집 가능한 토폴로지 뷰 + 자연어 채팅 편집
+- `diagram/page.tsx` — 2D 보고서 스타일 다이어그램 (PNG) + 자연어 채팅
 
 ### Storage & DB (7)
 - `ebs/page.tsx` — EBS 볼륨/스냅샷 (암호화, EC2 어태치먼트 매핑)
@@ -46,7 +48,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `datasources/page.tsx` — 외부 데이터소스 관리 (7종 CRUD, 연결 테스트, 인증 설정)
 - `datasources/explore/page.tsx` — 데이터소스 탐색 (직접 쿼리 실행, AI 쿼리 생성 — 자연어→PromQL/LogQL/TraceQL/SQL)
 
-### Monitoring & Cost (7)
+### Monitoring & Cost (8)
 - `monitoring/page.tsx` — CPU/메모리/네트워크/Disk I/O
 - `cloudwatch/page.tsx` — CloudWatch 알람
 - `cloudtrail/page.tsx` — CloudTrail 트레일/이벤트
@@ -54,13 +56,14 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `inventory/page.tsx` — Resource Inventory (수량 추이, 비용 영향 추정)
 - `container-cost/page.tsx` — ECS Container Cost (Fargate 가격 + Container Insights)
 - `eks-container-cost/page.tsx` — EKS Container Cost (OpenCost + Request 기반 폴백)
+- `cost-radar/page.tsx` — 비용 레이더 (켜 둔 리소스의 월 비용 추정 + 정리 추천, 안내만 — AWS 리소스를 바꾸는 버튼 없음)
 
 ### Security (3)
 - `iam/page.tsx` — IAM 사용자/역할/트러스트 정책
 - `security/page.tsx` — Public S3, Open SG, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 벤치마크
 
-## API 라우트 (20개)
+## API 라우트 (24개)
 
 | API | 설명 |
 |-----|------|
@@ -84,6 +87,10 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 | `api/health/route.ts` | 헬스 모니터 상태 조회(GET, 모니터 기동) + 테스트 알림/즉시 점검(POST, admin 전용) |
 | `api/cost-radar/route.ts` | 비용 레이더 — 월 비용 추정 + 정리 추천 + 7일 추세 (`?accountId=<12자리\|__all__>`, 5분 캐시, 잘못된 ID 400) |
 | `api/cost-radar/creators/route.ts` | 리소스 생성자 조회 (`?ids=계정:리전:리소스ID,...` 최대 50개, CloudTrail) |
+| `api/inventory/export/route.ts` | 인벤토리 XLSX 내보내기 (리소스별 시트 + Summary) |
+| `api/diagram/route.ts` | 2D 다이어그램 PNG 생성 (라이브 쿼리 → Python 렌더러) |
+| `api/diagram-chat/route.ts` | 다이어그램 채팅 — 자연어 → 다이어그램 생성 옵션 |
+| `api/topology-chat/route.ts` | 토폴로지 채팅 — 자연어 → JSON 패치 / 생성 옵션 / 답변 |
 
 ## 규칙
 - 모든 페이지 파일은 `'use client'`로 시작
@@ -99,7 +106,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 ## Role
 Next.js 14 App Router pages and API routes. Each subdirectory is a route segment.
 
-## Pages (40)
+## Pages (43)
 
 ### Overview (5)
 - `page.tsx` — Dashboard home (20 StatsCards, Cost availability detection, inventory snapshot, cache warmer status)
@@ -119,11 +126,13 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 ### EKS Sub-pages (4)
 - `k8s/pods/page.tsx`, `k8s/nodes/page.tsx`, `k8s/deployments/page.tsx`, `k8s/services/page.tsx`
 
-### Network & CDN (4)
+### Network & CDN (6)
 - `vpc/page.tsx` — VPC/Subnet/SG/TGW/ELB/NAT/IGW + Resource Map
 - `cloudfront-cdn/page.tsx` — CloudFront distributions
 - `waf/page.tsx` — WAF Web ACLs/rules
 - `topology/page.tsx` — Infra Map + K8s Map (React Flow)
+- `topology-view/page.tsx` — Editable topology view + natural-language chat edits
+- `diagram/page.tsx` — 2D report-style diagram (PNG) + natural-language chat
 
 ### Storage & DB (7)
 - `ebs/page.tsx` — EBS volumes/snapshots (encryption, EC2 attachment mapping)
@@ -142,7 +151,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `datasources/page.tsx` — External datasource management (7 platforms CRUD, connection test, auth config)
 - `datasources/explore/page.tsx` — Datasource Explore (direct query execution, AI query generation — natural language to PromQL/LogQL/TraceQL/SQL)
 
-### Monitoring & Cost (7)
+### Monitoring & Cost (8)
 - `monitoring/page.tsx` — CPU/Memory/Network/Disk I/O
 - `cloudwatch/page.tsx` — CloudWatch alarms
 - `cloudtrail/page.tsx` — CloudTrail trails/events
@@ -150,13 +159,14 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `inventory/page.tsx` — Resource Inventory (count trends, cost impact estimation)
 - `container-cost/page.tsx` — ECS Container Cost (Fargate pricing + Container Insights)
 - `eks-container-cost/page.tsx` — EKS Container Cost (OpenCost + request-based fallback)
+- `cost-radar/page.tsx` — Cost Radar (monthly cost estimate of switched-on resources + cleanup recommendations; guidance only, no button changes AWS resources)
 
 ### Security (3)
 - `iam/page.tsx` — IAM users/roles/trust policies
 - `security/page.tsx` — Public S3, Open SGs, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 benchmarks (431 controls)
 
-## API Routes (20)
+## API Routes (24)
 
 | API | Description |
 |-----|------------|
@@ -180,6 +190,10 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 | `api/health/route.ts` | Health monitor status (GET, starts the monitor) + test alert / run-now (POST, admin-only) |
 | `api/cost-radar/route.ts` | Cost Radar — monthly cost estimate + cleanup recommendations + 7-day trend (`?accountId=<12-digit\|__all__>`, 5-min cache, 400 on invalid id) |
 | `api/cost-radar/creators/route.ts` | Resource creator lookup (`?ids=account:region:resourceId,...`, max 50, CloudTrail) |
+| `api/inventory/export/route.ts` | Inventory XLSX export (one sheet per resource type + Summary) |
+| `api/diagram/route.ts` | 2D diagram PNG generation (live queries -> Python renderer) |
+| `api/diagram-chat/route.ts` | Diagram chat — natural language -> diagram generation options |
+| `api/topology-chat/route.ts` | Topology chat — natural language -> JSON patch / generator options / answer |
 
 ## Rules
 - All page files start with `'use client'`

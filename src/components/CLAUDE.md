@@ -20,7 +20,7 @@
 - `dashboard/StatusBadge.tsx` — 상태 배지 (`status` prop만 받음 — `text` prop 없음)
 - `dashboard/AccountBadge.tsx` — 어카운트 배지 (accountId로 alias + 컬러 도트 표시)
 - `dashboard/SystemHealthCard.tsx` — 시스템 상태 카드 (/api/health 60초 폴링, 항목별 상태 패널, admin 테스트 알림 버튼)
-- `dashboard/CostRadarSummaryCard.tsx` — 홈 비용 레이더 요약 카드 (`/api/cost-radar` 월 예상 + 절약 가능액, 실패 시 흐린 한 줄, 네이비 스타일)
+- `dashboard/CostRadarSummaryCard.tsx` — 홈 비용 레이더 요약 카드 (`/api/cost-radar` 월 예상 + 절약 가능액, 일부 조회 실패 시 `≥` 금액 + 흐린 안내, 실패 시 흐린 한 줄, 네이비 스타일)
 
 ### cost-radar/ — 비용 레이더 (4 + 헬퍼) — 자세한 내용은 `cost-radar/CLAUDE.md`
 - `cost-radar/CostRadarView.tsx` — `/cost-radar` 본문 (도넛·항목, 절약 카드, 계정 알약, 경고·빈·오류·로딩 상태, 고정 추정 안내)
@@ -72,7 +72,7 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 - `dashboard/StatusBadge.tsx` — Status badge (`status` prop only — no `text` prop)
 - `dashboard/AccountBadge.tsx` — Account badge (shows alias + colored dot from accountId)
 - `dashboard/SystemHealthCard.tsx` — System health card (polls /api/health every 60s, per-item status panel, admin test-alert button)
-- `dashboard/CostRadarSummaryCard.tsx` — Home Cost Radar summary card (`/api/cost-radar` monthly estimate + possible saving, muted line on error, navy style)
+- `dashboard/CostRadarSummaryCard.tsx` — Home Cost Radar summary card (`/api/cost-radar` monthly estimate + possible saving, `≥` amount + muted note when partial, muted line on error, navy style)
 
 ### cost-radar/ — Cost Radar (4 + helpers) — see `cost-radar/CLAUDE.md`
 - `cost-radar/CostRadarView.tsx` — `/cost-radar` body (donut + categories, savings cards, account pills, warning/empty/error/loading states, fixed estimate disclaimer)

@@ -21,11 +21,11 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 ## 현황 (v1.8.0)
 | 항목 | 수치 |
 |------|------|
-| 페이지 | 40 (/datasources, /ai-diagnosis 추가) |
-| 라우트 | 57 (페이지 40 + API 17) |
+| 페이지 | 43 (/cost-radar 추가) |
+| 라우트 | 67 (페이지 43 + API 24) |
 | SQL 쿼리 파일 | 25 |
-| API 라우트 | 17 (datasources, k8s, report, notification 추가) |
-| 컴포넌트 | 19 (ReportMarkdown 추가) |
+| API 라우트 | 24 (cost-radar, cost-radar/creators 추가) |
+| 컴포넌트 | 25 (cost-radar 4종 + CostRadarSummaryCard 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 11 (datasource 라우트 추가) |
 | ADR | 8 (001-008) |
@@ -108,8 +108,9 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `report-scheduler.ts` — 자동 진단 스케줄러 (weekly/biweekly/monthly)
 - `sns-notification.ts` — SNS 이메일 알림 (토픽 생성, 구독 동기화, 진단 완료 발행)
 - `collectors/` — auto-collect 에이전트 6종 (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
+- `cost-radar/` — 비용 레이더 (내장 서울 가격표로 월 비용 추정 + 정리 추천, 안내만) — `src/lib/cost-radar/CLAUDE.md`
 
-### API 라우트 (`src/app/api/`, 17개)
+### API 라우트 (`src/app/api/`, 24개 — 전체 목록은 `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI 라우팅 (11 routes, 멀티 라우트, SSE 스트리밍, 도구 추론, datasource 라우트)
 - `steampipe/route.ts` — Steampipe 쿼리 + Cost 가용성 + 인벤토리 (POST/GET/PUT)
 - `auth/route.ts` — 로그아웃 (HttpOnly 쿠키 서버 사이드 삭제)
@@ -127,6 +128,8 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `k8s/route.ts` — EKS kubeconfig 등록
 - `report/route.ts` — AI 종합 진단 리포트 생성 + S3 저장 + 스케줄링
 - `notification/route.ts` — SNS 이메일 알림 (토픽/구독 관리, 진단 완료 알림)
+- `cost-radar/route.ts` — 비용 레이더 (월 비용 추정 + 정리 추천 + 7일 추세, 5분 캐시)
+- `cost-radar/creators/route.ts` — 리소스 생성자 조회 (CloudTrail, 최대 50개)
 
 ### 인프라
 - `infra-cdk/lib/awsops-stack.ts` — CDK 인프라 (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
@@ -224,11 +227,11 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 ## Stats (v1.8.0)
 | Item | Count |
 |------|-------|
-| Pages | 40 (incl. /datasources, /ai-diagnosis) |
-| Routes | 57 (40 pages + 17 APIs) |
+| Pages | 43 (incl. /cost-radar) |
+| Routes | 67 (43 pages + 24 APIs) |
 | SQL Query Files | 25 |
-| API Routes | 17 (incl. datasources, k8s, report, notification) |
-| Components | 19 (incl. ReportMarkdown) |
+| API Routes | 24 (incl. cost-radar, cost-radar/creators) |
+| Components | 25 (incl. 4 cost-radar components + CostRadarSummaryCard) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 11 (incl. datasource route) |
 | ADRs | 8 (001-008) |
@@ -309,8 +312,9 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 - `report-scheduler.ts` — Auto-diagnosis scheduler (weekly/biweekly/monthly)
 - `sns-notification.ts` — SNS email notifications (topic creation, subscription sync, diagnosis completion publish)
 - `collectors/` — 6 auto-collect agents (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
+- `cost-radar/` — Cost Radar (monthly estimate from a bundled Seoul price table + cleanup recommendations, guidance only) — `src/lib/cost-radar/CLAUDE.md`
 
-### API Routes (`src/app/api/`, 17 routes)
+### API Routes (`src/app/api/`, 24 routes — full list in `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI routing (11 routes, multi-route, SSE streaming, tool inference, datasource route)
 - `steampipe/route.ts` — Steampipe queries + Cost availability + Inventory (POST/GET/PUT)
 - `auth/route.ts` — Logout (server-side HttpOnly cookie deletion)
@@ -328,6 +332,8 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 - `k8s/route.ts` — EKS kubeconfig registration
 - `report/route.ts` — AI diagnosis report generation + S3 storage + scheduling
 - `notification/route.ts` — SNS email notifications (topic/subscription management, diagnosis completion alerts)
+- `cost-radar/route.ts` — Cost Radar (monthly cost estimate + cleanup recommendations + 7-day trend, 5-min cache)
+- `cost-radar/creators/route.ts` — Resource creator lookup (CloudTrail, max 50)
 
 ### Infrastructure
 - `infra-cdk/lib/awsops-stack.ts` — CDK infra (VPC, EC2, ALB, ACM, Route 53, nginx user-data)

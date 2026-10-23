@@ -22,6 +22,7 @@
 - `datasource-client.ts` / `datasource-registry.ts` / `datasource-prompts.ts` — 외부 데이터소스 HTTP 클라이언트(7종, SSRF 방지) / 타입 레지스트리 / AI 쿼리 생성 프롬프트
 - `sns-notification.ts` — SNS 이메일 알림 (토픽 생성, 구독 동기화, 진단 완료 발행)
 - `collectors/` — auto-collect 에이전트 (db-optimize, eks-optimize, idle-scan, incident, msk-optimize, trace-analyze — 공통 `Collector` 인터페이스)
+- `cost-radar/` — 비용 레이더 (수집·가격 추정·정리 추천·생성자 조회·일별 이력, 안내만) — 상세는 `cost-radar/CLAUDE.md`
 - `queries/*.ts` — 26개 SQL 쿼리 파일 (idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock 포함)
 
 ## 규칙
@@ -59,6 +60,7 @@ Core libraries: Steampipe database connection, SQL query definitions, inventory,
 - `datasource-client.ts` / `datasource-registry.ts` / `datasource-prompts.ts` — External datasource HTTP clients (7 platforms, SSRF-protected) / type registry / AI query generation prompts
 - `sns-notification.ts` — SNS email notifications (topic creation, subscription sync, diagnosis completion publish)
 - `collectors/` — Auto-collect agents (db-optimize, eks-optimize, idle-scan, incident, msk-optimize, trace-analyze — shared `Collector` interface)
+- `cost-radar/` — Cost Radar (collection, price estimate, cleanup recommendations, creator lookup, daily history; guidance only) — see `cost-radar/CLAUDE.md`
 - `queries/*.ts` — 26 SQL query files (incl. idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock)
 
 ## Rules
