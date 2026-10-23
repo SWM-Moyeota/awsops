@@ -169,6 +169,7 @@ Step 9:  09-start-all.sh                 전체 서비스 시작
 Step 10: 10-stop-all.sh                  전체 서비스 중지
 Step 11: 11-verify.sh                    검증 (헬스체크)
 Step 12: 12-setup-multi-account.sh       멀티 어카운트 설정 (선택, Aggregator + 교차 계정 IAM 역할)
+Step 12b: 12b-setup-lambda-cross-account.sh  AI 도구 Lambda 교차 계정 접근 (AssumeRole 권한 + External ID, 관리자 Mac에서 실행)
 Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd 유닛 등록 (Restart=always, 부팅 시 자동 시작)
 Step 14: 14-setup-health-alerts.sh        헬스 알림 워치독 (Lambda + EventBridge 3규칙 + SSM + IAM, 관리자 Mac에서 실행)
 ```
@@ -369,6 +370,7 @@ Step 9:  09-start-all.sh                 Start all services
 Step 10: 10-stop-all.sh                  Stop all services
 Step 11: 11-verify.sh                    Verification (health check)
 Step 12: 12-setup-multi-account.sh       Multi-account setup (optional, Aggregator + cross-account IAM role)
+Step 12b: 12b-setup-lambda-cross-account.sh  AI tool Lambdas cross-account access (AssumeRole + External ID, run from admin Mac)
 Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd unit (Restart=always, starts on boot)
 Step 14: 14-setup-health-alerts.sh        Health-alert watchdog (Lambda + 3 EventBridge rules + SSM + IAM, run from admin Mac)
 ```

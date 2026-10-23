@@ -36,6 +36,11 @@ STEAMPIPE_CONFIG_DIR="$HOME/.steampipe/config"
 EXTERNAL_ID="${AWSOPS_EXTERNAL_ID:-}"
 ROLE_NAME="${AWSOPS_ROLE_NAME:-AWSopsReadOnlyRole}"
 CONFIG_FILE="$WORK_DIR/data/config.json"
+# 환경변수가 없으면 config.json에 저장된 External ID 사용 (add 시 저장됨)
+# Fall back to the External ID stored in config.json by a previous `add`
+if [ -z "$EXTERNAL_ID" ] && [ -f "$CONFIG_FILE" ]; then
+    EXTERNAL_ID=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('crossAccountExternalId',''))" "$CONFIG_FILE" 2>/dev/null || echo "")
+fi
 
 cd "$WORK_DIR"
 
@@ -298,9 +303,13 @@ accounts.append({
 })
 
 cfg['accounts'] = accounts
+# 대시보드의 연결 테스트·이후 apply가 쓰도록 External ID 보관 / keep the External ID for the UI test and later applies
+external_id = sys.argv[6]
+if external_id:
+    cfg['crossAccountExternalId'] = external_id
 json.dump(cfg, open(config_file, 'w'), indent=2)
 print(f'  Account {target_id} ({target_alias}) added.')
-" "$CONFIG_FILE" "$target_id" "$target_alias" "$target_region" "$cost_enabled"
+" "$CONFIG_FILE" "$target_id" "$target_alias" "$target_region" "$cost_enabled" "$EXTERNAL_ID"
 
     echo ""
     echo -e "${GREEN}Account added. Run '$0 apply' to generate Steampipe configs and restart.${NC}"
@@ -580,73 +589,63 @@ json.dump(cfg, open(config_file, 'w'), indent=2)
 cmd_verify() {
     echo -e "${CYAN}Verifying cross-account connectivity...${NC}"
     echo ""
+    # psql은 호스트에 설치돼 있지 않다 — 대시보드 API(localhost:3000)로 계정별 조회를 확인한다
+    # psql is not installed on the host; query each account through the dashboard API instead
+    if ! curl -s -o /dev/null --max-time 5 http://localhost:3000/; then
+        echo -e "  ${RED}FAIL${NC} dashboard not reachable on :3000 — run scripts/09-start-all.sh first"
+        return 1
+    fi
 
-    SP_PASSWORD=$(steampipe service status --show-password 2>&1 | grep Password | awk '{print $2}')
-
-    local accounts_json
-    accounts_json=$(get_accounts_json)
-
-    echo "$accounts_json" | python3 -c "
-import json, sys, subprocess, os
+    get_accounts_json | python3 -c "
+import json, sys, time, urllib.request
 
 accounts = json.load(sys.stdin)
-sp_password = sys.argv[1]
-
 if not accounts:
     print('  No accounts configured.')
     sys.exit(0)
 
-ok = 0
-fail = 0
+def query(sql, account_id=None):
+    # 고유 주석으로 5분 결과 캐시를 우회 / unique comment bypasses the 5-min result cache
+    body = {'queries': {'q': f'{sql} /* verify {time.time_ns()} */'}}
+    if account_id:
+        body['accountId'] = account_id
+    req = urllib.request.Request('http://localhost:3000/api/steampipe', data=json.dumps(body).encode(),
+                                 headers={'Content-Type': 'application/json'})
+    with urllib.request.urlopen(req, timeout=90) as r:
+        res = json.load(r)['q']
+    if res.get('error'):
+        raise RuntimeError(res['error'][:80])
+    return res.get('rows', [])
 
+ok = fail = 0
 for acc in accounts:
-    acct_id = acc['accountId']
-    alias = acc['alias']
-    conn_name = acc['connectionName']
-
-    # Test: query account identity via specific connection
-    sql = f\"SET search_path = 'public, {conn_name}'; SELECT account_id FROM aws_account LIMIT 1\"
-
+    acct_id, alias = acc['accountId'], acc['alias']
     try:
-        result = subprocess.run(
-            ['psql', '-h', 'localhost', '-p', '9193', '-U', 'steampipe', '-d', 'steampipe',
-             '-c', sql, '-t', '-A'],
-            capture_output=True, text=True, timeout=30,
-            env={**dict(os.environ), 'PGPASSWORD': sp_password}
-        )
-        output = result.stdout.strip()
-        if output and len(output) == 12:
-            print(f'  {acct_id} ({alias:16s}): \033[0;32mOK\033[0m  (returned: {output})')
+        rows = query('SELECT account_id FROM aws_account LIMIT 1', acct_id)
+        got = rows[0]['account_id'] if rows else ''
+        if got == acct_id:
+            print(f'  {acct_id} ({alias:16s}): \033[0;32mOK\033[0m')
             ok += 1
         else:
-            print(f'  {acct_id} ({alias:16s}): \033[0;31mFAIL\033[0m (output: {output or result.stderr.strip()[:60]})')
+            print(f'  {acct_id} ({alias:16s}): \033[0;31mFAIL\033[0m (returned: {got or \'no rows\'})')
             fail += 1
     except Exception as e:
-        print(f'  {acct_id} ({alias:16s}): \033[0;31mFAIL\033[0m ({str(e)[:60]})')
+        print(f'  {acct_id} ({alias:16s}): \033[0;31mFAIL\033[0m ({e})')
         fail += 1
 
 print()
 print(f'  Results: {ok} OK, {fail} FAILED, {len(accounts)} total')
-" "$SP_PASSWORD"
-
-    # Test aggregator
-    echo ""
-    echo -e "${CYAN}Testing aggregator (aws) connection...${NC}"
-    local agg_result
-    agg_result=$(PGPASSWORD="$SP_PASSWORD" psql -h localhost -p 9193 -U steampipe -d steampipe \
-        -c "SELECT DISTINCT account_id FROM aws_account ORDER BY account_id" -t -A 2>&1 || echo "FAIL")
-
-    if echo "$agg_result" | grep -qP '^\d{12}$'; then
-        local agg_count
-        agg_count=$(echo "$agg_result" | grep -cP '^\d{12}$')
-        echo -e "  Aggregator: ${GREEN}OK${NC} ($agg_count account(s) visible)"
-        echo "$agg_result" | while read -r line; do
-            [ -n "$line" ] && echo "    - $line"
-        done
-    else
-        echo -e "  Aggregator: ${RED}FAIL${NC}"
-        echo "  $agg_result" | head -3
-    fi
+print()
+try:
+    ids = sorted({r['account_id'] for r in query('SELECT DISTINCT account_id FROM aws_account')})
+    print(f'  Aggregator: \033[0;32mOK\033[0m ({len(ids)} account(s) visible)')
+    for i in ids:
+        print(f'    - {i}')
+except Exception as e:
+    print(f'  Aggregator: \033[0;31mFAIL\033[0m ({e})')
+    fail += 1
+sys.exit(1 if fail else 0)
+"
 }
 
 # -- Command: cfn (print CloudFormation deploy command) ------------------------

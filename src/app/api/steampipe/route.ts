@@ -30,6 +30,26 @@ function checkRateLimit(userId: string): boolean {
   return true;
 }
 
+// 클라이언트에 필요한 설정만 노출 — steampipePassword, crossAccountExternalId, 데이터소스 인증정보 등은 제외
+// Only what the UI needs; secrets (Steampipe password, External ID, datasource auth) never leave the server
+function publicConfig() {
+  const c = getConfig();
+  return {
+    costEnabled: c.costEnabled,
+    customerLogo: c.customerLogo,
+    customerName: c.customerName,
+    customerLogoBg: c.customerLogoBg,
+    accounts: (c.accounts || []).map(a => ({
+      accountId: a.accountId,
+      alias: a.alias,
+      connectionName: a.connectionName,
+      region: a.region,
+      isHost: a.isHost,
+      features: a.features,
+    })),
+  };
+}
+
 export async function GET(request: NextRequest) {
   // Auto-start cache warmer + health monitor on first request / 첫 요청 시 캐시 워머·헬스 모니터 자동 시작
   ensureCacheWarmerStarted();
@@ -76,7 +96,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (action === 'config') {
-    return NextResponse.json(getConfig());
+    return NextResponse.json(publicConfig());
   }
 
   if (action === 'cache-status') {
@@ -132,7 +152,7 @@ export async function PUT(request: NextRequest) {
         saveConfig({ costEnabled: body.costEnabled });
         clearCache(); // cost-check 캐시 무효화
       }
-      return NextResponse.json(getConfig());
+      return NextResponse.json(publicConfig());
     }
 
     if (action === 'init-host') {
@@ -395,10 +415,14 @@ export async function PUT(request: NextRequest) {
       }
 
       try {
+        // 대상 계정 역할은 External ID가 필수 — 없으면 정상 연결도 실패로 보인다
+        // Target roles require the External ID; without it a healthy link looks broken
+        const externalId = getConfig().crossAccountExternalId;
         const result = execFileSync('aws', [
           'sts', 'assume-role',
           '--role-arn', roleArn,
           '--role-session-name', 'awsops-test',
+          ...(externalId ? ['--external-id', externalId] : []),
           '--query', 'Account',
           '--output', 'text',
         ], { encoding: 'utf-8', timeout: 15000 }).trim();

@@ -83,6 +83,7 @@ export interface AppConfig {
   cognitoDomain?: string;             // Cognito hosted UI domain (e.g. "ops-dashboard-123.auth.ap-northeast-2.amazoncognito.com")
   cognitoClientId?: string;           // Cognito app client ID — used to build the logout URL
   appUrl?: string;                    // Public app URL, logout redirect target (e.g. "https://awsops.dev1.musinsa.io/")
+  crossAccountExternalId?: string;    // sts:ExternalId for AWSopsReadOnlyRole in target accounts (written by 12-setup-multi-account.sh) / 대상 계정 역할 External ID
   bedrockModelId?: string;            // Bedrock model/inference-profile ID override — for accounts without access to the default / 기본 모델 접근 불가 계정용
 }
 
