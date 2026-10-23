@@ -627,7 +627,8 @@ for acc in accounts:
             print(f'  {acct_id} ({alias:16s}): \033[0;32mOK\033[0m')
             ok += 1
         else:
-            print(f'  {acct_id} ({alias:16s}): \033[0;31mFAIL\033[0m (returned: {got or \'no rows\'})')
+            shown = got or 'no rows'
+            print(f'  {acct_id} ({alias:16s}): \033[0;31mFAIL\033[0m (returned: {shown})')
             fail += 1
     except Exception as e:
         print(f'  {acct_id} ({alias:16s}): \033[0;31mFAIL\033[0m ({e})')
