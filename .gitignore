@@ -90,3 +90,6 @@ reports/
 
 # health monitor runtime state
 data/health-status.json
+
+# cost radar runtime data
+data/cost-radar/
