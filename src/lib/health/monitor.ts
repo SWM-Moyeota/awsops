@@ -8,6 +8,7 @@ import { getConfig } from '@/lib/app-config';
 import { applyResults, initialState, loadState, saveState } from './state';
 import { formatSlackMessage, getWebhookUrl, postSlack } from './slack';
 import { checkAgentcoreRuntime, checkBedrock, checkCrossAccount, checkLambdas, checkSteampipe } from './checks';
+import { recordDailyIfMissing } from '@/lib/cost-radar/history';
 import type { CheckId, CheckResult, HealthState, Transition } from './types';
 
 const LOOP_INTERVAL_MS = 5 * 60 * 1000;
@@ -17,6 +18,7 @@ const REGION = 'ap-northeast-2';
 const DEFAULT_DASHBOARD_URL = 'https://awsops.moyeota.co.kr/';
 const MAX_TRACKED_REQUESTS = 500;
 const HEARTBEAT_TIMEOUT_MS = 10_000;
+const DAILY_HISTORY_TIMEOUT_MS = 60_000;
 
 type InvokeOutcome = 'success' | 'error' | 'timeout';
 
@@ -134,6 +136,22 @@ async function safeCheck(id: CheckId, fn: () => Promise<CheckResult>): Promise<C
   }
 }
 
+/**
+ * Cost Radar daily history, fire-and-forget: time-boxed to 60 s and can never throw or block the loop.
+ * 비용 레이더 일별 이력 — 기다리지 않고 60초로 제한하며 루프를 막거나 예외를 던지지 않는다.
+ */
+function triggerDailyHistory(): void {
+  try {
+    let timer: NodeJS.Timeout | undefined;
+    const limit = new Promise<void>((resolve) => { timer = setTimeout(resolve, DAILY_HISTORY_TIMEOUT_MS); });
+    void Promise.race([recordDailyIfMissing(), limit])
+      .catch((err) => console.warn(`[health] cost-radar history failed (${errName(err)})`))
+      .finally(() => { if (timer) clearTimeout(timer); });
+  } catch (err) {
+    console.warn(`[health] cost-radar history trigger failed (${errName(err)})`);
+  }
+}
+
 async function sendHeartbeat(): Promise<void> {
   try {
     cwClient ??= new CloudWatchClient({ region: REGION });
@@ -165,6 +183,7 @@ export async function runOnce(opts?: { includeSlow?: boolean }): Promise<void> {
       const now = new Date();
       m.lastRunAt = now.toISOString();
       await processResults(results, now);
+      triggerDailyHistory();
       await sendHeartbeat();
     } catch (err) {
       console.error(`[health] run failed (${errName(err)})`);
