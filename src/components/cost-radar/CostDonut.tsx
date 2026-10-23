@@ -27,7 +27,7 @@ export default function CostDonut({ categories, monthly, trend }: CostDonutProps
     >
       <div className="absolute rounded-full" style={{ inset: '12.5%', background: PALETTE.card }} />
       <div className="absolute inset-0 z-[1] flex flex-col items-center justify-center">
-        <div className="text-[13px]" style={{ color: PALETTE.muted }}>Total</div>
+        <div className="text-[13px]" style={{ color: PALETTE.muted }}>{t('costRadar.total')}</div>
         <div className="text-[clamp(30px,9vw,44px)] leading-[1.1]" style={DISPLAY_FONT}>
           {whole}<span className="text-[0.5em]">{cents}</span>
         </div>

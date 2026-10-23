@@ -11,12 +11,13 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import type { CategoryId, PricedResource, RadarResponse, Recommendation } from '@/lib/cost-radar/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
+import { PRICE_AS_OF } from '@/lib/cost-radar/price-as-of';
 import { useAccountContext, ALL_ACCOUNTS } from '@/contexts/AccountContext';
 import CostDonut from './CostDonut';
 import SavingsCard from './SavingsCard';
 import RecommendationPanel, { type CreatorState } from './RecommendationPanel';
 import {
-  CATEGORY_COLORS, DISPLAY_FONT, HAND_FONT, PALETTE, creatorKey, formatMoney, formatShort, minutesSince,
+  CATEGORY_COLORS, DISPLAY_FONT, HAND_FONT, PALETTE, creatorKey, formatMoney, formatShort, hasSnapshots, minutesSince,
   splitTemplate, visibleRecommendations,
 } from './format';
 
@@ -174,7 +175,11 @@ export default function CostRadarView() {
   const firstStopped = visible.find(r => r.rule === 'long-stopped-ec2')?.id;
 
   const est = data?.estimate;
-  const isEmpty = !!est && est.monthly === 0;
+  const noCost = !!est && est.monthly === 0;
+  // "Nothing bills you" only when every table answered. / 모든 조회가 성공했을 때만 "과금 리소스 없음".
+  const showEmptyCopy = noCost && !!est && est.warnings.length === 0;
+  // $0 recommendations (e.g. an empty target group) still get the right column. / 0원 추천도 오른쪽에 표시.
+  const showSavings = !noCost || visible.length > 0;
 
   return (
     <div className="mx-auto max-w-[1100px] rounded-[28px] p-5 pb-0 md:p-7 md:pb-0" style={{ background: PALETTE.bg, color: PALETTE.text }}>
@@ -213,7 +218,7 @@ export default function CostRadarView() {
       )}
 
       {/* Warnings / 일부 조회 실패 */}
-      {est && est.warnings.length > 0 && (
+      {!loading && est && est.warnings.length > 0 && (
         <div className="mb-4 flex items-start gap-2 rounded-2xl px-4 py-3 text-sm" style={{ background: '#2b2110', color: PALETTE.orange }} role="status">
           <AlertTriangle size={16} className="mt-0.5 flex-none" />
           <div className="min-w-0">
@@ -246,7 +251,7 @@ export default function CostRadarView() {
       )}
 
       {!loading && !error && est && data && (
-        <div className={`grid grid-cols-1 gap-[22px] ${isEmpty ? '' : 'min-[1140px]:grid-cols-[1.05fr_1fr]'}`}>
+        <div className={`grid grid-cols-1 gap-[22px] ${showSavings ? 'min-[1140px]:grid-cols-[1.05fr_1fr]' : ''}`}>
           {/* LEFT: donut + breakdown / 왼쪽: 도넛 + 항목 */}
           <Card className="min-w-0">
             <div className="flex items-center justify-between gap-2">
@@ -257,7 +262,7 @@ export default function CostRadarView() {
             </div>
             <CostDonut categories={est.categories} monthly={est.monthly} trend={data.trend} />
 
-            {isEmpty ? (
+            {showEmptyCopy ? (
               <p className="mt-6 text-center text-sm" style={{ color: PALETTE.muted }}>{t('costRadar.empty')}</p>
             ) : (
               <div className="mt-4">
@@ -295,6 +300,11 @@ export default function CostRadarView() {
                         <span className="hidden w-10 text-right text-[13px] sm:block" style={{ color: PALETTE.muted }}>{c.percent}%</span>
                         <ChevronRight size={16} className={`flex-none text-gray-500 transition-transform ${open ? 'rotate-90' : ''}`} />
                       </button>
+                      {c.id === 'storage' && hasSnapshots(list) && (
+                        <p className="-mt-1.5 mb-2 ml-[50px] text-[11px]" style={{ color: PALETTE.muted }}>
+                          <Info size={11} className="mr-1 inline-block align-[-1px]" />{t('costRadar.snapshotUpperBound')}
+                        </p>
+                      )}
                       {open && (
                         <ul className="mb-2 ml-[50px] space-y-1.5">
                           {list.map(r => (
@@ -318,7 +328,7 @@ export default function CostRadarView() {
           </Card>
 
           {/* RIGHT: savings / 오른쪽: 아낄 수 있는 돈 */}
-          {!isEmpty && (
+          {showSavings && (
             <div className="min-w-0">
               <div className="mb-3.5 mt-1 text-2xl" style={DISPLAY_FONT}>
                 <Rich
@@ -391,7 +401,7 @@ export default function CostRadarView() {
         style={{ background: PALETTE.bg, color: PALETTE.muted, borderTop: `1px solid ${PALETTE.line}` }}
       >
         <Info size={13} className="mt-px flex-none" />
-        <span>{t('costRadar.disclaimer', { date: est?.priceAsOf ?? '—' })}</span>
+        <span>{t('costRadar.disclaimer', { date: est?.priceAsOf || PRICE_AS_OF })}</span>
       </div>
 
       {openRec && (

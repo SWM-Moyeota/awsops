@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatMoney, splitMoney, formatShort, donutGradient, trendLabel, creatorKey, displayName, shortId,
-  visibleRecommendations, splitTemplate, minutesSince, reasonParams, CATEGORY_COLORS,
+  visibleRecommendations, splitTemplate, minutesSince, reasonParams, CATEGORY_COLORS, isWasteRule, noteKey, hasSnapshots,
 } from '../format';
 import type { Recommendation } from '@/lib/cost-radar/types';
 
@@ -84,6 +84,38 @@ describe('visibleRecommendations', () => {
       rec({ id: 'e', monthlySaving: 9 }),
     ]);
     expect(out.map(r => r.id)).toEqual(['e', 'a', 'c', 'd']);
+  });
+  it('puts definite waste before optimisations, each by saving desc', () => {
+    const out = visibleRecommendations([
+      rec({ id: 'oh-big', rule: 'office-hours', monthlySaving: 300 }),
+      rec({ id: 'gp', rule: 'gp2-to-gp3', monthlySaving: 2 }),
+      rec({ id: 'eip', rule: 'unused-eip', monthlySaving: 3.65 }),
+      rec({ id: 'snap', rule: 'old-snapshot', monthlySaving: 5 }),
+      rec({ id: 'oh-small', rule: 'office-hours', monthlySaving: 40 }),
+      rec({ id: 'tg', rule: 'empty-tg', monthlySaving: 0 }),
+      rec({ id: 'lb', rule: 'empty-lb', monthlySaving: 16 }),
+      rec({ id: 'ebs', rule: 'unattached-ebs', monthlySaving: 8 }),
+      rec({ id: 'stop', rule: 'long-stopped-ec2', monthlySaving: 1 }),
+    ]);
+    expect(out.map(r => r.id)).toEqual(['lb', 'ebs', 'snap', 'eip', 'stop', 'tg', 'oh-big', 'oh-small', 'gp']);
+    expect(isWasteRule('unused-eip')).toBe(true);
+    expect(isWasteRule('office-hours')).toBe(false);
+    expect(isWasteRule('gp2-to-gp3')).toBe(false);
+  });
+});
+
+describe('noteKey', () => {
+  it('maps each note to its i18n key', () => {
+    expect(noteKey('maybe-scaled-to-zero')).toBe('costRadar.note.maybeScaledToZero');
+    expect(noteKey('managed-instance')).toBe('costRadar.note.managedInstance');
+    expect(noteKey(undefined)).toBeNull();
+  });
+});
+
+describe('hasSnapshots', () => {
+  it('detects snapshot resources by id prefix', () => {
+    expect(hasSnapshots([{ id: 'vol-1' }, { id: 'snap-1' }])).toBe(true);
+    expect(hasSnapshots([{ id: 'vol-1' }])).toBe(false);
   });
 });
 

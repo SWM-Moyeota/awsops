@@ -1,6 +1,7 @@
 'use client';
 
-// Cost Radar recommendation detail — reason, creator (lazy), tags, owner warning, copyable CLI, console link.
+// Cost Radar recommendation detail — reason, creator (lazy), tags, owner warning, copyable CLI (or a
+// scheduling guide when there is no command), console link.
 // Guidance only: there is deliberately no button that changes an AWS resource.
 // 비용 레이더 추천 상세 — 이유, 만든 사람(지연 조회), 태그, 확인 안내, 복사용 CLI, 콘솔 링크.
 // 안내만 한다: AWS 리소스를 바꾸는 버튼은 의도적으로 없다.
@@ -8,7 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Check, Copy, ExternalLink, User, X } from 'lucide-react';
 import type { CreatorInfo, Recommendation } from '@/lib/cost-radar/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { DISPLAY_FONT, PALETTE, formatMoney, reasonParams } from './format';
+import { DISPLAY_FONT, PALETTE, formatMoney, noteKey, reasonParams } from './format';
 import { RULE_ICONS } from './SavingsCard';
 
 export type CreatorState = { status: 'loading' } | { status: 'error' } | { status: 'done'; info: CreatorInfo };
@@ -21,6 +22,7 @@ interface RecommendationPanelProps {
 }
 
 const PRIORITY_TAGS = ['Name', 'Owner', 'Project', 'Team'];
+const SCHEDULER_DOCS = 'https://docs.aws.amazon.com/scheduler/latest/UserGuide/what-is-scheduler.html';
 
 function fmtTime(iso: string | null): string {
   if (!iso) return '';
@@ -33,6 +35,7 @@ export default function RecommendationPanel({ rec, creator, accountLabel, onClos
   const [copy, setCopy] = useState<'idle' | 'ok' | 'fail'>('idle');
   const closeRef = useRef<HTMLButtonElement>(null);
   const Icon = RULE_ICONS[rec.rule];
+  const note = noteKey(rec.note);
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -102,7 +105,7 @@ export default function RecommendationPanel({ rec, creator, accountLabel, onClos
         <section className="mt-4">
           <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide" style={{ color: PALETTE.muted }}>{t('costRadar.panel.reason')}</h4>
           <p className="text-sm">{t(`costRadar.rule.${rec.rule}.reason`, reasonParams(rec))}</p>
-          {rec.note && <p className="mt-1 text-sm" style={{ color: PALETTE.orange }}>{t('costRadar.note.maybeScaledToZero')}</p>}
+          {note && <p className="mt-1 text-sm" style={{ color: PALETTE.orange }}>{t(note)}</p>}
         </section>
 
         <section className="mt-4">
@@ -131,24 +134,39 @@ export default function RecommendationPanel({ rec, creator, accountLabel, onClos
           <span>{t('costRadar.confirmOwner')}</span>
         </div>
 
-        <section className="mt-4">
-          <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide" style={{ color: PALETTE.muted }}>{t('costRadar.panel.cli')}</h4>
-          <div className="rounded-2xl p-3" style={{ background: PALETTE.bg }}>
-            <pre className="whitespace-pre-wrap break-all font-mono text-xs text-gray-200">{rec.cliCommand}</pre>
-            <div className="mt-2 flex items-center justify-end gap-2">
-              {copy === 'fail' && <span className="text-xs" style={{ color: PALETTE.pink }}>{t('costRadar.copyFailed')}</span>}
-              <button
-                type="button"
-                onClick={doCopy}
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold"
-                style={{ background: PALETTE.line, color: copy === 'ok' ? PALETTE.lime : PALETTE.text }}
-              >
-                {copy === 'ok' ? <Check size={13} /> : <Copy size={13} />}
-                {copy === 'ok' ? t('costRadar.copied') : t('costRadar.copy')}
-              </button>
+        {!rec.cliCommand ? (
+          <section className="mt-4 rounded-2xl p-3 text-sm" style={{ background: PALETTE.bg }}>
+            <p className="text-gray-200">{t('costRadar.officeHoursGuide')}</p>
+            <a
+              href={SCHEDULER_DOCS}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold hover:underline"
+              style={{ color: PALETTE.sky }}
+            >
+              EventBridge Scheduler <ExternalLink size={12} />
+            </a>
+          </section>
+        ) : (
+          <section className="mt-4">
+            <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide" style={{ color: PALETTE.muted }}>{t('costRadar.panel.cli')}</h4>
+            <div className="rounded-2xl p-3" style={{ background: PALETTE.bg }}>
+              <pre className="whitespace-pre-wrap break-all font-mono text-xs text-gray-200">{rec.cliCommand}</pre>
+              <div className="mt-2 flex items-center justify-end gap-2">
+                {copy === 'fail' && <span className="text-xs" style={{ color: PALETTE.pink }}>{t('costRadar.copyFailed')}</span>}
+                <button
+                  type="button"
+                  onClick={doCopy}
+                  className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold"
+                  style={{ background: PALETTE.line, color: copy === 'ok' ? PALETTE.lime : PALETTE.text }}
+                >
+                  {copy === 'ok' ? <Check size={13} /> : <Copy size={13} />}
+                  {copy === 'ok' ? t('costRadar.copied') : t('costRadar.copy')}
+                </button>
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
 
         <a
           href={rec.consoleUrl}

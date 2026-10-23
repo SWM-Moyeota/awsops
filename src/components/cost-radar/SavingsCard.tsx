@@ -6,7 +6,7 @@ import { AlarmClock, Camera, HardDrive, MapPin, Moon, Scale, Sparkles, Trash2 } 
 import type { LucideIcon } from 'lucide-react';
 import type { Recommendation, RuleId } from '@/lib/cost-radar/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { CARD_COLORS, DISPLAY_FONT, HAND_FONT, displayName, formatShort, reasonParams } from './format';
+import { CARD_COLORS, DISPLAY_FONT, HAND_FONT, displayName, formatShort, noteKey, reasonParams } from './format';
 
 export const RULE_ICONS: Record<RuleId, LucideIcon> = {
   'office-hours': AlarmClock,
@@ -30,7 +30,8 @@ export default function SavingsCard({ rec, index, sticker, onOpen }: SavingsCard
   const { t } = useLanguage();
   const Icon = RULE_ICONS[rec.rule] ?? Sparkles;
   const bg = CARD_COLORS[index % CARD_COLORS.length];
-  const reason = rec.note ? t('costRadar.note.maybeScaledToZero') : t(`costRadar.rule.${rec.rule}.reason`, reasonParams(rec));
+  const note = noteKey(rec.note);
+  const reason = note ? t(note) : t(`costRadar.rule.${rec.rule}.reason`, reasonParams(rec));
 
   return (
     <button

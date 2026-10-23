@@ -1,6 +1,6 @@
 // Cost Radar page helpers — pure functions (money, donut gradient, labels). No React, unit-tested.
 // 비용 레이더 화면 헬퍼 — 순수 함수 (금액, 도넛 그라디언트, 라벨). React 없음, 단위 테스트 대상.
-import type { CategoryId, CategoryTotal, Recommendation } from '@/lib/cost-radar/types';
+import type { CategoryId, CategoryTotal, Recommendation, RuleId } from '@/lib/cost-radar/types';
 
 /** Page-only palette (KA$H style). / 이 페이지 전용 팔레트. */
 export const PALETTE = {
@@ -104,12 +104,33 @@ export function shortId(id: string): string {
   return parts.length >= 2 ? parts[parts.length - 2] : id;
 }
 
-/** Cards shown on the page: saving > 0, a note, or an empty target group (0 USD but a cleanup target per spec §5.2). */
+/** Definite waste (vs. optimisations: office hours, gp2->gp3). / 확실한 낭비 (최적화 제안과 구분). */
+const WASTE_RULES = new Set<RuleId>(['unused-eip', 'unattached-ebs', 'long-stopped-ec2', 'empty-lb', 'empty-tg', 'old-snapshot']);
+export const isWasteRule = (rule: RuleId) => WASTE_RULES.has(rule);
+
+/**
+ * Cards shown on the page: saving > 0, a note, or an empty target group (0 USD but a cleanup target per spec §5.2).
+ * Definite waste first, then optimisations; each group by saving desc.
+ * 화면에 보일 카드: 확실한 낭비 먼저, 그다음 최적화 제안 — 각 그룹은 절약액 큰 순.
+ */
 export function visibleRecommendations(recs: Recommendation[]): Recommendation[] {
   return recs
     .filter(r => r.monthlySaving > 0 || !!r.note || r.rule === 'empty-tg')
-    .sort((a, b) => b.monthlySaving - a.monthlySaving || Number(b.countedInTotal) - Number(a.countedInTotal));
+    .sort((a, b) =>
+      Number(isWasteRule(b.rule)) - Number(isWasteRule(a.rule))
+      || b.monthlySaving - a.monthlySaving
+      || Number(b.countedInTotal) - Number(a.countedInTotal));
 }
+
+/** i18n key for a recommendation note. / 추천 메모의 번역 키. */
+export function noteKey(note: Recommendation['note']): string | null {
+  if (note === 'maybe-scaled-to-zero') return 'costRadar.note.maybeScaledToZero';
+  if (note === 'managed-instance') return 'costRadar.note.managedInstance';
+  return null;
+}
+
+/** Snapshot rows are priced at the source volume size (upper bound). / 스냅샷은 원본 볼륨 크기 기준 상한값. */
+export const hasSnapshots = (resources: { id: string }[]) => resources.some(r => r.id.startsWith('snap-'));
 
 /** Split "a {x} b" into text and placeholder parts for rich rendering. / 템플릿을 텍스트/자리표시자로 분리. */
 export function splitTemplate(template: string): ({ text: string } | { key: string })[] {
