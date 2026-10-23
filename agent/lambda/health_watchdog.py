@@ -184,7 +184,7 @@ def decide(prev, obs, now):
     _judge(
         state, "heartbeat", hb,
         "모니터 하트비트 장애", "서버 내부 모니터의 하트비트가 15분 넘게 들어오지 않았습니다",
-        "Next.js가 실행되지 않았을 수 있습니다 — 위 09-start-all.sh 명령 실행",
+        "Next.js가 실행되지 않았을 수 있습니다 — " + START_CMD,
         "모니터 하트비트 복구", texts,
     )
 

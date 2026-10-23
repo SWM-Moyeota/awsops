@@ -109,7 +109,8 @@ class DecideTest(unittest.TestCase):
         st, texts = run_seq(prev_state(), [obs(launch_epoch=NOW - 900, heartbeat_age_sec=None)] * 2)
         self.assertEqual(st["heartbeat"], "fail")
         self.assertEqual(len(texts), 1)
-        self.assertIn("Next.js가 실행되지 않았을 수 있습니다 — 위 09-start-all.sh 명령 실행", texts[0])
+        self.assertIn("Next.js가 실행되지 않았을 수 있습니다 — ", texts[0])
+        self.assertIn("bash scripts/09-start-all.sh", texts[0])
 
     def test_heartbeat_age_900_is_ok_901_is_stale(self):
         st, texts = run_seq(prev_state(), [obs(heartbeat_age_sec=900.0)] * 3)
