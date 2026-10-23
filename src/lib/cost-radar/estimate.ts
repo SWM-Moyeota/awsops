@@ -103,7 +103,7 @@ export function buildEstimate(inv: RawInventory[], scopeAccountId: string): Esti
     c.monthly += r.monthly as number; c.count += 1;
     byCat.set(r.category, c);
   }
-  const categories = [...byCat.values()].sort((a, b) => b.monthly - a.monthly);
+  const categories = Array.from(byCat.values()).sort((a, b) => b.monthly - a.monthly);
   for (const c of categories) c.percent = monthly > 0 ? Math.round((c.monthly / monthly) * 100) : 0;
 
   const warnings: Estimate['warnings'] = [];
