@@ -4,7 +4,7 @@
 export const SQL_UNATTACHED_EBS = `
 SELECT volume_id, volume_type, size, create_time, account_id, region
 FROM aws_ebs_volume
-WHERE status = 'available'
+WHERE state = 'available'
 ORDER BY size DESC`;
 
 export const SQL_GP2_VOLUMES = `
