@@ -38,6 +38,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardCheck,
+  Radar,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -109,6 +110,7 @@ const navGroups: NavGroup[] = [
       { labelKey: 'sidebar.cloudwatch', href: '/cloudwatch', icon: Bell },
       { labelKey: 'sidebar.cloudtrail', href: '/cloudtrail', icon: FileSearch },
       { labelKey: 'sidebar.cost', href: '/cost', icon: DollarSign },
+      { labelKey: 'sidebar.costRadar', href: '/cost-radar', icon: Radar },
       { labelKey: 'sidebar.resourceInventory', href: '/inventory', icon: BarChart3 },
       { labelKey: 'sidebar.datasources', href: '/datasources', icon: DatabaseZap, subItems: [
         { labelKey: 'sidebar.datasources', href: '/datasources', icon: DatabaseZap },
@@ -152,7 +154,8 @@ export default function Sidebar() {
   const isActive = (href: string) => {
     const path = pathname || '/';
     if (href === '/') return path === '/';
-    return path.startsWith(href);
+    // Segment match so '/cost' is not active on '/cost-radar' / '/cost'이 '/cost-radar'에서 켜지지 않도록 경로 단위 비교
+    return path === href || path.startsWith(`${href}/`);
   };
 
   const toggleMenu = (href: string) => {

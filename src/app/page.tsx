@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Header from '@/components/layout/Header';
 import StatsCard from '@/components/dashboard/StatsCard';
 import SystemHealthCard from '@/components/dashboard/SystemHealthCard';
+import CostRadarSummaryCard from '@/components/dashboard/CostRadarSummaryCard';
 import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import {
@@ -295,7 +296,7 @@ export default function DashboardPage() {
       {/* Row 3: Security, Monitoring & Cost / 보안, 모니터링 & 비용 */}
       <div>
         <h2 className="text-xs font-mono uppercase text-gray-400 tracking-wider mb-3">{t('dashboard.securityMonitoringCost')}</h2>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 auto-rows-fr gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-7 auto-rows-fr gap-4">
           <CardLink href="/security" className={totalIssues > 0 ? 'ring-1 ring-accent-red/30 rounded-lg' : ''}>
             <StatsCard label={t('dashboard.securityIssues')} value={totalIssues} icon={ShieldCheck}
               color={totalIssues > 0 ? 'red' : 'green'} highlight
@@ -350,6 +351,9 @@ export default function DashboardPage() {
                   change={`$${daily.toFixed(0)}/${t('dashboard.costChange').includes('/일') ? '일' : 'day'} · ${t('cost.lastMonth')} $${lastM.toLocaleString()} · ${Number(mom) > 0 ? '+' : ''}${mom}% MoM`} />
               );
             })()}
+          </CardLink>
+          <CardLink href="/cost-radar">
+            <CostRadarSummaryCard />
           </CardLink>
         </div>
       </div>
