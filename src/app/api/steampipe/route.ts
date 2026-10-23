@@ -423,12 +423,15 @@ export async function PUT(request: NextRequest) {
           '--role-arn', roleArn,
           '--role-session-name', 'awsops-test',
           ...(externalId ? ['--external-id', externalId] : []),
-          '--query', 'Account',
+          // assume-role 응답에는 Account 필드가 없다 — 역할 ARN에서 계정 ID를 꺼낸다
+          // The assume-role response has no Account field; read it from the assumed-role ARN
+          '--query', 'AssumedRoleUser.Arn',
           '--output', 'text',
         ], { encoding: 'utf-8', timeout: 15000 }).trim();
+        const assumedAccount = result.split(':')[4] || accountId;
         return NextResponse.json({
           success: true,
-          message: `Successfully assumed role in account ${result}`,
+          message: `Successfully assumed role in account ${assumedAccount}`,
         });
       } catch (err: unknown) {
         const rawMsg = err instanceof Error ? err.message : 'AssumeRole failed';
