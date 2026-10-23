@@ -27,15 +27,12 @@ const unknown = (resourceId: string): CreatorInfo => ({ resourceId, user: null, 
 // AssumeRole credentials per account, reused until 1 min before expiry. / 만료 1분 전까지 재사용.
 const credCache = new Map<string, { creds: Creds; expires: number }>();
 
-/** Test hook: drop cached AssumeRole credentials. / 테스트용 자격증명 캐시 초기화. */
-export function resetCredentialCache(): void { credCache.clear(); }
-
-async function credsFor(accountId: string, nowMs: number): Promise<Creds | undefined> {
+async function credsFor(accountId: string): Promise<Creds | undefined> {
   const cfg = getConfig();
   const acct = cfg.accounts?.find((a) => a.accountId === accountId);
   if (!acct || acct.isHost) return undefined; // default credential chain / 기본 자격증명
   const hit = credCache.get(accountId);
-  if (hit && hit.expires - 60_000 > nowMs) return hit.creds;
+  if (hit && hit.expires - 60_000 > Date.now()) return hit.creds;
   const res = await new STSClient({ region: STS_REGION }).send(new AssumeRoleCommand({
     RoleArn: `arn:aws:iam::${accountId}:role/${ROLE}`,
     RoleSessionName: 'awsops-cost-radar',
@@ -45,7 +42,7 @@ async function credsFor(accountId: string, nowMs: number): Promise<Creds | undef
   const c = res.Credentials;
   if (!c?.AccessKeyId || !c.SecretAccessKey) throw new Error('NoCredentials');
   const creds = { accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken };
-  credCache.set(accountId, { creds, expires: c.Expiration ? new Date(c.Expiration).getTime() : nowMs + 900_000 });
+  credCache.set(accountId, { creds, expires: c.Expiration ? new Date(c.Expiration).getTime() : Date.now() + 900_000 });
   return creds;
 }
 
@@ -59,10 +56,79 @@ function userOf(ev: Event): string | null {
   }
 }
 
-async function findCreator(client: CloudTrailClient, resourceId: string): Promise<CreatorInfo> {
+// Process-wide state: per-account queue + last call time (pacing), in-flight de-dup, serialised cache writes.
+// 프로세스 전역 상태: 계정별 큐/마지막 호출 시각(속도 제한), 진행 중 조회 중복 제거, 직렬화된 캐시 쓰기.
+const accountQueue = new Map<string, Promise<unknown>>();
+const lastCall = new Map<string, number>();
+const inflight = new Map<string, Promise<CreatorInfo>>();
+let cacheChain: Promise<unknown> = Promise.resolve();
+
+/** Wait until >= PACE_MS since this account's previous CloudTrail call, then claim the slot. */
+async function pace(accountId: string): Promise<void> {
+  const wait = (lastCall.get(accountId) ?? -Infinity) + PACE_MS - Date.now();
+  if (wait > 0) await sleep(wait);
+  lastCall.set(accountId, Date.now());
+}
+
+/** Test hook: clear process-wide state. / 테스트용 전역 상태 초기화. */
+export function resetCreatorState(): void {
+  credCache.clear(); accountQueue.clear(); lastCall.clear(); inflight.clear(); cacheChain = Promise.resolve();
+}
+
+const isFresh = (c: CacheEntry | undefined, now: Date): c is CacheEntry =>
+  !!c && (c.status === 'found' || now.getTime() - new Date(c.checkedAt).getTime() < RETRY_UNKNOWN_MS);
+
+/** Merge one entry into the file: re-read, never downgrade found→unknown, serialised. / 재읽기 후 병합, found 강등 금지, 직렬화. */
+function saveEntry(k: string, entry: CacheEntry): Promise<void> {
+  const run = async () => {
+    try {
+      const cur = await readJson<Cache>(CACHE_FILE, {});
+      if (cur[k]?.status === 'found' && entry.status === 'unknown') return;
+      cur[k] = entry;
+      await writeJsonAtomic(CACHE_FILE, cur);
+    } catch (e) {
+      console.error('[cost-radar] creators cache write failed:', e instanceof Error ? e.name : 'Error');
+    }
+  };
+  cacheChain = cacheChain.then(run, run);
+  return cacheChain as Promise<void>;
+}
+
+async function lookupOne(it: Item, now: Date): Promise<CreatorInfo> {
+  const k = `${it.accountId}:${it.resourceId}`;
+  // Re-check the cache inside the queue: an earlier call may have filled it meanwhile.
+  const cached = (await readJson<Cache>(CACHE_FILE, {}))[k];
+  if (isFresh(cached, now)) return { resourceId: cached.resourceId, user: cached.user, eventTime: cached.eventTime, status: cached.status };
+  let info = unknown(it.resourceId);
+  try {
+    const creds = await credsFor(it.accountId);
+    const client = new CloudTrailClient({ region: it.region, ...(creds ? { credentials: creds } : {}) });
+    info = await findCreator(client, it.accountId, it.resourceId);
+  } catch (e) {
+    console.error('[cost-radar] creator lookup failed:', e instanceof Error ? e.name : 'Error');
+  }
+  await saveEntry(k, { ...info, checkedAt: now.toISOString() });
+  return info;
+}
+
+function lookupShared(it: Item, now: Date): Promise<CreatorInfo> {
+  const k = `${it.accountId}:${it.resourceId}`;
+  const hit = inflight.get(k);
+  if (hit) return hit;
+  const prev = accountQueue.get(it.accountId) ?? Promise.resolve();
+  const p = prev.then(() => lookupOne(it, now), () => lookupOne(it, now));
+  accountQueue.set(it.accountId, p.catch(() => undefined));
+  inflight.set(k, p);
+  const done = () => { if (inflight.get(k) === p) inflight.delete(k); };
+  p.then(done, done);
+  return p;
+}
+
+async function findCreator(client: CloudTrailClient, accountId: string, resourceId: string): Promise<CreatorInfo> {
   let best: Event | undefined;
   let token: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
+    await pace(accountId);
     const res = await client.send(new LookupEventsCommand({
       LookupAttributes: [{ AttributeKey: 'ResourceName', AttributeValue: resourceId }],
       MaxResults: 50,
@@ -74,7 +140,6 @@ async function findCreator(client: CloudTrailClient, resourceId: string): Promis
     }
     token = res.NextToken;
     if (!token) break;
-    await sleep(PACE_MS);
   }
   if (!best) return unknown(resourceId);
   return { resourceId, user: userOf(best), eventTime: new Date(best.EventTime!).toISOString(), status: 'found' };
@@ -83,48 +148,9 @@ async function findCreator(client: CloudTrailClient, resourceId: string): Promis
 export async function lookupCreators(items: Item[], opts: Opts = {}): Promise<CreatorInfo[]> {
   const now = opts.now ?? new Date();
   const cache = await readJson<Cache>(CACHE_FILE, {});
-  const key = (i: Item) => `${i.accountId}:${i.resourceId}`;
-  const out = new Map<string, CreatorInfo>();
-  const todo = new Map<string, Item[]>(); // accountId → items needing lookup
-
-  for (const it of items) {
-    const c = cache[key(it)];
-    const fresh = c && (c.status === 'found' || now.getTime() - new Date(c.checkedAt).getTime() < RETRY_UNKNOWN_MS);
-    if (fresh) { out.set(key(it), { resourceId: c.resourceId, user: c.user, eventTime: c.eventTime, status: c.status }); continue; }
-    if (out.has(key(it)) || todo.get(it.accountId)?.some((x) => key(x) === key(it))) continue;
-    todo.set(it.accountId, [...(todo.get(it.accountId) ?? []), it]);
-  }
-
-  // Accounts in parallel, sequential (paced) within an account. / 계정 병렬, 계정 내 순차.
-  await Promise.all(Array.from(todo.entries()).map(async ([accountId, list]) => {
-    let creds: Creds | undefined;
-    let credError = false;
-    try { creds = await credsFor(accountId, now.getTime()); } catch (e) {
-      credError = true;
-      console.error('[cost-radar] creator lookup AssumeRole failed:', e instanceof Error ? e.name : 'Error');
-    }
-    let first = true;
-    for (const it of list) {
-      let info = unknown(it.resourceId);
-      if (!credError) {
-        if (!first) await sleep(PACE_MS);
-        first = false;
-        try {
-          const client = new CloudTrailClient({ region: it.region, ...(creds ? { credentials: creds } : {}) });
-          info = await findCreator(client, it.resourceId);
-        } catch (e) {
-          console.error('[cost-radar] creator lookup failed:', e instanceof Error ? e.name : 'Error');
-        }
-      }
-      out.set(key(it), info);
-      cache[key(it)] = { ...info, checkedAt: now.toISOString() };
-    }
+  return Promise.all(items.map((it) => {
+    const c = cache[`${it.accountId}:${it.resourceId}`];
+    if (isFresh(c, now)) return Promise.resolve<CreatorInfo>({ resourceId: c.resourceId, user: c.user, eventTime: c.eventTime, status: c.status });
+    return lookupShared(it, now).catch(() => unknown(it.resourceId));
   }));
-
-  if (todo.size > 0) {
-    try { await writeJsonAtomic(CACHE_FILE, cache); } catch (e) {
-      console.error('[cost-radar] creators cache write failed:', e instanceof Error ? e.name : 'Error');
-    }
-  }
-  return items.map((i) => out.get(key(i)) ?? unknown(i.resourceId));
 }

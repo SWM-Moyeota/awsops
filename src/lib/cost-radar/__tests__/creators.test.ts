@@ -21,7 +21,7 @@ vi.mock('@/lib/app-config', () => ({
   }),
 }));
 
-import { lookupCreators, resetCredentialCache } from '../creators';
+import { lookupCreators, resetCreatorState } from '../creators';
 
 let dir: string;
 const NOW = new Date('2026-10-24T00:00:00Z');
@@ -30,7 +30,7 @@ const ev = (t: string, user = 'alice') => ({ EventName: 'RunInstances', EventTim
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cr-'));
   process.env.COST_RADAR_DATA_DIR = dir;
-  ctSend.mockReset(); ctCtor.mockReset(); stsSend.mockReset(); resetCredentialCache();
+  ctSend.mockReset(); ctCtor.mockReset(); stsSend.mockReset(); resetCreatorState();
 });
 afterEach(() => { vi.useRealTimers(); delete process.env.COST_RADAR_DATA_DIR; fs.rmSync(dir, { recursive: true, force: true }); });
 
@@ -79,7 +79,7 @@ describe('creators', () => {
   });
 
   it('targetAccountAssumesRoleWithExternalId', async () => {
-    stsSend.mockResolvedValue({ Credentials: { AccessKeyId: 'a', SecretAccessKey: 's', SessionToken: 't', Expiration: new Date(NOW.getTime() + 900_000) } });
+    stsSend.mockResolvedValue({ Credentials: { AccessKeyId: 'a', SecretAccessKey: 's', SessionToken: 't', Expiration: new Date(Date.now() + 900_000) } });
     ctSend.mockResolvedValue({ Events: [ev('2026-10-01T00:00:00Z')] });
     await lookupCreators([item('i-9', '222')], { now: NOW });
     const input = (stsSend.mock.calls[0][0] as { input: Record<string, unknown> }).input;
@@ -98,15 +98,17 @@ describe('creators', () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const times: number[] = [];
     ctSend.mockImplementation(async () => { times.push(Date.now()); return { Events: [] }; });
-    let done = false;
-    const p = lookupCreators([item('a'), item('b'), item('c')], { now: NOW }).then((r) => { done = true; return r; });
-    while (times.length < 1) await new Promise((r) => setImmediate(r)); // real file IO first
-    await vi.advanceTimersByTimeAsync(1999);
-    expect(done).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
+    const p = lookupCreators([item('a'), item('b'), item('c')], { now: NOW });
+    const settle = async (n: number) => { while (times.length < n || vi.getTimerCount() === 0) { if (times.length >= 3) return; await new Promise((r) => setImmediate(r)); } };
+    for (let n = 1; n <= 2; n++) {
+      await settle(n); // real file IO finishes; the pace timer is pending
+      await vi.advanceTimersByTimeAsync(999);
+      expect(times).toHaveLength(n);
+      await vi.advanceTimersByTimeAsync(1);
+    }
     await p;
-    expect(times[2] - times[0]).toBeGreaterThanOrEqual(2000);
     expect(times[1] - times[0]).toBeGreaterThanOrEqual(1000);
+    expect(times[2] - times[0]).toBeGreaterThanOrEqual(2000);
   });
 
   it('cache write failure does not throw', async () => {
@@ -115,5 +117,56 @@ describe('creators', () => {
     ctSend.mockResolvedValue({ Events: [ev('2026-10-01T00:00:00Z')] });
     const [r] = await lookupCreators([item('i-1')], { now: NOW });
     expect(r.status).toBe('found');
+  });
+
+  it('concurrent calls for the same id make one SDK call', async () => {
+    ctSend.mockImplementation(async () => { await new Promise((r) => setTimeout(r, 20)); return { Events: [ev('2026-10-01T00:00:00Z')] }; });
+    const [a, b] = await Promise.all([lookupCreators([item('i-1')], { now: NOW }), lookupCreators([item('i-1')], { now: NOW })]);
+    expect(ctSend).toHaveBeenCalledTimes(1);
+    expect(a[0].status).toBe('found');
+    expect(b[0]).toEqual(a[0]);
+  });
+
+  it('concurrent calls do not lose or downgrade cache entries', async () => {
+    ctSend.mockImplementation(async (cmd: { input: { LookupAttributes: { AttributeValue: string }[] } }) => {
+      const id = cmd.input.LookupAttributes[0].AttributeValue;
+      await new Promise((r) => setTimeout(r, id === 'i-a' ? 5 : 30));
+      if (id === 'i-b') throw Object.assign(new Error('t'), { name: 'ThrottlingException' });
+      return { Events: [ev('2026-10-01T00:00:00Z')] };
+    });
+    await Promise.all([
+      lookupCreators([item('i-a')], { now: NOW }),
+      lookupCreators([item('i-b')], { now: NOW }),
+    ]);
+    const file = JSON.parse(fs.readFileSync(path.join(dir, 'creators.json'), 'utf8'));
+    expect(file['111:i-a'].status).toBe('found');
+    expect(file['111:i-b'].status).toBe('unknown');
+    // a late 'unknown' must never replace an existing 'found'
+    fs.writeFileSync(path.join(dir, 'creators.json'), JSON.stringify({ ...file, '111:i-b': { ...file['111:i-a'], resourceId: 'i-b' } }));
+    ctSend.mockRejectedValue(Object.assign(new Error('t'), { name: 'ThrottlingException' }));
+    await lookupCreators([item('i-b')], { now: new Date(NOW.getTime() + 48 * 3600_000) });
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'creators.json'), 'utf8'))['111:i-b'].status).toBe('found');
+  });
+
+  it('pacing holds across concurrent calls on one account', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const times: number[] = [];
+    ctSend.mockImplementation(async () => { times.push(Date.now()); return { Events: [] }; });
+    const p = Promise.all([lookupCreators([item('a')], { now: NOW }), lookupCreators([item('b')], { now: NOW })]);
+    while (times.length < 1) await new Promise((r) => setImmediate(r));
+    await vi.advanceTimersByTimeAsync(1000);
+    await p;
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(1000);
+  });
+
+  it('credentials are re-fetched after expiry', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    stsSend.mockImplementation(async () => ({ Credentials: { AccessKeyId: 'a', SecretAccessKey: 's', SessionToken: 't', Expiration: new Date(Date.now() + 900_000) } }));
+    ctSend.mockResolvedValue({ Events: [] });
+    await lookupCreators([item('x1', '222')], { now: NOW });
+    expect(stsSend).toHaveBeenCalledTimes(1);
+    vi.setSystemTime(Date.now() + 850_000); // inside the 1-minute refresh margin
+    await lookupCreators([item('x2', '222')], { now: NOW });
+    expect(stsSend).toHaveBeenCalledTimes(2);
   });
 });
