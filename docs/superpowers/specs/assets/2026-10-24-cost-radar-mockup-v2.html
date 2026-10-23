@@ -1,0 +1,100 @@
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;500;600;700&family=Caveat:wght@700&display=swap" rel="stylesheet">
+<style>
+  .k-wrap{background:#0b0b0d;border-radius:28px;padding:28px;font-family:Inter,system-ui,sans-serif;color:#f4f4f5;max-width:1100px;margin:0 auto}
+  .k-grid{display:grid;grid-template-columns:1.05fr 1fr;gap:22px}
+  .k-h{font-family:'Archivo Black',Inter,sans-serif;letter-spacing:-.5px}
+  .k-card{background:#17171a;border-radius:26px;padding:22px}
+  .k-donut{width:270px;height:270px;border-radius:50%;margin:8px auto 0;position:relative;
+    background:conic-gradient(#D6F25C 0 45%,#F26DB0 45% 63%,#B583F7 63% 79%,#F7A23B 79% 89%,#8EC5FF 89% 96%,#9CA3AF 96% 100%)}
+  .k-donut::after{content:"";position:absolute;inset:34px;background:#17171a;border-radius:50%}
+  .k-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:1}
+  .k-pill{display:inline-flex;align-items:center;gap:4px;background:#2a3510;color:#D6F25C;border-radius:999px;padding:3px 10px;font-size:12px;font-weight:700}
+  .k-row{display:flex;align-items:center;gap:12px;padding:11px 4px;border-bottom:1px solid #232327}
+  .k-row:last-child{border-bottom:0}
+  .k-ico{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;color:#111;flex:none}
+  .k-name{flex:1;font-weight:600;font-size:14px}
+  .k-sub{display:block;font-weight:500;font-size:11px;color:#9ca3af;margin-top:1px}
+  .k-amt{font-weight:700;font-size:14px;width:66px;text-align:right}
+  .k-pct{color:#9ca3af;font-size:13px;width:40px;text-align:right}
+  .k-chev{color:#6b7280}
+  .k-act{border-radius:22px;padding:16px 18px;display:flex;align-items:center;gap:14px;margin-bottom:12px;position:relative;overflow:hidden}
+  .k-act .k-plus{width:40px;height:40px;border-radius:50%;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+  .k-act b{font-size:16px}
+  .k-act small{display:block;font-size:12px;opacity:.75;margin-top:2px}
+  .k-save{margin-left:auto;font-family:'Archivo Black',sans-serif;font-size:22px;white-space:nowrap}
+  .k-sticker{position:absolute;font-family:'Caveat',cursive;font-size:20px;transform:rotate(-8deg)}
+  .k-tag{display:inline-block;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:700;margin-left:6px;vertical-align:middle}
+</style>
+
+<h2>v2 — 참고 디자인 느낌 (어두운 배경 · 라임/보라/핑크 · 굵은 숫자)</h2>
+<p class="subtitle">이 계정의 실제 리소스로 만든 <b>비용 페이지 시안</b>입니다. 금액은 서울 리전 가격표 기준 예시 추정치예요.</p>
+
+<div class="k-wrap">
+  <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px">
+    <div>
+      <div class="k-h" style="font-size:38px;line-height:1.05">지금 돈이<br>어디로 <span style="font-family:Caveat,cursive;color:#B583F7;font-size:46px">새고 있나?</span></div>
+    </div>
+    <div style="text-align:right;color:#9ca3af;font-size:12px">Sandbox (116662357283) · Moyeota 포함<br>켜져 있는 리소스 기준 · 5분 전 갱신</div>
+  </div>
+
+  <div class="k-grid">
+    <!-- LEFT: donut + breakdown -->
+    <div class="k-card">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="k-h" style="font-size:18px">이번 달 예상</div>
+        <span style="color:#9ca3af;font-size:12px">시간당 <b style="color:#fff">$0.37</b></span>
+      </div>
+      <div class="k-donut">
+        <div class="k-center">
+          <div style="color:#9ca3af;font-size:13px">Total</div>
+          <div class="k-h" style="font-size:44px;line-height:1.1">$268<span style="font-size:22px">.40</span></div>
+          <span class="k-pill">▲ 지난주 대비 +12%</span>
+        </div>
+      </div>
+      <div style="margin-top:16px">
+        <div class="k-row"><div class="k-ico" style="background:#D6F25C">🖥</div><div class="k-name">EC2 awsops-server<span class="k-sub">t4g.xlarge · 24시간 켜짐</span></div><div class="k-amt">$121.20</div><div class="k-pct">45%</div><div class="k-chev">›</div></div>
+        <div class="k-row"><div class="k-ico" style="background:#F26DB0">⚖️</div><div class="k-name">로드밸런서 ×3<span class="k-sub">awsops-alb · mo · moyeota-dev-alb</span></div><div class="k-amt">$49.30</div><div class="k-pct">18%</div><div class="k-chev">›</div></div>
+        <div class="k-row"><div class="k-ico" style="background:#B583F7">🌐</div><div class="k-name">NAT Gateway<span class="k-sub">EC2를 꺼도 계속 과금</span></div><div class="k-amt">$43.10</div><div class="k-pct">16%</div><div class="k-chev">›</div></div>
+        <div class="k-row"><div class="k-ico" style="background:#F7A23B">🔌</div><div class="k-name">VPC 엔드포인트 ×3</div><div class="k-amt">$28.50</div><div class="k-pct">10%</div><div class="k-chev">›</div></div>
+        <div class="k-row"><div class="k-ico" style="background:#8EC5FF">📍</div><div class="k-name">고정 IP ×5 <span class="k-tag" style="background:#F26DB0;color:#111">2개 미사용</span></div><div class="k-amt">$18.20</div><div class="k-pct">7%</div><div class="k-chev">›</div></div>
+        <div class="k-row"><div class="k-ico" style="background:#9CA3AF">💾</div><div class="k-name">디스크·기타</div><div class="k-amt">$8.10</div><div class="k-pct">4%</div><div class="k-chev">›</div></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: savings actions -->
+    <div>
+      <div class="k-h" style="font-size:24px;margin:4px 0 14px">아낄 수 있는 돈 <span style="color:#D6F25C">월 $112</span></div>
+
+      <div class="k-act" style="background:#D6F25C;color:#111">
+        <div class="k-plus">⏰</div>
+        <div><b>업무 시간에만 서버 켜기</b><small>평일 09–19시만 · awsops-server</small></div>
+        <div class="k-save">-$85</div>
+      </div>
+
+      <div class="k-act" style="background:#f4f4f5;color:#111">
+        <div class="k-plus">🧹</div>
+        <div><b>안 쓰는 고정 IP 2개 정리</b><small>어디에도 연결 안 됨 · 9월 7일 생성 (jiwoo)</small></div>
+        <div class="k-save">-$7</div>
+      </div>
+
+      <div class="k-act" style="background:#B583F7;color:#111">
+        <div class="k-plus">🗑</div>
+        <div><b>빈 타겟 그룹·로드밸런서 확인</b><small>타겟 0개 · moyeota-grafana-tg</small></div>
+        <div class="k-save">-$16</div>
+      </div>
+
+      <div class="k-act" style="background:#F26DB0;color:#111">
+        <div class="k-plus">💤</div>
+        <div><b>멈춘 서버의 디스크</b><small>k8s-practice · 23일째 stopped</small></div>
+        <div class="k-save">-$4</div>
+        <span class="k-sticker" style="right:96px;top:4px;color:#111">잊고 있었죠?</span>
+      </div>
+
+      <div style="background:#17171a;border-radius:22px;padding:16px 18px;margin-top:6px;display:flex;align-items:center;gap:12px">
+        <div style="font-size:26px">💸</div>
+        <div style="font-size:13px;color:#d4d4d8">지금처럼 두면 <b style="color:#F26DB0">연말까지 $640</b>이 나가요.<br>위 4개를 하면 <b style="color:#D6F25C">$375</b>로 줄어듭니다.</div>
+      </div>
+    </div>
+  </div>
+</div>
