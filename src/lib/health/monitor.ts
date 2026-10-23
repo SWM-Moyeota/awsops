@@ -89,7 +89,7 @@ async function notify(m: MonitorState, transitions: Transition[], now: Date): Pr
   if (!url) {
     if (!m.warnedNoWebhook) {
       m.warnedNoWebhook = true;
-      console.warn('[health] Slack webhook not configured (SSM /awsops/slack-webhook-url) — alerts are not sent');
+      console.warn('[health] Slack webhook not configured (SSM /ops/awsops/slack-webhook-url) — alerts are not sent');
     }
     return;
   }

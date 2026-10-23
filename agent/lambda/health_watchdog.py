@@ -396,8 +396,8 @@ def lambda_handler(event, context):
     instance_id = os.environ.get("INSTANCE_ID", "")
     alb_name = os.environ.get("ALB_NAME", "awsops-alb")
     dashboard_url = os.environ.get("DASHBOARD_URL", "")
-    webhook_param = os.environ.get("WEBHOOK_PARAM", "/awsops/slack-webhook-url")
-    state_param = os.environ.get("STATE_PARAM", "/awsops/health/watchdog-state")
+    webhook_param = os.environ.get("WEBHOOK_PARAM", "/ops/awsops/slack-webhook-url")
+    state_param = os.environ.get("STATE_PARAM", "/ops/awsops/health/watchdog-state")
     now = time.time()
 
     source, event_state, actor = _parse_event(event, instance_id)

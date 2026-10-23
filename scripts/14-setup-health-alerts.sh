@@ -16,8 +16,8 @@ set -e
 #     2. Lambda     awsops-health-watchdog (python3.12, reserved conc. 1)      #
 #     3. EventBridge rules: awsops-health-5min, awsops-ec2-state,              #
 #                           awsops-ec2-api-calls (+ targets, permissions)      #
-#     4. SSM        /awsops/slack-webhook-url (SecureString)                   #
-#                   /awsops/health/watchdog-state (String, {})                 #
+#     4. SSM        /ops/awsops/slack-webhook-url (SecureString)                   #
+#                   /ops/awsops/health/watchdog-state (String, {})                 #
 #     5. EC2 role   awsops-ec2-role inline AWSopsHealthMonitor                 #
 #                   (lambda:InvokeFunction on the 19 tool Lambdas)             #
 #                                                                              #
@@ -66,8 +66,8 @@ FUNC_NAME="awsops-health-watchdog"
 FUNC_SRC="$WORK_DIR/agent/lambda/health_watchdog.py"
 FUNC_HANDLER="health_watchdog.lambda_handler"
 ROLE_NAME="awsops-health-watchdog-role"
-WEBHOOK_PARAM="/awsops/slack-webhook-url"
-STATE_PARAM="/awsops/health/watchdog-state"
+WEBHOOK_PARAM="/ops/awsops/slack-webhook-url"
+STATE_PARAM="/ops/awsops/health/watchdog-state"
 RULE_5MIN="awsops-health-5min"
 RULE_STATE="awsops-ec2-state"
 RULE_API="awsops-ec2-api-calls"

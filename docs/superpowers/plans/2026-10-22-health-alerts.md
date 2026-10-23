@@ -4,7 +4,7 @@
 
 **Goal:** Detect AWSops component failures (Steampipe, Bedrock, AgentCore, tool Lambdas, external reachability, EC2 stopped/unresponsive) and post a Slack message only when state changes.
 
-**Architecture:** Two layers. (1) An in-server monitor inside Next.js (`src/lib/health/*`, 5-min loop, state persisted to `data/health-status.json`, heartbeat to CloudWatch). (2) An out-of-server Python Lambda `awsops-health-watchdog` triggered by EventBridge (5-min rate + EC2 state-change + CloudTrail API-call events), state in SSM. Both read the Slack webhook from SSM SecureString `/awsops/slack-webhook-url`. AWS resources are created by a CLI script run from the admin's Mac — never `cdk deploy`.
+**Architecture:** Two layers. (1) An in-server monitor inside Next.js (`src/lib/health/*`, 5-min loop, state persisted to `data/health-status.json`, heartbeat to CloudWatch). (2) An out-of-server Python Lambda `awsops-health-watchdog` triggered by EventBridge (5-min rate + EC2 state-change + CloudTrail API-call events), state in SSM. Both read the Slack webhook from SSM SecureString `/ops/awsops/slack-webhook-url`. AWS resources are created by a CLI script run from the admin's Mac — never `cdk deploy`.
 
 **Tech Stack:** Next.js 14 / TypeScript, AWS SDK v3, vitest (new devDependency, unit tests only), Python 3.12 + stdlib `unittest`, bash + AWS CLI v2.
 
@@ -14,7 +14,7 @@
 
 - Branch `feature/sandbox-deploy`. Never run `cdk deploy` (UserData + ALB drift → EC2 replacement risk).
 - Region `ap-northeast-2`, account `116662357283`, instance `i-0806bafeb330307d5`, ALB name `awsops-alb`, dashboard URL `https://awsops.moyeota.co.kr/`.
-- Webhook lives only in SSM SecureString `/awsops/slack-webhook-url` (AWS-managed key `alias/aws/ssm`). Never in Git, `data/config.json`, logs, or shell history.
+- Webhook lives only in SSM SecureString `/ops/awsops/slack-webhook-url` (AWS-managed key `alias/aws/ssm`). Never in Git, `data/config.json`, logs, or shell history.
 - Alert only on state change; `ok→fail` needs 2 consecutive failures (3 for `agentcore-invoke`); `fail→ok` needs 1 success; `unknown→ok` never alerts.
 - Intervals: monitor loop 5 min; Bedrock + Lambda probes every 30 min (every 6th loop); watchdog 5 min; heartbeat stale after 15 min; skip heartbeat judgement for 15 min after EC2 launch.
 - Tool Lambdas = exactly these 19 (explicit list, no glob): `awsops-aws-knowledge awsops-cloudtrail-mcp awsops-cloudwatch-mcp awsops-core-mcp awsops-cost-mcp awsops-dynamodb-mcp awsops-ecs-mcp awsops-eks-mcp awsops-flow-monitor awsops-iac-mcp awsops-iam-mcp awsops-istio-mcp awsops-msk-mcp awsops-network-mcp awsops-rds-mcp awsops-reachability-analyzer awsops-steampipe-query awsops-terraform-mcp awsops-valkey-mcp`. Probe payload `{"tool_name":"__healthcheck__"}`.
@@ -181,7 +181,7 @@
   # returns (new_state, slack_texts)
   def lambda_handler(event, context) -> dict
   ```
-- Env vars: `INSTANCE_ID`, `ALB_NAME` (`awsops-alb`), `DASHBOARD_URL`, `WEBHOOK_PARAM` (`/awsops/slack-webhook-url`), `STATE_PARAM` (`/awsops/health/watchdog-state`).
+- Env vars: `INSTANCE_ID`, `ALB_NAME` (`awsops-alb`), `DASHBOARD_URL`, `WEBHOOK_PARAM` (`/ops/awsops/slack-webhook-url`), `STATE_PARAM` (`/ops/awsops/health/watchdog-state`).
 - Rules in `decide`: `stopping|stopped|shutting-down|terminated` ⇒ server `stopped`; only `running→stopped` and `stopped→running` emit (🛑 with actor when known, ▶️ with "09-start-all.sh 실행 필요"). While server is `stopped`, all other items are left unchanged and silent. Heartbeat fail when running AND `now - launch_epoch >= 900` AND (`heartbeat_age_sec is None or > 900`). Dashboard fail when targets is None or any value ≠ `healthy`. External ok iff `url_status == 302` and `amazoncognito.com` in `url_location`. Fail/recover emit once per transition. `api-call` events only record `actor` into state (`last_actor`) for the following state-change message; if the state-change already arrived, `api-call` emits nothing.
 - Handler: gathers obs (boto3 `ec2.describe_instances`, `elbv2.describe_load_balancers`/`describe_target_groups`/`describe_target_health`, `cloudwatch.get_metric_data` on `AWSops/Health` `Heartbeat` last 20 min, `urllib.request` GET without following redirects, 10s timeout), reads/writes state JSON in SSM, posts each text to the webhook. Any AWS exception during gathering maps to the conservative obs value (e.g. targets=None), never raises.
 
@@ -208,10 +208,10 @@
 **Interfaces:**
 - Consumes: Task 5 handler `health_watchdog.lambda_handler`, env var names; Global Constraints names.
 - Creates (idempotent; create-or-update each):
-  - IAM role `awsops-health-watchdog-role` (trust `lambda.amazonaws.com`), managed `AWSLambdaBasicExecutionRole`, inline `WatchdogAccess`: `ec2:DescribeInstances`, `elasticloadbalancing:Describe*`, `cloudwatch:GetMetricData` on `*`; `ssm:GetParameter` on `parameter/awsops/slack-webhook-url` and `parameter/awsops/health/watchdog-state`; `ssm:PutParameter` on `parameter/awsops/health/watchdog-state`.
+  - IAM role `awsops-health-watchdog-role` (trust `lambda.amazonaws.com`), managed `AWSLambdaBasicExecutionRole`, inline `WatchdogAccess`: `ec2:DescribeInstances`, `elasticloadbalancing:Describe*`, `cloudwatch:GetMetricData` on `*`; `ssm:GetParameter` on `parameter/ops/awsops/slack-webhook-url` and `parameter/ops/awsops/health/watchdog-state`; `ssm:PutParameter` on `parameter/ops/awsops/health/watchdog-state`.
   - Lambda `awsops-health-watchdog` python3.12, handler `health_watchdog.lambda_handler`, timeout 30, memory 128, env vars from Task 5, reserved concurrency 1, tags as other awsops resources.
   - EventBridge rules (default bus) + targets + `lambda add-permission` (`events.amazonaws.com`): `awsops-health-5min` `rate(5 minutes)`; `awsops-ec2-state` pattern `{"source":["aws.ec2"],"detail-type":["EC2 Instance State-change Notification"],"detail":{"instance-id":["i-0806bafeb330307d5"],"state":["running","stopping","stopped","shutting-down","terminated"]}}`; `awsops-ec2-api-calls` pattern `{"source":["aws.ec2"],"detail-type":["AWS API Call via CloudTrail"],"detail":{"eventSource":["ec2.amazonaws.com"],"eventName":["StopInstances","StartInstances","TerminateInstances"]}}` (instance filtering happens in `decide`).
-  - SSM: `/awsops/slack-webhook-url` SecureString — prompt with `read -rsp` only if absent or `--reset-webhook` given; `/awsops/health/watchdog-state` String `{}` if absent.
+  - SSM: `/ops/awsops/slack-webhook-url` SecureString — prompt with `read -rsp` only if absent or `--reset-webhook` given; `/ops/awsops/health/watchdog-state` String `{}` if absent.
   - EC2 role inline `AWSopsHealthMonitor`: `lambda:InvokeFunction` on the 19 explicit function ARNs.
 - Behaviour: prints a summary of what will be created/updated and asks `Proceed? (y/n)`; `--dry-run` prints only; ends by invoking the watchdog once and printing its result.
 - CDK: add the same `lambda:InvokeFunction` statement (sid `HealthMonitorProbe`) to `ec2Role`; verify only with `cdk synth`, never deploy.

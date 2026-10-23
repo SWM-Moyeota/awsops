@@ -109,14 +109,14 @@ AWSops는 "고장 나도 겉으로는 멀쩡해 보이는" 구성 요소가 많�
   - EC2 running인데 하트비트가 15분 이상 갱신 안 됨 → "서버는 켜져 있으나 대시보드 점검이 멈춤 (Next.js 미기동 가능성)". 단, 서버가 시작된 지 15분이 안 됐으면 판정 보류.
   - EC2 running인데 ALB 타겟이 unhealthy/unused → "대시보드 응답 없음". 타겟 그룹은 포트로 고르지 않는다(`moyeota-grafana-tg`도 3000). 로드밸런서 `awsops-alb`에 연결된 타겟 그룹을 **매 실행 조회**한다(이름이 생성형이라 재생성 시 바뀜). `TargetGroupNotFound`/ALB 없음도 실패.
   - **외부 접속 점검**: VPC 밖 Lambda가 `GET https://awsops.moyeota.co.kr/`을 호출해 **Cognito로의 302**를 기대한다. DNS·인증서·리스너·ALB 삭제(실제 사고)를 한 번에 잡는다. 8889(`/vscode`) 타겟도 평소 healthy이므로(user-data가 code-server를 systemd로 등록) 실패 시 알린다.
-- 중복 방지: 마지막으로 알린 상태를 SSM Parameter `/awsops/health/watchdog-state`에 저장, 바뀔 때만 전송. SSM은 조건부 쓰기가 없으므로 Lambda **예약 동시성 1**로 경쟁을 막는다.
+- 중복 방지: 마지막으로 알린 상태를 SSM Parameter `/ops/awsops/health/watchdog-state`에 저장, 바뀔 때만 전송. SSM은 조건부 쓰기가 없으므로 Lambda **예약 동시성 1**로 경쟁을 막는다.
 - 스케줄은 EventBridge Scheduler가 아니라 **EventBridge Rule `rate(5 minutes)`** — Scheduler는 별도 실행 역할이 필요해 IAM 단계가 하나 늘어난다.
 - watchdog 역할 권한: `ec2:DescribeInstances`, `elasticloadbalancing:Describe*`, `cloudwatch:GetMetricData`(하트비트), `ssm:GetParameter`(webhook, state), `ssm:PutParameter`(state 파라미터 한정), CloudWatch Logs 기본.
 - 서버가 꺼져 있는 동안 ①은 당연히 알림이 없고, ②도 "중지됨" 1회 이후 조용하다.
 
 ### 4.3 Slack 전송
 
-- Slack Incoming Webhook 1개. URL은 **SSM Parameter Store SecureString `/awsops/slack-webhook-url`** 에 둔다. ①과 ② 모두 여기서 읽는다(단일 출처). Git, `config.json`, 로그, 셸 히스토리에 남기지 않는다 — `14` 스크립트가 숨김 입력(`read -s`)으로 받아 저장한다.
+- Slack Incoming Webhook 1개. URL은 **SSM Parameter Store SecureString `/ops/awsops/slack-webhook-url`** 에 둔다. ①과 ② 모두 여기서 읽는다(단일 출처). Git, `config.json`, 로그, 셸 히스토리에 남기지 않는다 — `14` 스크립트가 숨김 입력(`read -s`)으로 받아 저장한다.
 - 읽기 권한: EC2 역할은 ReadOnlyAccess로 이미 `ssm:GetParameter`가 있고, AWS 관리형 키(`alias/aws/ssm`)의 키 정책이 같은 계정의 SSM 경유 복호화를 허용하므로 `kms:Decrypt` 추가가 필요 없다. 도구 Lambda 역할(`AWSopsLambdaNetworkRole`)은 이 파라미터를 읽을 수 없음을 확인했다(AI 에이전트가 도구로 읽을 수 없음).
 - 암호화 키: **AWS 관리형 키 `alias/aws/ssm` (사용자 결정, 2026-10-22).** 같은 계정에서 ReadOnlyAccess를 가진 사람은 읽을 수 있으나, 팀 공용 샌드박스라 수용. 노출 시 영향은 해당 Slack 채널로의 메시지 전송뿐이며, Webhook을 Slack에서 재발급하고 파라미터를 덮어쓰면 복구된다.
 - 메시지 형식(Block Kit 또는 단순 텍스트 — 빌더 재량):

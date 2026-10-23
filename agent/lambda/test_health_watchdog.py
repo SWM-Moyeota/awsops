@@ -315,9 +315,9 @@ class FakeSSM:
             pass
 
     def __init__(self, state_json=None):
-        self.params = {"/awsops/slack-webhook-url": "https://hooks.slack.com/services/T/B/SECRET"}
+        self.params = {"/ops/awsops/slack-webhook-url": "https://hooks.slack.com/services/T/B/SECRET"}
         if state_json is not None:
-            self.params["/awsops/health/watchdog-state"] = state_json
+            self.params["/ops/awsops/health/watchdog-state"] = state_json
         self.puts = []
 
     def get_parameter(self, Name, WithDecryption=False):  # noqa: N803
@@ -373,8 +373,8 @@ ENV = {
     "INSTANCE_ID": "i-0806bafeb330307d5",
     "ALB_NAME": "awsops-alb",
     "DASHBOARD_URL": "https://awsops.moyeota.co.kr/",
-    "WEBHOOK_PARAM": "/awsops/slack-webhook-url",
-    "STATE_PARAM": "/awsops/health/watchdog-state",
+    "WEBHOOK_PARAM": "/ops/awsops/slack-webhook-url",
+    "STATE_PARAM": "/ops/awsops/health/watchdog-state",
 }
 
 
@@ -431,7 +431,7 @@ class HandlerTest(unittest.TestCase):
                 elb=FakeELB(FakeClientError("Throttling")), cw=FakeCW(FakeClientError("AccessDenied")),
             )
             self.assertEqual(posts, [])
-        saved = json.loads(ssm.params["/awsops/health/watchdog-state"])
+        saved = json.loads(ssm.params["/ops/awsops/health/watchdog-state"])
         self.assertEqual(saved["dashboard"], "ok")
         self.assertEqual(saved["heartbeat"], "ok")
         self.assertEqual(saved.get("fails", {}).get("dashboard", 0), 0)
