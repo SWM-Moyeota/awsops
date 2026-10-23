@@ -1,54 +1,18 @@
 // Idle Resource Scanner Collector
 // 유휴/미사용 AWS 리소스 스캔 컬렉터: Steampipe SQL로 낭비 리소스 탐지
 import { runQuery } from '@/lib/steampipe';
+import {
+  SQL_UNATTACHED_EBS, SQL_GP2_VOLUMES, SQL_UNASSOCIATED_EIPS, SQL_STOPPED_INSTANCES,
+  SQL_OLD_SNAPSHOTS, SQL_UNUSED_SECURITY_GROUPS,
+} from '@/lib/queries/idle-resources';
+import { priceEbs, priceSnapshot, pricePublicIp } from '@/lib/cost-radar/pricing';
 import type { Collector, CollectorResult, SendFn } from './types';
 
 // ============================================================================
-// SQL queries for idle resource detection
+// Cost estimation helpers (Cost Radar price table, so numbers match the Cost Radar page)
 // ============================================================================
 
-const SQL_UNATTACHED_EBS = `
-SELECT volume_id, volume_type, size, create_time, account_id, region
-FROM aws_ebs_volume
-WHERE status = 'available'
-ORDER BY size DESC`;
-
-const SQL_GP2_VOLUMES = `
-SELECT volume_id, volume_type, size, iops, account_id, region
-FROM aws_ebs_volume
-WHERE volume_type = 'gp2'`;
-
-const SQL_UNASSOCIATED_EIPS = `
-SELECT allocation_id, public_ip, account_id, region
-FROM aws_vpc_eip
-WHERE association_id IS NULL`;
-
-const SQL_STOPPED_INSTANCES = `
-SELECT instance_id, instance_type, launch_time, instance_state, account_id, region,
-  tags ->> 'Name' as name
-FROM aws_ec2_instance
-WHERE instance_state = 'stopped'`;
-
-const SQL_OLD_SNAPSHOTS = `
-SELECT snapshot_id, volume_id, volume_size, start_time, account_id, region
-FROM aws_ebs_snapshot
-WHERE start_time < NOW() - INTERVAL '90 days'
-ORDER BY volume_size DESC
-LIMIT 50`;
-
-const SQL_UNUSED_SECURITY_GROUPS = `
-SELECT group_id, group_name, vpc_id, account_id, region
-FROM aws_vpc_security_group
-WHERE group_name != 'default'
-  AND group_id NOT IN (
-    SELECT DISTINCT unnest(security_groups)
-    FROM aws_ec2_network_interface
-    WHERE security_groups IS NOT NULL
-  )`;
-
-// ============================================================================
-// Cost estimation helpers (ap-northeast-2 pricing)
-// ============================================================================
+const numOrNull = (v: unknown) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v));
 
 interface IdleCategory {
   key: string;
@@ -66,22 +30,22 @@ const IDLE_CATEGORIES: IdleCategory[] = [
     key: 'unattachedEbs',
     label: 'Unattached EBS Volumes',
     sql: SQL_UNATTACHED_EBS,
-    estimateCost: (row) => (Number(row.size) || 0) * 0.10,
-    costLabel: '$0.10/GB/mo (gp3 rate)',
+    estimateCost: (row) => priceEbs({ volumeType: String(row.volume_type), sizeGb: Number(row.size) || 0, iops: numOrNull(row.iops), region: String(row.region) }).monthly ?? 0,
+    costLabel: 'Cost Radar price table (by volume type)',
   },
   {
     key: 'gp2Volumes',
     label: 'Previous-gen EBS (gp2)',
     sql: SQL_GP2_VOLUMES,
-    estimateCost: (row) => (Number(row.size) || 0) * 0.02, // $0.10 - $0.08 savings
-    costLabel: '$0.02/GB/mo savings if migrated to gp3',
+    estimateCost: (row) => (priceEbs({ volumeType: 'gp2', sizeGb: Number(row.size) || 0, region: String(row.region) }).monthly ?? 0) * 0.2, // 20% saving
+    costLabel: '20% of gp2 cost saved if migrated to gp3',
   },
   {
     key: 'unassociatedEips',
     label: 'Unassociated Elastic IPs',
     sql: SQL_UNASSOCIATED_EIPS,
-    estimateCost: () => 3.60,
-    costLabel: '$3.60/mo each',
+    estimateCost: (row) => pricePublicIp({ region: String(row.region) }).monthly ?? 0,
+    costLabel: 'public IPv4 hourly rate x 730h each',
   },
   {
     key: 'stoppedInstances',
@@ -94,8 +58,8 @@ const IDLE_CATEGORIES: IdleCategory[] = [
     key: 'oldSnapshots',
     label: 'Old EBS Snapshots (90+ days)',
     sql: SQL_OLD_SNAPSHOTS,
-    estimateCost: (row) => (Number(row.volume_size) || 0) * 0.05,
-    costLabel: '$0.05/GB/mo',
+    estimateCost: (row) => priceSnapshot({ sizeGb: Number(row.volume_size) || 0, region: String(row.region) }).monthly ?? 0,
+    costLabel: 'snapshot GB-month rate (upper bound)',
   },
   {
     key: 'unusedSecurityGroups',

@@ -22,7 +22,7 @@
 - `datasource-client.ts` / `datasource-registry.ts` / `datasource-prompts.ts` — 외부 데이터소스 HTTP 클라이언트(7종, SSRF 방지) / 타입 레지스트리 / AI 쿼리 생성 프롬프트
 - `sns-notification.ts` — SNS 이메일 알림 (토픽 생성, 구독 동기화, 진단 완료 발행)
 - `collectors/` — auto-collect 에이전트 (db-optimize, eks-optimize, idle-scan, incident, msk-optimize, trace-analyze — 공통 `Collector` 인터페이스)
-- `queries/*.ts` — 25개 SQL 쿼리 파일 (ebs, msk, opensearch, container-cost, eks-container-cost, bedrock 포함)
+- `queries/*.ts` — 26개 SQL 쿼리 파일 (idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock 포함)
 
 ## 규칙
 - 모든 DB 접근은 `steampipe.ts`의 `runQuery()` 또는 `batchQuery()`를 통해 수행
@@ -59,7 +59,7 @@ Core libraries: Steampipe database connection, SQL query definitions, inventory,
 - `datasource-client.ts` / `datasource-registry.ts` / `datasource-prompts.ts` — External datasource HTTP clients (7 platforms, SSRF-protected) / type registry / AI query generation prompts
 - `sns-notification.ts` — SNS email notifications (topic creation, subscription sync, diagnosis completion publish)
 - `collectors/` — Auto-collect agents (db-optimize, eks-optimize, idle-scan, incident, msk-optimize, trace-analyze — shared `Collector` interface)
-- `queries/*.ts` — 25 SQL query files (incl. ebs, msk, opensearch, container-cost, eks-container-cost, bedrock)
+- `queries/*.ts` — 26 SQL query files (incl. idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock)
 
 ## Rules
 - ALL database access through `runQuery()` or `batchQuery()` in steampipe.ts

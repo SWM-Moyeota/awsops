@@ -3,10 +3,11 @@
 ## 역할
 Steampipe용 SQL 쿼리 정의. 각 파일은 특정 AWS/K8s 서비스에 대한 쿼리를 내보냄.
 
-## 주요 파일 (25개)
+## 주요 파일 (26개)
 - `bedrock.ts` — Bedrock 파운데이션 모델 (참고용, 주요 메트릭은 CloudWatch API)
 - `ebs.ts` — EBS 볼륨/스냅샷 (암호화, 어태치먼트, 인스턴스 조회)
 - `ec2.ts` — EC2 인스턴스
+- `idle-resources.ts` — 유휴 리소스 탐지 SQL 상수 (미사용 EBS/EIP, gp2, 멈춘 EC2, 오래된 스냅샷, 미사용 SG) — `collectors/idle-scan.ts`와 비용 레이더 공용
 - `msk.ts` — MSK 클러스터 (`provisioned` JSONB에서 Kafka 버전/브로커/암호화 추출)
 - `opensearch.ts` — OpenSearch 도메인 (`encryption_at_rest_options`, 클러스터 구성)
 - `elasticache.ts` — ElastiCache 클러스터 (Valkey/Redis/Memcached, `cache_nodes` JSONB)
@@ -44,10 +45,11 @@ Steampipe용 SQL 쿼리 정의. 각 파일은 특정 AWS/K8s 서비스에 대한
 ## Role
 SQL query definitions for Steampipe. Each file exports queries for a specific AWS/K8s service.
 
-## Key Files (25)
+## Key Files (26)
 - `bedrock.ts` — Bedrock foundation models (reference only, main metrics via CloudWatch API)
 - `ebs.ts` — EBS volumes/snapshots (encryption, attachments, instance lookup)
 - `ec2.ts` — EC2 instances
+- `idle-resources.ts` — idle-resource detection SQL constants (unattached EBS/EIP, gp2, stopped EC2, old snapshots, unused SGs), shared by `collectors/idle-scan.ts` and Cost Radar
 - `msk.ts` — MSK clusters (extract Kafka version/brokers/encryption from `provisioned` JSONB)
 - `opensearch.ts` — OpenSearch domains (`encryption_at_rest_options`, cluster config)
 - `elasticache.ts` — ElastiCache clusters (Valkey/Redis/Memcached, `cache_nodes` JSONB)
