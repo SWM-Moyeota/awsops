@@ -9,6 +9,7 @@ export const CHECK_TITLES: Record<CheckId, string> = {
   'agentcore-runtime': 'AgentCore 런타임',
   'agentcore-invoke': 'AgentCore 에이전트 호출',
   lambda: 'Lambda 도구',
+  'cross-account': '다른 AWS 계정 연결',
 };
 
 export const REMEDIATION: Record<CheckId, string> = {
@@ -17,6 +18,7 @@ export const REMEDIATION: Record<CheckId, string> = {
   'agentcore-runtime': 'AgentCore 콘솔에서 런타임 상태 확인, 필요 시 scripts/06g-redeploy-agent.sh',
   'agentcore-invoke': '/tmp/awsops-server.log의 [AgentCore Error] 확인',
   lambda: '실패한 함수의 CloudWatch 로그 확인 후 scripts/06c-setup-agentcore-tools.sh 재실행',
+  'cross-account': '해당 계정의 CloudFormation 스택 awsops-readonly-role(역할 AWSopsReadOnlyRole)과 External ID 확인 — 서버에서 bash scripts/12-setup-multi-account.sh verify',
 };
 
 const WEBHOOK_PARAM = '/ops/awsops/slack-webhook-url';

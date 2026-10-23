@@ -11,6 +11,7 @@ const checks = vi.hoisted(() => ({
   checkBedrock: vi.fn(async () => ({ id: 'bedrock', ok: true, message: 'ok' })),
   checkAgentcoreRuntime: vi.fn(async () => ({ id: 'agentcore-runtime', ok: true, message: 'ok' })),
   checkLambdas: vi.fn(async () => ({ id: 'lambda', ok: true, message: 'ok' })),
+  checkCrossAccount: vi.fn(async () => ({ id: 'cross-account', ok: true, message: 'ok' })),
 }));
 
 vi.mock('@aws-sdk/client-cloudwatch', () => ({

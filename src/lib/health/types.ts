@@ -1,7 +1,7 @@
 // Health monitor types — shared by state machine, checks and Slack delivery.
 // 헬스 모니터 공용 타입 — 상태 머신, 점검, Slack 전송에서 공유.
 
-export type CheckId = 'steampipe' | 'bedrock' | 'agentcore-runtime' | 'agentcore-invoke' | 'lambda';
+export type CheckId = 'steampipe' | 'bedrock' | 'agentcore-runtime' | 'agentcore-invoke' | 'lambda' | 'cross-account';
 export type CheckStatus = 'ok' | 'fail' | 'unknown';
 
 export interface CheckResult {
@@ -29,4 +29,4 @@ export interface Transition {
   at: string;
 }
 
-export const CHECK_IDS: CheckId[] = ['steampipe', 'bedrock', 'agentcore-runtime', 'agentcore-invoke', 'lambda'];
+export const CHECK_IDS: CheckId[] = ['steampipe', 'bedrock', 'agentcore-runtime', 'agentcore-invoke', 'lambda', 'cross-account'];

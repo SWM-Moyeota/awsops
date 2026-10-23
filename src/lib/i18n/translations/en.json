@@ -1537,5 +1537,6 @@
   "health.item.bedrock": "Bedrock model invocation",
   "health.item.agentcoreRuntime": "AgentCore runtime",
   "health.item.agentcoreInvoke": "AgentCore agent invocation",
-  "health.item.lambda": "Lambda tools"
+  "health.item.lambda": "Lambda tools",
+  "health.item.crossAccount": "Cross-account access"
 }

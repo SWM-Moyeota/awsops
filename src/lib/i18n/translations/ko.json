@@ -1537,5 +1537,6 @@
   "health.item.bedrock": "Bedrock 모델 호출",
   "health.item.agentcoreRuntime": "AgentCore 런타임",
   "health.item.agentcoreInvoke": "AgentCore 에이전트 호출",
-  "health.item.lambda": "Lambda 도구"
+  "health.item.lambda": "Lambda 도구",
+  "health.item.crossAccount": "다른 AWS 계정 연결"
 }

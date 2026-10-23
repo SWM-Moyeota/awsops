@@ -11,6 +11,7 @@ export const FAIL_THRESHOLD: Record<CheckId, number> = {
   'agentcore-runtime': 2,
   'agentcore-invoke': 3,
   lambda: 2,
+  'cross-account': 2,
 };
 
 function emptyItem(): ItemState {

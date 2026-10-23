@@ -4,6 +4,7 @@
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { BedrockAgentCoreControlClient, GetAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore-control';
 import { BedrockRuntimeClient, InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
+import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
 import { getConfig, getBedrockModelId } from '@/lib/app-config';
 import { pingSteampipe } from '@/lib/steampipe';
 import type { CheckResult } from './types';
@@ -13,6 +14,8 @@ const LAMBDA_CONCURRENCY = 4;
 const LAMBDA_TIMEOUT_MS = 20_000;
 const BEDROCK_TIMEOUT_MS = 30_000;
 const AGENTCORE_TIMEOUT_MS = 15_000;
+const ASSUME_ROLE_TIMEOUT_MS = 10_000;
+const CROSS_ACCOUNT_ROLE = 'AWSopsReadOnlyRole';
 const PROBE_PAYLOAD = '{"tool_name":"__healthcheck__"}';
 
 /**
@@ -176,4 +179,38 @@ export async function checkLambdas(): Promise<CheckResult> {
   } catch (err) {
     return { id: 'lambda', ok: false, message: errText(err) };
   }
+}
+
+/**
+ * Can this server still assume AWSopsReadOnlyRole in every connected target account?
+ * Catches a deleted stack/role or a changed External ID, which otherwise just makes that
+ * account look empty in the dashboard. Only the error name is reported (never the message,
+ * which can echo ARNs/External ID).
+ * 연결된 대상 계정마다 읽기 전용 역할을 빌릴 수 있는지 확인 — 역할 삭제·External ID 변경 감지.
+ */
+export async function checkCrossAccount(): Promise<CheckResult> {
+  const config = getConfig();
+  const targets = (config.accounts || []).filter((a) => !a.isHost);
+  if (targets.length === 0) {
+    return { id: 'cross-account', ok: true, message: 'no target accounts' };
+  }
+  const sts = new STSClient({ region: REGION });
+  const failures: string[] = [];
+  await Promise.all(targets.map(async (a) => {
+    try {
+      await sts.send(new AssumeRoleCommand({
+        RoleArn: `arn:aws:iam::${a.accountId}:role/${CROSS_ACCOUNT_ROLE}`,
+        RoleSessionName: 'awsops-health',
+        DurationSeconds: 900,
+        ...(config.crossAccountExternalId ? { ExternalId: config.crossAccountExternalId } : {}),
+      }), { abortSignal: AbortSignal.timeout(ASSUME_ROLE_TIMEOUT_MS) });
+    } catch (e) {
+      failures.push(`${a.alias} (${a.accountId}): ${e instanceof Error ? e.name : 'Error'}`);
+    }
+  }));
+  if (failures.length === 0) {
+    return { id: 'cross-account', ok: true, message: `${targets.length}/${targets.length} accounts reachable` };
+  }
+  failures.sort();
+  return { id: 'cross-account', ok: false, message: `${failures.length}/${targets.length} unreachable: ${failures.join(', ')}` };
 }

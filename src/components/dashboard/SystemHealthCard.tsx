@@ -37,6 +37,7 @@ const ITEM_KEYS: Record<string, string> = {
   'agentcore-runtime': 'agentcoreRuntime',
   'agentcore-invoke': 'agentcoreInvoke',
   lambda: 'lambda',
+  'cross-account': 'crossAccount',
 };
 
 function fmt(iso: string | null): string {

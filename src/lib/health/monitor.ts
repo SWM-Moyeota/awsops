@@ -7,7 +7,7 @@ import { CloudWatchClient, PutMetricDataCommand } from '@aws-sdk/client-cloudwat
 import { getConfig } from '@/lib/app-config';
 import { applyResults, initialState, loadState, saveState } from './state';
 import { formatSlackMessage, getWebhookUrl, postSlack } from './slack';
-import { checkAgentcoreRuntime, checkBedrock, checkLambdas, checkSteampipe } from './checks';
+import { checkAgentcoreRuntime, checkBedrock, checkCrossAccount, checkLambdas, checkSteampipe } from './checks';
 import type { CheckId, CheckResult, HealthState, Transition } from './types';
 
 const LOOP_INTERVAL_MS = 5 * 60 * 1000;
@@ -156,6 +156,7 @@ export async function runOnce(opts?: { includeSlow?: boolean }): Promise<void> {
       const pending: Promise<CheckResult>[] = [
         safeCheck('steampipe', checkSteampipe),
         safeCheck('agentcore-runtime', checkAgentcoreRuntime),
+        safeCheck('cross-account', checkCrossAccount),
       ];
       if (opts?.includeSlow) {
         pending.push(safeCheck('bedrock', checkBedrock), safeCheck('lambda', checkLambdas));

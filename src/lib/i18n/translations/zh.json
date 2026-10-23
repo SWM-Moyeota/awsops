@@ -1446,5 +1446,6 @@
   "health.item.bedrock": "Bedrock 模型调用",
   "health.item.agentcoreRuntime": "AgentCore 运行时",
   "health.item.agentcoreInvoke": "AgentCore 代理调用",
-  "health.item.lambda": "Lambda 工具"
+  "health.item.lambda": "Lambda 工具",
+  "health.item.crossAccount": "跨账号访问"
 }
