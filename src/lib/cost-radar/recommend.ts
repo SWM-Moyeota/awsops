@@ -39,13 +39,25 @@ function tagsOf(row: Row): Record<string, string> {
 const hasTagPrefix = (tags: Record<string, string>, prefixes: string[]) => Object.keys(tags).some(k => prefixes.some(p => k.startsWith(p)));
 const isManaged = (tags: Record<string, string>) => hasTagPrefix(tags, MANAGED_TAG_PREFIXES);
 
-/** "User initiated (2026-10-23 12:58:30 GMT)" -> Date, or null when unparseable. */
-export function parseStateTransitionTime(s: string | null | undefined): Date | null {
-  if (!s) return null;
+/**
+ * Tolerant timestamp parser: Date | ISO-8601 string | "User initiated (YYYY-MM-DD HH:MM:SS GMT)" -> Date, else null. Never throws.
+ * 관대한 시각 파서: Date / ISO-8601 / "User initiated (...)" 형식, 그 외는 null.
+ */
+export function parseStateTransitionTime(s: unknown): Date | null {
+  if (s instanceof Date) return Number.isNaN(s.getTime()) ? null : new Date(s.getTime());
+  if (typeof s !== 'string' || !s) return null;
+  const iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/.exec(s.trim());
+  if (iso) {
+    const t = Date.parse(s.trim());
+    return Number.isNaN(t) ? null : new Date(t);
+  }
   const m = /\((\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2}) GMT\)/.exec(s);
   if (!m) return null;
-  const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
-  return Number.isNaN(t) ? null : new Date(t);
+  const [y, mo, d, h, mi, se] = m.slice(1).map(Number);
+  const t = new Date(Date.UTC(y, mo - 1, d, h, mi, se));
+  const ok = mo >= 1 && mo <= 12 && h <= 23 && mi <= 59 && se <= 59
+    && t.getUTCFullYear() === y && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d;
+  return ok ? t : null;
 }
 
 const consoleBase = (region: string) => `https://${region}.console.aws.amazon.com/ec2/home?region=${region}`;
@@ -106,7 +118,7 @@ function recommendAccount(inv: RawInventory, now: Date): Recommendation[] {
   const coveredVolumes = new Set<string>(); // EBS counted under a long-stopped instance / 멈춘 EC2 아래 합산된 EBS
   for (const i of inv.instances) {
     if (str(i.instance_state) !== 'stopped') continue;
-    const since = parseStateTransitionTime(str(i.state_transition_time));
+    const since = parseStateTransitionTime(i.state_transition_time);
     if (!since) continue; // never guess / 추측하지 않음
     const days = utcDay(now) - utcDay(since); // UTC calendar days / UTC 날짜 차이
     if (days < LONG_STOPPED_DAYS) continue;
@@ -128,8 +140,8 @@ function recommendAccount(inv: RawInventory, now: Date): Recommendation[] {
   // 4. Old snapshots (upper bound: volume size) / 오래된 스냅샷 (볼륨 크기 기준 상한)
   for (const s of inv.snapshots) {
     if (s.owner_id && str(s.owner_id) !== accountId) continue;
-    const started = new Date(str(s.start_time));
-    if (Number.isNaN(started.getTime())) continue;
+    const started = parseStateTransitionTime(s.start_time);
+    if (!started) continue; // unparseable: skip / 파싱 불가 시 건너뜀
     const days = utcDay(now) - utcDay(started);
     if (days < OLD_SNAPSHOT_DAYS) continue;
     const id = str(s.snapshot_id), region = str(s.region);

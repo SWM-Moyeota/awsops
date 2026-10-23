@@ -35,6 +35,23 @@ describe('parseStateTransitionTime', () => {
   it('parsesGmtTimestamp', () => {
     expect(parseStateTransitionTime('User initiated (2026-10-23 12:58:30 GMT)')?.toISOString()).toBe('2026-10-23T12:58:30.000Z');
   });
+  it('parsesIsoTransitionTime', () => {
+    expect(parseStateTransitionTime('2026-10-02T10:51:56Z')?.toISOString()).toBe('2026-10-02T10:51:56.000Z');
+    expect(parseStateTransitionTime('2026-10-02T10:51:56.123Z')?.toISOString()).toBe('2026-10-02T10:51:56.123Z');
+    expect(parseStateTransitionTime('2026-10-02T19:51:56+09:00')?.toISOString()).toBe('2026-10-02T10:51:56.000Z');
+  });
+  it('parsesDateObjectTransitionTime', () => {
+    const d = new Date('2026-10-02T10:51:56Z');
+    const out = parseStateTransitionTime(d);
+    expect(out?.toISOString()).toBe('2026-10-02T10:51:56.000Z');
+    expect(out).not.toBe(d);
+    expect(parseStateTransitionTime(new Date('nope'))).toBeNull();
+  });
+  it('outOfRangeUserInitiatedIsNull', () => {
+    expect(parseStateTransitionTime('User initiated (2026-13-23 12:58:30 GMT)')).toBeNull();
+    expect(parseStateTransitionTime('User initiated (2026-02-30 12:58:30 GMT)')).toBeNull();
+    expect(parseStateTransitionTime('User initiated (2026-10-23 25:58:30 GMT)')).toBeNull();
+  });
   it('unparseableTransitionTimeIsSkipped', () => {
     for (const s of ['', null, undefined, 'weird']) expect(parseStateTransitionTime(s as string)).toBeNull();
     const recs = recommend([inv({ instances: [instance({ instance_state: 'stopped', state_transition_time: 'weird' }), instance({ instance_id: 'i-2', instance_state: 'stopped', state_transition_time: null })] })], NOW);
@@ -82,6 +99,12 @@ describe('unattached-ebs', () => {
 
 describe('long-stopped-ec2', () => {
   const vol = volume({ volume_id: 'vol-9', volume_type: 'gp3', size: 50, attachments: [{ InstanceId: 'i-1' }] });
+  it('longStoppedFiresForDateObjectRow', () => {
+    const recs = recommend([inv({ instances: [instance({ instance_state: 'stopped', state_transition_time: new Date('2026-10-02T10:51:56Z') })] })], NOW);
+    const r = by(recs, 'long-stopped-ec2');
+    expect(r).toHaveLength(1);
+    expect(r[0].params.days).toBe(22);
+  });
   it('longStoppedUsesTransitionDate', () => {
     const recs = recommend([inv({ instances: [instance({ instance_state: 'stopped' })], volumes: [vol] })], NOW);
     const r = by(recs, 'long-stopped-ec2');
@@ -123,6 +146,11 @@ describe('old-snapshot', () => {
     expect(r[0].monthlySaving).toBeCloseTo(100 * 0.05, 2);
     expect(r[0].params.days).toBeGreaterThanOrEqual(90);
     expect(r[0].cliCommand).toContain('aws ec2 delete-snapshot --snapshot-id snap-1');
+  });
+  it('snapshotStartTimeAsDateObject', () => {
+    const r = by(recommend([inv({ snapshots: [snap({ start_time: new Date('2026-07-01T00:00:00Z') })] })], NOW), 'old-snapshot');
+    expect(r).toHaveLength(1);
+    expect(by(recommend([inv({ snapshots: [snap({ start_time: new Date('garbage') }), snap({ snapshot_id: 'snap-2', start_time: null })] })], NOW), 'old-snapshot')).toHaveLength(0);
   });
   it('recentSnapshotNotRecommended', () => {
     expect(by(recommend([inv({ snapshots: [snap({ start_time: '2026-09-20T00:00:00Z' })] })], NOW), 'old-snapshot')).toHaveLength(0);
