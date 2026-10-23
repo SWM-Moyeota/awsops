@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import table from '../prices.ap-northeast-2.json';
+import { PRICE_AS_OF } from '../price-as-of';
 import {
   HOURS_PER_MONTH, priceAsOf, priceEc2, priceEbs, priceSnapshot, pricePublicIp,
   priceNat, priceLb, priceVpcEndpoint, priceRds, priceElastiCache,
@@ -98,6 +99,11 @@ describe('priceRds', () => {
     expect(priceRds({ ...base, engine: 'mysql', multiAz: false }).monthly).not.toBeNull();
     expect(priceRds({ ...base, engine: 'mariadb', multiAz: false }).monthly).not.toBeNull();
   });
+  it('stopped instance pays storage only (aurora stopped = 0)', () => {
+    expect(priceRds({ ...base, multiAz: false, allocatedGb: 100, stopped: true }).monthly).toBeCloseTo(100 * table.rds.storageGbMonth.gp3[0], 6);
+    expect(priceRds({ ...base, multiAz: true, allocatedGb: 100, stopped: true }).monthly).toBeCloseTo(100 * table.rds.storageGbMonth.gp3[1], 6);
+    expect(priceRds({ ...base, engine: 'aurora-postgresql', instanceClass: 'db.r6g.large', multiAz: false, storageType: 'aurora', allocatedGb: 1, stopped: true }).monthly).toBe(0);
+  });
   it('unknown engine or class is unpriced', () => {
     expect(priceRds({ ...base, engine: 'oracle-ee', multiAz: false })).toEqual({ monthly: null, reason: 'unknown-type' });
     expect(priceRds({ ...base, instanceClass: 'db.zz9.huge', multiAz: false })).toEqual({ monthly: null, reason: 'unknown-type' });
@@ -116,5 +122,9 @@ describe('meta', () => {
   it('exposes constants', () => {
     expect(HOURS_PER_MONTH).toBe(730);
     expect(priceAsOf()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+  it('the client-side PRICE_AS_OF constant matches the price table', () => {
+    expect(PRICE_AS_OF).toBe(table.asOf);
+    expect(priceAsOf()).toBe(PRICE_AS_OF);
   });
 });

@@ -12,7 +12,8 @@ const DAYS_PER_MONTH = 30.4;
 const KST_OFFSET_MS = 9 * 3600 * 1000;
 const DAY_MS = 86400000;
 const MANAGED_TAG_PREFIXES = ['aws:ecs:', 'elbv2.k8s.aws/', 'aws:autoscaling:'];
-const GUIDE_URL = 'https://docs.aws.amazon.com/scheduler/latest/UserGuide/what-is-scheduler.html';
+// EC2 owned by ASG/EKS/ECS: a schedule would fight the owner. / ASG·EKS·ECS 소유 EC2는 스케줄을 걸 수 없음.
+const MANAGED_INSTANCE_TAG_PREFIXES = ['aws:autoscaling:', 'eks:', 'kubernetes.io/cluster/', 'aws:ecs:'];
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
@@ -35,7 +36,8 @@ function tagsOf(row: Row): Record<string, string> {
   for (const [k, v] of Object.entries(p as Record<string, unknown>)) out[k] = str(v);
   return out;
 }
-const isManaged = (tags: Record<string, string>) => Object.keys(tags).some(k => MANAGED_TAG_PREFIXES.some(p => k.startsWith(p)));
+const hasTagPrefix = (tags: Record<string, string>, prefixes: string[]) => Object.keys(tags).some(k => prefixes.some(p => k.startsWith(p)));
+const isManaged = (tags: Record<string, string>) => hasTagPrefix(tags, MANAGED_TAG_PREFIXES);
 
 /** "User initiated (2026-10-23 12:58:30 GMT)" -> Date, or null when unparseable. */
 export function parseStateTransitionTime(s: string | null | undefined): Date | null {
@@ -83,7 +85,11 @@ function recommendAccount(inv: RawInventory, now: Date): Recommendation[] {
     add('unattached-ebs', v, id, {
       params: { sizeGb: num(v.size), volumeType: str(v.volume_type) },
       monthlySaving: ebsMonthly(v) ?? 0,
-      cliCommand: `aws ec2 delete-volume --volume-id ${id} --region ${region}`,
+      // Snapshot first, then delete. / 스냅샷을 먼저 만든 뒤 삭제.
+      cliCommand: [
+        `aws ec2 create-snapshot --volume-id ${id} --description "backup before delete" --region ${region}`,
+        `aws ec2 delete-volume --volume-id ${id} --region ${region}`,
+      ].join('\n'),
       consoleUrl: `${consoleBase(region)}#VolumeDetails:volumeId=${id}`,
     });
   }
@@ -110,7 +116,11 @@ function recommendAccount(inv: RawInventory, now: Date): Recommendation[] {
     add('long-stopped-ec2', i, id, {
       params: { days, since: since.toISOString() },
       monthlySaving: vols.reduce((s, v) => s + (ebsMonthly(v) ?? 0), 0),
-      cliCommand: `aws ec2 terminate-instances --instance-ids ${id} --region ${region}`,
+      // AMI first, then terminate. / AMI를 먼저 만든 뒤 종료.
+      cliCommand: [
+        `aws ec2 create-image --instance-id ${id} --name "${id}-backup" --region ${region}`,
+        `aws ec2 terminate-instances --instance-ids ${id} --region ${region}`,
+      ].join('\n'),
       consoleUrl: `${consoleBase(region)}#InstanceDetails:instanceId=${id}`,
     });
   }
@@ -131,17 +141,22 @@ function recommendAccount(inv: RawInventory, now: Date): Recommendation[] {
     });
   }
 
-  // 5. Empty target groups / load balancers (skipped when the TG query failed)
-  //    빈 타겟 그룹·로드밸런서 (타겟 그룹 조회 실패 시 건너뜀)
+  // 5. Empty target groups / load balancers (skipped when the TG query failed). If any TG's LB link is
+  //    unreadable, no LB in this account is flagged empty (the link is unknown).
+  //    빈 타겟 그룹·로드밸런서 (타겟 그룹 조회 실패 시 건너뜀). LB 연결을 읽을 수 없는 TG가 하나라도 있으면
+  //    이 계정의 LB는 비었다고 판단하지 않는다.
   if (!inv.errors['target-groups']) {
     const emptyTg = new Map<string, { empty: boolean; managed: boolean; lbs: string[] }>();
+    let lbLinksKnown = true;
     for (const t of inv.targetGroups) {
       const health = arr(t.target_health_descriptions);
       const arn = str(t.target_group_arn), region = str(t.region);
       const tags = tagsOf(t);
       const empty = health !== null && health.length === 0; // null = unknown, not empty
       const managed = isManaged(tags);
-      emptyTg.set(arn, { empty, managed, lbs: (arr(t.load_balancer_arns) ?? []).map(str) });
+      const lbArns = arr(t.load_balancer_arns);
+      if (lbArns === null) lbLinksKnown = false;
+      emptyTg.set(arn, { empty, managed, lbs: (lbArns ?? []).map(str) });
       if (!empty) continue;
       add('empty-tg', t, arn, {
         params: { name: str(t.target_group_name) },
@@ -153,7 +168,7 @@ function recommendAccount(inv: RawInventory, now: Date): Recommendation[] {
       });
     }
     const lbs: [Row, 'application' | 'network'][] = [...inv.albs.map(l => [l, 'application'] as [Row, 'application']), ...inv.nlbs.map(l => [l, 'network'] as [Row, 'network'])];
-    for (const [l, type] of lbs) {
+    for (const [l, type] of lbLinksKnown ? lbs : []) {
       const arn = str(l.arn), region = str(l.region);
       const mine = Array.from(emptyTg.values()).filter(t => t.lbs.includes(arn));
       if (!mine.every(t => t.empty)) continue;
@@ -178,10 +193,13 @@ function recommendAccount(inv: RawInventory, now: Date): Recommendation[] {
     }).monthly;
     if (monthly === null) continue;
     const id = str(i.instance_id);
+    const managed = hasTagPrefix(tagsOf(i), MANAGED_INSTANCE_TAG_PREFIXES);
     add('office-hours', i, id, {
       params: { monthly: round2(monthly), hoursPerWeek: OFFICE_HOURS_PER_WEEK },
       monthlySaving: monthly * (1 - OFFICE_HOURS_PER_WEEK / HOURS_PER_WEEK),
-      cliCommand: `# Guide only, no stop command: schedule start/stop with EventBridge Scheduler ${GUIDE_URL}`,
+      countedInTotal: !managed,
+      ...(managed ? { note: 'managed-instance' as const } : {}),
+      cliCommand: '', // no command: the panel shows a scheduling guide / 명령 없음: 화면에 스케줄 안내 표시
       consoleUrl: `${consoleBase(region)}#InstanceDetails:instanceId=${id}`,
     });
   }

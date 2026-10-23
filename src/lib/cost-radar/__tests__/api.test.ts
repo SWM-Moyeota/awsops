@@ -15,6 +15,7 @@ import type { RawInventory } from '../types';
 const A = '111111111111';
 const B = '222222222222';
 const NOW = new Date('2026-10-24T03:00:00Z');
+const CATS = ['ec2', 'loadbalancer', 'nat', 'vpc-endpoint', 'public-ip', 'storage', 'rds', 'elasticache'];
 
 function inv(accountId: string): RawInventory {
   return {
@@ -60,6 +61,60 @@ describe('buildRadarResponse', () => {
     expect(d.collectInventory).toHaveBeenCalledTimes(1);
     expect(d.collectInventory).toHaveBeenCalledWith(B);
     expect(r.estimate.accountId).toBe(B);
+  });
+
+  it('collects accounts one at a time', async () => {
+    let active = 0;
+    let peak = 0;
+    const collect = vi.fn(async (id: string) => {
+      active += 1; peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active -= 1;
+      return inv(id);
+    });
+    await buildRadarResponse('__all__', deps({ collectInventory: collect }));
+    expect(collect).toHaveBeenCalledTimes(2);
+    expect(peak).toBe(1);
+  });
+
+  it('throws (500, not cached) when every category of every account failed', async () => {
+    const errors = Object.fromEntries(CATS.map((k) => [k, 'e']));
+    const d = deps({ collectInventory: vi.fn(async (id: string) => ({ ...inv(id), errors })) });
+    await expect(buildRadarResponse('__all__', d)).rejects.toThrow();
+    await expect(getRadarResponse(A, d)).rejects.toThrow();
+    // one account still answering is a partial result, not a failure
+    const mixed = deps({ collectInventory: vi.fn(async (id: string) => (id === A ? { ...inv(id), errors } : inv(id))) });
+    const r = await buildRadarResponse('__all__', mixed);
+    expect(r.estimate.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('trend compares the live estimate with the entry 7 KST days earlier', async () => {
+    const withNat = (id: string): RawInventory => ({
+      ...inv(id),
+      nats: [{ nat_gateway_id: `nat-${id}`, state: 'available', tags: null, account_id: id, region: 'ap-northeast-2' }],
+    });
+    const live = await buildRadarResponse(A, deps({ collectInventory: async (id) => withNat(id) }));
+    const natMonthly = live.estimate.monthly;
+    expect(natMonthly).toBeGreaterThan(0);
+    const readHistory = vi.fn(async () => ({
+      entries: [
+        { accountId: A, day: '2026-10-17', monthly: natMonthly / 2, categories: {} },
+        // today's early entry must be ignored in favour of the live total
+        { accountId: A, day: '2026-10-24', monthly: 1, categories: {} },
+      ],
+    }));
+    const r = await buildRadarResponse(A, deps({ collectInventory: async (id) => withNat(id), readHistory }));
+    expect(r.trend).toEqual({ previousMonthly: natMonthly / 2, changePercent: 100 });
+  });
+
+  it('trend is hidden while the estimate has warnings', async () => {
+    const readHistory = vi.fn(async () => ({ entries: [{ accountId: A, day: '2026-10-17', monthly: 10, categories: {} }] }));
+    const collect = async (id: string): Promise<RawInventory> => ({
+      ...inv(id), errors: { rds: 'denied' },
+      nats: [{ nat_gateway_id: 'nat-1', state: 'available', tags: null, account_id: id, region: 'ap-northeast-2' }],
+    });
+    const r = await buildRadarResponse(A, deps({ collectInventory: collect, readHistory }));
+    expect(r.trend).toBeNull();
   });
 
   it('invalidAccountIdRejected', async () => {
@@ -138,6 +193,37 @@ describe('recordDailyIfMissing', () => {
     const d = dd({ collectInventory: vi.fn(async (id: string) => ({ ...inv(id), errors })) });
     await recordDailyIfMissing(NOW, d);
     expect(fs.existsSync(path.join(dir, 'history.json'))).toBe(false);
+  });
+
+  it('a partial entry is marked and replaced by a later complete run the same day', async () => {
+    const partial = dd({ collectInventory: vi.fn(async (id: string) => ({ ...inv(id), errors: { rds: 'denied' } })) });
+    await recordDailyIfMissing(NOW, partial);
+    let hist = JSON.parse(fs.readFileSync(path.join(dir, 'history.json'), 'utf8'));
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.entries.every((e: { partial?: boolean }) => e.partial === true)).toBe(true);
+    const full = dd();
+    await recordDailyIfMissing(new Date(NOW.getTime() + 3600_000), full);
+    expect(full.collectInventory).toHaveBeenCalledTimes(2);
+    hist = JSON.parse(fs.readFileSync(path.join(dir, 'history.json'), 'utf8'));
+    expect(hist.entries).toHaveLength(2);
+    expect(hist.entries.some((e: { partial?: boolean }) => e.partial)).toBe(false);
+    // complete entries are not collected again / 완전한 기록은 다시 수집하지 않음
+    await recordDailyIfMissing(new Date(NOW.getTime() + 7200_000), full);
+    expect(full.collectInventory).toHaveBeenCalledTimes(2);
+  });
+
+  it('collects accounts one at a time', async () => {
+    let active = 0;
+    let peak = 0;
+    const collect = vi.fn(async (id: string) => {
+      active += 1; peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active -= 1;
+      return inv(id);
+    });
+    await recordDailyIfMissing(NOW, dd({ collectInventory: collect }));
+    expect(collect).toHaveBeenCalledTimes(2);
+    expect(peak).toBe(1);
   });
 
   it('overlapping calls run once', async () => {

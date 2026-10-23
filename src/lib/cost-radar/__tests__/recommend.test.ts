@@ -68,6 +68,13 @@ describe('unattached-ebs', () => {
     expect(r[0].monthlySaving).toBeCloseTo(price, 2);
     expect(r[0].cliCommand).toContain('aws ec2 delete-volume --volume-id vol-1');
   });
+  it('snapshotFirstThenDelete', () => {
+    const [r] = by(recommend([inv({ volumes: [volume({ state: 'available' })] })], NOW), 'unattached-ebs');
+    expect(r.cliCommand.split('\n')).toEqual([
+      `aws ec2 create-snapshot --volume-id vol-1 --description "backup before delete" --region ${R}`,
+      `aws ec2 delete-volume --volume-id vol-1 --region ${R}`,
+    ]);
+  });
   it('inUseVolumeNotRecommended', () => {
     expect(by(recommend([inv({ volumes: [volume()] })], NOW), 'unattached-ebs')).toHaveLength(0);
   });
@@ -83,6 +90,13 @@ describe('long-stopped-ec2', () => {
     const price = priceEbs({ volumeType: 'gp3', sizeGb: 50, iops: 3000, throughput: 125, region: R }).monthly as number;
     expect(r[0].monthlySaving).toBeCloseTo(price, 2);
     expect(r[0].cliCommand).toContain('aws ec2 terminate-instances --instance-ids i-1');
+  });
+  it('amiFirstThenTerminate', () => {
+    const [r] = by(recommend([inv({ instances: [instance({ instance_state: 'stopped' })], volumes: [vol] })], NOW), 'long-stopped-ec2');
+    expect(r.cliCommand.split('\n')).toEqual([
+      `aws ec2 create-image --instance-id i-1 --name "i-1-backup" --region ${R}`,
+      `aws ec2 terminate-instances --instance-ids i-1 --region ${R}`,
+    ]);
   });
   it('recentlyStoppedNotRecommended', () => {
     const recs = recommend([inv({ instances: [instance({ instance_state: 'stopped', state_transition_time: 'User initiated (2026-10-21 01:00:00 GMT)' })] })], NOW);
@@ -154,6 +168,23 @@ describe('empty target groups and load balancers', () => {
   it('lbWithoutTargetGroupsIsRecommended', () => {
     expect(by(recommend([inv({ nlbs: [lb({ arn: 'arn:nlb' })] })], NOW), 'empty-lb')).toHaveLength(1);
   });
+  it('unparseableLbLinkSuppressesEveryEmptyLbInTheAccount', () => {
+    for (const bad of [null, 'not-json', '{"a":1}']) {
+      const recs = recommend([inv({ albs: [lb(), lb({ arn: 'arn:lb2', name: 'lb2' })], targetGroups: [
+        tg({ load_balancer_arns: ['arn:lb1'] }),
+        tg({ target_group_arn: 'arn:tg2', load_balancer_arns: bad }),
+      ] })], NOW);
+      expect(by(recs, 'empty-lb')).toHaveLength(0);
+      expect(by(recs, 'empty-tg')).toHaveLength(2); // TG rule itself still applies / TG 규칙은 그대로
+    }
+    // other accounts are unaffected / 다른 계정은 영향 없음
+    const B = '222222222222';
+    const recs = recommend([
+      inv({ targetGroups: [tg({ load_balancer_arns: null })] }),
+      inv({ accountId: B, albs: [lb({ account_id: B })] }),
+    ], NOW);
+    expect(by(recs, 'empty-lb').map(r => r.accountId)).toEqual([B]);
+  });
   it('targetGroupQueryErrorSkipsTgAndLbRules', () => {
     const recs = recommend([inv({ albs: [lb()], targetGroups: [tg()], errors: { 'target-groups': 'denied' } })], NOW);
     expect(by(recs, 'empty-tg')).toHaveLength(0);
@@ -168,7 +199,17 @@ describe('office-hours', () => {
     const monthly = priceEc2({ instanceType: 't4g.xlarge', platformDetails: 'Linux/UNIX', tenancy: 'default', region: R }).monthly as number;
     expect(r[0].monthlySaving).toBeCloseTo(two(monthly * (1 - 50 / 168)), 2);
     expect(r[0].resourceId).toBe('i-1');
-    expect(r[0].cliCommand).not.toMatch(/stop-instances/);
+    expect(r[0].cliCommand).toBe('');
+    expect(r[0].countedInTotal).toBe(true);
+    expect(r[0].note).toBeUndefined();
+  });
+  it('managedInstanceIsListedButNotCounted', () => {
+    for (const key of ['aws:autoscaling:groupName', 'eks:cluster-name', 'kubernetes.io/cluster/prod', 'aws:ecs:clusterName']) {
+      const [r] = by(recommend([inv({ instances: [instance({ tags: { [key]: 'owned', Name: 'node' } })] })], NOW), 'office-hours');
+      expect(r.note).toBe('managed-instance');
+      expect(r.countedInTotal).toBe(false);
+      expect(r.monthlySaving).toBeGreaterThan(0);
+    }
   });
   it('unpricedOrStoppedInstanceHasNoOfficeHours', () => {
     const recs = recommend([inv({ instances: [instance({ platform_details: 'Windows' }), instance({ instance_id: 'i-2', instance_state: 'stopped' })] })], NOW);

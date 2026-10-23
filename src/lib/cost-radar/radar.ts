@@ -2,10 +2,18 @@
 // 비용 레이더 응답 조립 + 5분 캐시 + creators ID 파싱 (route 파일은 핸들러만 export 가능).
 import NodeCache from 'node-cache';
 import { collectInventory as defaultCollect } from './collect';
-import { buildEstimate, ALL_SCOPE } from './estimate';
+import { buildEstimate, collectionFailed, ALL_SCOPE } from './estimate';
 import { recommend, summarizeSavings } from './recommend';
 import { readHistory as defaultReadHistory, trendFor, type HistoryFile } from './history';
 import type { RadarResponse, RawInventory } from './types';
+
+/** Every account in scope returned nothing at all (route answers 500, nothing cached). / 전 계정 수집 실패. */
+export class RadarCollectionError extends Error {
+  constructor() {
+    super('every Steampipe query failed');
+    this.name = 'CollectionFailed';
+  }
+}
 
 export const MAX_CREATOR_IDS = 50;
 const CACHE_TTL_S = 300;
@@ -34,16 +42,24 @@ function resolveIds(accountId: string, accounts: RadarDeps['accounts']): string[
   return [accountId];
 }
 
+/** Accounts are collected one at a time to keep the Steampipe pool free. / 풀 보호를 위해 계정은 순차 수집. */
+async function collectSequential(ids: string[], collect: RadarDeps['collectInventory']): Promise<RawInventory[]> {
+  const out: RawInventory[] = [];
+  for (const id of ids) out.push(await collect(id));
+  return out;
+}
+
 export async function buildRadarResponse(accountId: string, deps: RadarDeps): Promise<RadarResponse> {
   const ids = resolveIds(accountId, deps.accounts);
-  const [invs, hist] = await Promise.all([
-    Promise.all(ids.map((id) => deps.collectInventory(id))),
-    deps.readHistory(),
-  ]);
+  const [invs, hist] = await Promise.all([collectSequential(ids, deps.collectInventory), deps.readHistory()]);
+  if (invs.length > 0 && invs.every(collectionFailed)) throw new RadarCollectionError();
   const estimate = buildEstimate(invs, accountId);
   const recommendations = recommend(invs, deps.now);
   const savings = summarizeSavings(recommendations, estimate.monthly, deps.now);
-  const trend = trendFor(hist, ids, deps.now);
+  // Live per-account totals; no trend while anything is missing. / 실시간 계정별 합계, 누락이 있으면 추이 숨김.
+  const current: Record<string, number> = {};
+  for (const inv of invs) current[inv.accountId] = buildEstimate([inv], inv.accountId).monthly;
+  const trend = estimate.warnings.length > 0 ? null : trendFor(hist, current, deps.now);
   return {
     estimate,
     recommendations,

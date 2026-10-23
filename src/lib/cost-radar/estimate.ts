@@ -7,6 +7,10 @@ import {
 import type { CategoryId, CategoryTotal, Estimate, PricedResource, RawInventory, Row } from './types';
 
 export const ALL_SCOPE = '__all__';
+const ALL_CATEGORIES: CategoryId[] = ['ec2', 'loadbalancer', 'nat', 'vpc-endpoint', 'public-ip', 'storage', 'rds', 'elasticache'];
+
+/** Every priced category of this account failed (nothing usable). / 이 계정의 모든 카테고리 조회 실패. */
+export const collectionFailed = (inv: RawInventory): boolean => ALL_CATEGORIES.every((c) => !!inv.errors[c]);
 
 /** Numeric coercion: strings/null/NaN become 0 (never NaN). / 숫자 변환: 문자열/null/NaN은 0. */
 const num = (v: unknown): number => {
@@ -41,12 +45,28 @@ function make(
   return res;
 }
 
+/** JSONB array or its JSON text -> length (0 when unparseable). / JSONB 배열 길이. */
+function arrLen(v: unknown): number {
+  let o = v;
+  if (typeof o === 'string') { try { o = JSON.parse(o); } catch { return 0; } }
+  return Array.isArray(o) ? o.length : 0;
+}
+
 function priceInventory(inv: RawInventory): PricedResource[] {
   const out: PricedResource[] = [];
+  // Auto-assigned public IPv4 of running instances (EIPs are priced below). / 자동 할당 퍼블릭 IPv4 (EIP는 아래에서).
+  const eipIps = new Set(inv.eips.map(e => str(e.public_ip)).filter(Boolean));
   for (const r of inv.instances) {
     if (str(r.instance_state) !== 'running') continue; // stopped = 0 / 중지 = 0원
     const price = priceEc2({ instanceType: str(r.instance_type), platformDetails: str(r.platform_details), tenancy: str(r.placement_tenancy), region: str(r.region) });
-    out.push(make(r, str(r.instance_id), 'ec2', str(r.instance_type), price));
+    const inst = make(r, str(r.instance_id), 'ec2', str(r.instance_type), price);
+    out.push(inst);
+    const ip = str(r.public_ip_address);
+    if (ip && !eipIps.has(ip)) {
+      const res = make(r, `${inst.id}-ipv4`, 'public-ip', ip, pricePublicIp({ region: str(r.region) }));
+      res.name = `${inst.name} public IPv4`;
+      out.push(res);
+    }
   }
   for (const r of inv.volumes) {
     const sizeGb = num(r.size);
@@ -70,6 +90,14 @@ function priceInventory(inv: RawInventory): PricedResource[] {
       const res = make(r, id, 'loadbalancer', type === 'application' ? 'ALB' : 'NLB', priceLb({ type, region: str(r.region) }));
       res.name = toTags(r.tags).Name || str(r.name) || id;
       out.push(res);
+      // Internet-facing LBs hold one public IPv4 per AZ. / 인터넷 연결 LB는 AZ마다 퍼블릭 IPv4 1개.
+      if (str(r.scheme) === 'internet-facing') {
+        const azs = arrLen(r.availability_zones);
+        const ipPrice = pricePublicIp({ region: str(r.region) });
+        const ip = make(r, `${id}-ipv4`, 'public-ip', `${azs} AZ`, ipPrice.monthly === null ? ipPrice : { monthly: ipPrice.monthly * azs });
+        ip.name = `${res.name} public IPv4`;
+        out.push(ip);
+      }
     }
   }
   for (const r of inv.endpoints) {
@@ -77,11 +105,12 @@ function priceInventory(inv: RawInventory): PricedResource[] {
     out.push(make(r, str(r.vpc_endpoint_id), 'vpc-endpoint', `${str(r.service_name)} x${subnets} AZ`, priceVpcEndpoint({ azCount: subnets, region: str(r.region) })));
   }
   for (const r of inv.rds) {
+    const stopped = str(r.status) === 'stopped'; // storage only / 스토리지만 과금
     const price = priceRds({
       engine: str(r.engine), instanceClass: str(r.class), multiAz: r.multi_az === true || r.multi_az === 'true',
-      storageType: str(r.storage_type), allocatedGb: num(r.allocated_storage), iops: optNum(r.iops), region: str(r.region),
+      storageType: str(r.storage_type), allocatedGb: num(r.allocated_storage), iops: optNum(r.iops), region: str(r.region), stopped,
     });
-    out.push(make(r, str(r.db_instance_identifier), 'rds', `${str(r.engine)} ${str(r.class)}`, price));
+    out.push(make(r, str(r.db_instance_identifier), 'rds', `${str(r.engine)} ${str(r.class)}${stopped ? ' (stopped, storage only)' : ''}`, price));
   }
   for (const r of inv.elasticache) {
     const price = priceElastiCache({ nodeType: str(r.cache_node_type), nodes: num(r.num_cache_nodes), region: str(r.region) });
@@ -107,10 +136,15 @@ export function buildEstimate(inv: RawInventory[], scopeAccountId: string): Esti
   for (const c of categories) c.percent = monthly > 0 ? Math.round((c.monthly / monthly) * 100) : 0;
 
   const warnings: Estimate['warnings'] = [];
+  const warn = (category: CategoryId, message: string) => {
+    if (!warnings.some(w => w.category === category && w.message === message)) warnings.push({ category, message });
+  };
   for (const i of inv) {
     for (const [key, message] of Object.entries(i.errors)) {
-      if (key === 'target-groups' || !message) continue;
-      if (!warnings.some(w => w.category === key && w.message === message)) warnings.push({ category: key as CategoryId, message });
+      if (!message) continue;
+      // Target groups cost nothing, but their failure disables the empty TG/LB check. / TG 실패 시 빈 TG/LB 점검 생략.
+      if (key === 'target-groups') warn('loadbalancer', `target groups: ${message} (empty target group / load balancer check skipped)`);
+      else warn(key as CategoryId, message);
     }
   }
 

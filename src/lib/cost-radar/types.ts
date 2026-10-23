@@ -42,7 +42,8 @@ export interface Recommendation {
   monthlySaving: number;
   /** Whether the saving is included in the headline total (de-duplicated by resource id). / 합계 포함 여부. */
   countedInTotal: boolean;
-  note?: 'maybe-scaled-to-zero';
+  /** maybe-scaled-to-zero: ECS/EKS/ASG-managed empty TG/LB; managed-instance: ASG/EKS/ECS-owned EC2 (office hours). */
+  note?: 'maybe-scaled-to-zero' | 'managed-instance';
   cliCommand: string;
   consoleUrl: string;
   tags: Record<string, string>;

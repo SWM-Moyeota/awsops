@@ -15,6 +15,20 @@ const MAX_PAGES = 5;
 const RETRY_UNKNOWN_MS = 24 * 3_600_000;
 const CREATE_EVENTS = new Set(['RunInstances', 'CreateVolume', 'CreateSnapshot', 'AllocateAddress', 'CreateLoadBalancer', 'CreateTargetGroup']);
 
+/**
+ * The create event expected for this id shape (other events merely mention the resource, e.g. RunInstances for a volume);
+ * unknown shape -> any create event. / ID 형태에 맞는 생성 이벤트만 인정 (모르는 형태는 모든 생성 이벤트).
+ */
+export function expectedEvents(resourceId: string): Set<string> {
+  if (resourceId.startsWith('vol-')) return new Set(['CreateVolume']);
+  if (resourceId.startsWith('eipalloc-')) return new Set(['AllocateAddress']);
+  if (resourceId.startsWith('i-')) return new Set(['RunInstances']);
+  if (resourceId.startsWith('snap-')) return new Set(['CreateSnapshot']);
+  if (resourceId.includes(':loadbalancer/')) return new Set(['CreateLoadBalancer']);
+  if (resourceId.includes(':targetgroup/')) return new Set(['CreateTargetGroup']);
+  return CREATE_EVENTS;
+}
+
 type Item = { resourceId: string; accountId: string; region: string };
 type CacheEntry = CreatorInfo & { checkedAt: string };
 type Cache = Record<string, CacheEntry>;
@@ -125,6 +139,7 @@ function lookupShared(it: Item, now: Date): Promise<CreatorInfo> {
 }
 
 async function findCreator(client: CloudTrailClient, accountId: string, resourceId: string): Promise<CreatorInfo> {
+  const wanted = expectedEvents(resourceId);
   let best: Event | undefined;
   let token: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
@@ -135,7 +150,7 @@ async function findCreator(client: CloudTrailClient, accountId: string, resource
       NextToken: token,
     }));
     for (const ev of res.Events ?? []) {
-      if (!ev.EventName || !CREATE_EVENTS.has(ev.EventName) || !ev.EventTime) continue;
+      if (!ev.EventName || !wanted.has(ev.EventName) || !ev.EventTime) continue;
       if (!best || new Date(ev.EventTime) < new Date(best.EventTime!)) best = ev;
     }
     token = res.NextToken;

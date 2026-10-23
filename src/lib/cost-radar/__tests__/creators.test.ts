@@ -43,6 +43,26 @@ describe('creators', () => {
     expect(r).toEqual({ resourceId: 'i-1', user: 'early', eventTime: '2026-10-01T00:00:00.000Z', status: 'found' });
   });
 
+  // An earlier RunInstances that merely mentions a volume must not win. / 볼륨을 언급만 한 RunInstances는 제외.
+  it.each([
+    ['vol-1', 'volmaker'], ['eipalloc-1', 'ipmaker'], ['i-1', 'launcher'], ['snap-1', 'snapper'],
+    ['arn:aws:elasticloadbalancing:ap-northeast-2:111:loadbalancer/app/a/b', 'lbmaker'],
+    ['arn:aws:elasticloadbalancing:ap-northeast-2:111:targetgroup/t/c', 'tgmaker'],
+    ['something-else', 'launcher'], // unknown shape: earliest create event / 모르는 형태: 가장 이른 생성 이벤트
+  ])('picks the create event matching the id shape of %s', async (id, user) => {
+    const named = (name: string, t: string, u: string) => ({ EventName: name, EventTime: new Date(t), Username: u });
+    ctSend.mockResolvedValue({ Events: [
+      named('RunInstances', '2026-09-01T00:00:00Z', 'launcher'),
+      named('CreateSnapshot', '2026-09-02T00:00:00Z', 'snapper'),
+      named('CreateVolume', '2026-09-03T00:00:00Z', 'volmaker'),
+      named('AllocateAddress', '2026-09-04T00:00:00Z', 'ipmaker'),
+      named('CreateTargetGroup', '2026-09-05T00:00:00Z', 'tgmaker'),
+      named('CreateLoadBalancer', '2026-09-06T00:00:00Z', 'lbmaker'),
+    ] });
+    const [r] = await lookupCreators([item(id)], { now: NOW });
+    expect(r.user).toBe(user);
+  });
+
   it('foundCreatorIsCachedForever', async () => {
     ctSend.mockResolvedValue({ Events: [ev('2026-10-01T00:00:00Z')] });
     await lookupCreators([item('i-1')], { now: NOW });

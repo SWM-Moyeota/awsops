@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildEstimate } from '../estimate';
+import { pricePublicIp, priceRds } from '../pricing';
 import type { RawInventory } from '../types';
 
 const R = 'ap-northeast-2';
@@ -77,6 +78,68 @@ describe('buildEstimate', () => {
     expect(e.accountId).toBe('__all__');
     expect(e.resources.map(r => r.accountId).sort()).toEqual(['111111111111', '222222222222']);
     expect(e.categories[0].percent).toBe(100);
+  });
+
+  it('runningInstancePublicIpv4IsPricedUnlessItIsAnEip', () => {
+    const inv = empty();
+    inv.instances = [
+      ec2('i-pub', 'running', { public_ip_address: '3.3.3.3' }),
+      ec2('i-eip', 'running', { public_ip_address: '4.4.4.4' }),
+      ec2('i-priv', 'running', { public_ip_address: null }),
+      ec2('i-stop', 'stopped', { public_ip_address: '5.5.5.5' }),
+    ];
+    inv.eips = [{ allocation_id: 'eipalloc-1', association_id: 'eipassoc-1', instance_id: 'i-eip', public_ip: '4.4.4.4', tags: null, account_id: '111111111111', region: R }];
+    const e = buildEstimate([inv], '111111111111');
+    const ips = e.resources.filter(r => r.category === 'public-ip');
+    expect(ips.map(r => r.id).sort()).toEqual(['eipalloc-1', 'i-pub-ipv4']);
+    const pub = ips.find(r => r.id === 'i-pub-ipv4')!;
+    expect(pub.name).toBe('web-i-pub public IPv4');
+    expect(pub.monthly).toBeCloseTo(pricePublicIp({ region: R }).monthly as number, 6);
+  });
+
+  it('internetFacingLoadBalancerPaysOnePublicIpv4PerAz', () => {
+    const inv = empty();
+    const azs = [{ ZoneName: 'ap-northeast-2a' }, { ZoneName: 'ap-northeast-2c' }];
+    inv.albs = [
+      { arn: 'arn:alb/pub', name: 'pub-alb', state_code: 'active', scheme: 'internet-facing', availability_zones: azs, tags: {}, account_id: '111111111111', region: R },
+      { arn: 'arn:alb/int', name: 'int-alb', state_code: 'active', scheme: 'internal', availability_zones: azs, tags: {}, account_id: '111111111111', region: R },
+    ];
+    inv.nlbs = [{ arn: 'arn:nlb/pub', name: 'pub-nlb', state_code: 'active', scheme: 'internet-facing', availability_zones: JSON.stringify(azs.slice(0, 1)), tags: {}, account_id: '111111111111', region: R }];
+    const e = buildEstimate([inv], '111111111111');
+    const ips = e.resources.filter(r => r.category === 'public-ip');
+    expect(ips).toHaveLength(2);
+    const ip = pricePublicIp({ region: R }).monthly as number;
+    const alb = ips.find(r => r.name === 'pub-alb public IPv4')!;
+    expect(alb.detail).toBe('2 AZ');
+    expect(alb.monthly).toBeCloseTo(ip * 2, 6);
+    const nlb = ips.find(r => r.name === 'pub-nlb public IPv4')!;
+    expect(nlb.detail).toBe('1 AZ');
+    expect(nlb.monthly).toBeCloseTo(ip, 6);
+    expect(new Set(e.resources.map(r => r.id)).size).toBe(e.resources.length);
+  });
+
+  it('targetGroupQueryErrorIsWarnedUnderLoadBalancer', () => {
+    const inv = empty();
+    inv.errors = { 'target-groups': 'AccessDenied' };
+    const e = buildEstimate([inv], '111111111111');
+    expect(e.warnings).toHaveLength(1);
+    expect(e.warnings[0].category).toBe('loadbalancer');
+    expect(e.warnings[0].message).toContain('AccessDenied');
+    expect(e.warnings[0].message.toLowerCase()).toContain('skipped');
+  });
+
+  it('stoppedRdsPricesStorageOnly', () => {
+    const inv = empty();
+    const db = { class: 'db.t3.medium', engine: 'postgres', multi_az: false, allocated_storage: 100, storage_type: 'gp2', iops: null, tags: null, account_id: '111111111111', region: R };
+    inv.rds = [{ ...db, db_instance_identifier: 'up', status: 'available' }, { ...db, db_instance_identifier: 'down', status: 'stopped' }];
+    const e = buildEstimate([inv], '111111111111');
+    const up = e.resources.find(r => r.id === 'up')!;
+    const down = e.resources.find(r => r.id === 'down')!;
+    const storageOnly = priceRds({ engine: 'postgres', instanceClass: 'db.t3.medium', multiAz: false, storageType: 'gp2', allocatedGb: 100, region: R, stopped: true }).monthly as number;
+    expect(down.monthly).toBeCloseTo(storageOnly, 6);
+    expect(down.monthly!).toBeLessThan(up.monthly!);
+    expect(down.monthly!).toBeGreaterThan(0);
+    expect(down.detail).toContain('stopped');
   });
 
   it('unpricedResourcesAreListedNotSummed', () => {
