@@ -21,6 +21,8 @@
     "@aws-sdk/client-ssm": "^3.1030.0",
     "@aws-sdk/client-sts": "^3.1030.0",
     "@aws-sdk/s3-request-presigner": "^3.1023.0",
+    "@slack/socket-mode": "^3.1.0",
+    "@slack/web-api": "^8.2.0",
     "docx": "^9.6.1",
     "exceljs": "^4.4.0",
     "fossflow": "^1.0.5",

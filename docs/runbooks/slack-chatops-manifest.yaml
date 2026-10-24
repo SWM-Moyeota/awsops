@@ -1,0 +1,26 @@
+# Slack app manifest for AWSops ChatOps (Socket Mode — no public URL needed).
+# api.slack.com/apps → Create New App → From a manifest → paste this file.
+display_information:
+  name: AWSops
+  description: AWS 리소스 현황을 Slack에서 바로 물어보세요
+  background_color: "#0a0e1a"
+features:
+  bot_user:
+    display_name: AWSops
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read   # @AWSops 멘션 받기
+      - chat:write          # 스레드에 답장
+      - channels:history    # 공개 채널 스레드의 이전 대화 읽기 (후속 질문 맥락)
+      - groups:history      # 비공개 채널 스레드의 이전 대화 읽기
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

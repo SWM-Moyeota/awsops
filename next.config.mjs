@@ -8,6 +8,12 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_DOCS_URL: process.env.NEXT_PUBLIC_DOCS_URL || 'https://whchoi98.github.io/awsops',
   },
+  experimental: {
+    // src/instrumentation.ts starts the Slack ChatOps bot on server boot.
+    instrumentationHook: true,
+    // Slack SDKs use undici WebSockets — load them from node_modules instead of bundling.
+    serverComponentsExternalPackages: ['@slack/socket-mode', '@slack/web-api'],
+  },
   webpack: (config) => {
     // CLAUDE.md docs live alongside code under src/; dynamic imports like
     // `@/lib/collectors/${route}` make webpack scan the whole directory,

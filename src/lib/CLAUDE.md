@@ -23,6 +23,7 @@
 - `sns-notification.ts` — SNS 이메일 알림 (토픽 생성, 구독 동기화, 진단 완료 발행)
 - `collectors/` — auto-collect 에이전트 (db-optimize, eks-optimize, idle-scan, incident, msk-optimize, trace-analyze — 공통 `Collector` 인터페이스)
 - `cost-radar/` — 비용 레이더 (수집·가격 추정·정리 추천·생성자 조회·일별 이력, 안내만) — 상세는 `cost-radar/CLAUDE.md`
+- `slack-chatops/` — Slack ChatOps 봇 (Socket Mode, `@AWSops` 멘션 → `/api/ai` → 스레드 답글, `src/instrumentation.ts`에서 기동) — 상세는 `slack-chatops/CLAUDE.md`
 - `queries/*.ts` — 26개 SQL 쿼리 파일 (idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock 포함)
 
 ## 규칙
@@ -61,6 +62,7 @@ Core libraries: Steampipe database connection, SQL query definitions, inventory,
 - `sns-notification.ts` — SNS email notifications (topic creation, subscription sync, diagnosis completion publish)
 - `collectors/` — Auto-collect agents (db-optimize, eks-optimize, idle-scan, incident, msk-optimize, trace-analyze — shared `Collector` interface)
 - `cost-radar/` — Cost Radar (collection, price estimate, cleanup recommendations, creator lookup, daily history; guidance only) — see `cost-radar/CLAUDE.md`
+- `slack-chatops/` — Slack ChatOps bot (Socket Mode, `@AWSops` mention → `/api/ai` → thread reply, started from `src/instrumentation.ts`) — see `slack-chatops/CLAUDE.md`
 - `queries/*.ts` — 26 SQL query files (incl. idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock)
 
 ## Rules
