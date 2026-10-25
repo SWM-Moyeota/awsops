@@ -27,6 +27,11 @@ describe('detectAction', () => {
     expect(detectAction('꺼진 서버 알려줘')).toBeNull();
     expect(detectAction('비용 얼마나 나와?')).toBeNull();
   });
+  it('anchorsEnglishCommandsToTheStart', () => {
+    expect(detectAction('<@UBOT> stop api-dev')).toBe('stop');
+    expect(detectAction('show servers that will start soon')).toBeNull();
+    expect(detectAction('why did api-dev stop yesterday?')).toBeNull();
+  });
 });
 
 describe('parseControlRequest', () => {

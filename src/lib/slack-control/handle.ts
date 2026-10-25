@@ -99,6 +99,7 @@ export async function maybeHandleControlMention(
 export interface ControlClick {
   user?: { id?: string; team_id?: string };
   channel?: { id?: string };
+  message?: { ts?: string; thread_ts?: string };
   actions?: Array<{ action_id?: string; value?: string }>;
 }
 
@@ -121,7 +122,8 @@ export async function handleControlAction(p: ControlClick, deps: ControlDeps): P
   if (!action?.action_id || !userId || !channel || !id) return;
   if (deps.teamId && p.user?.team_id && p.user.team_id !== deps.teamId) return;
 
-  const tell = (text: string) => deps.slack.postEphemeral({ channel, user: userId, text }).catch(() => {});
+  const threadTs = p.message?.thread_ts ?? p.message?.ts;
+  const tell = (text: string) => deps.slack.postEphemeral({ channel, user: userId, text, ...(threadTs ? { thread_ts: threadTs } : {}) }).catch(() => {});
   const cfg = deps.config();
   if (!cfg) {
     await tell(CONTROL_DISABLED_TEXT);

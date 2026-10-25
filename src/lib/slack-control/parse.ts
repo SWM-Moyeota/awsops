@@ -6,15 +6,21 @@ import type { ControlAction, ControllableInstance } from './types';
 // Command forms only — "켜진/켜져/꺼진" (state questions) must not match.
 // 명령형만 — "켜진/켜져/꺼진" 같은 상태 질문은 매칭되지 않게 한다.
 const COMMANDS: Array<[ControlAction, RegExp]> = [
-  ['reboot', /재부팅|재시작|리부트|\breboot\b|\brestart\b/i],
-  ['stop', /꺼\s*(줘|주세요|주라|라|봐)|끄(자|기|세요)|(정지|중지)\s*(해|시켜|하자|요청|좀)?(?![가-힣]*[된돼])|멈춰|\bstop\b|\bshut\s*down\b/i],
-  ['start', /켜\s*(줘|주세요|주라|라|봐)|켜(자|기|세요)|(시작|기동)\s*(해|시켜|하자|좀)|\bstart\b/i],
+  ['reboot', /재부팅|재시작|리부트|^(please\s+)?(reboot|restart)\b/i],
+  ['stop', /꺼\s*(줘|주세요|주라|라|봐)|끄(자|기|세요)|(정지|중지)\s*(해|시켜|하자|요청|좀)?(?![가-힣]*[된돼])|멈춰|^(please\s+)?(stop|shut\s*down)\b/i],
+  ['start', /켜\s*(줘|주세요|주라|라|봐)|켜(자|기|세요)|(시작|기동)\s*(해|시켜|하자|좀)|^(please\s+)?start\b/i],
 ];
 
 const INSTANCE_ID = /\bi-[0-9a-f]{8,17}\b/gi;
 
+/** Mentions removed so English commands can be anchored to the start ("stop api-dev", not "... stop ..."). */
+function clean(text: string): string {
+  return text.replace(/<@[^>]+>/g, ' ').trim();
+}
+
 export function detectAction(text: string): ControlAction | null {
-  for (const [action, re] of COMMANDS) if (re.test(text)) return action;
+  const t = clean(text);
+  for (const [action, re] of COMMANDS) if (re.test(t)) return action;
   return null;
 }
 

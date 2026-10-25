@@ -22,13 +22,18 @@ export const ALLOWED_FROM: Record<ControlAction, string[]> = {
   reboot: ['running'],
 };
 
+/** Name tags are user-controlled — strip Slack formatting characters so a name can't fake card lines. */
+export function safeName(raw: string): string {
+  return raw.replace(/[`<>&*_~|\r\n]/g, '').replace(/\s+/g, ' ').trim().slice(0, 64);
+}
+
 function toControllable(i: Instance): ControllableInstance | null {
   if (!i.InstanceId) return null;
   const tags = i.Tags ?? [];
   if (!tags.some(t => t.Key === CONTROL_TAG_KEY && t.Value === CONTROL_TAG_VALUE)) return null;
   return {
     id: i.InstanceId,
-    name: tags.find(t => t.Key === 'Name')?.Value ?? '',
+    name: safeName(tags.find(t => t.Key === 'Name')?.Value ?? ''),
     state: i.State?.Name ?? 'unknown',
   };
 }

@@ -96,4 +96,15 @@ describe('request store — two-step approval', () => {
     const { store } = setup();
     expect(store.confirm('nope', 'UALICE').ok).toBe(false);
   });
+
+  it('evictsOnlyFinishedRequestsWhenFull', () => {
+    const { store, req } = setup();
+    store.confirm(req.id, 'UALICE');
+    store.beginApproval(req.id, 'UBOSS', cfg);          // executing — must survive
+    for (let i = 0; i < 205; i += 1) {
+      const r = store.create({ action: 'stop', instance, requesterId: 'USPAM', channel: 'C1', threadTs: `${i}` });
+      store.cancel(r.id, 'USPAM', cfg);
+    }
+    expect(store.get(req.id)?.status).toBe('executing');
+  });
 });

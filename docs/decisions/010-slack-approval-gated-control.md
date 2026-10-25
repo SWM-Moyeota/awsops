@@ -25,18 +25,33 @@ Add a narrow, separate write path for EC2 start/stop/reboot that never goes thro
    single-use, expire after 15 minutes, and live only in memory (a restart drops them).
 3. **Two system layers** — the code re-checks the instance right before executing (still tagged,
    state fits the action), and the IAM role `AWSopsSlackControlRole` only allows
-   `ec2:Start/Stop/RebootInstances` on instances tagged `awsops:control=allow`. Other teams'
-   untagged servers are denied by IAM even if the code is wrong.
+   `ec2:Start/Stop/RebootInstances` on instance IDs an admin listed in
+   `scripts/16-setup-slack-control.sh` **and** that carry the tag `awsops:control=allow`. The tag
+   alone is not enough: anyone in the shared account can add a tag, but not edit this policy.
 4. **Audit** — every state change goes to `data/slack-control/audit.jsonl`, and the role is assumed
    with `SourceIdentity=slack-<approver>`, so CloudTrail shows who approved each call.
 
 AI 경로와 분리된 좁은 쓰기 경로: 규칙 기반 해석(LLM 없음), 사람 2단계(요청자 확인 → 다른 승인자
 최종 승인), 시스템 2겹(실행 직전 재확인 + 태그 조건 IAM), 감사 로그 + CloudTrail SourceIdentity.
 
+## Trust boundary / 신뢰 경계
+
+The approval checks run inside the dashboard process, and `SourceIdentity` is set by the caller.
+Anyone with a shell on the dashboard host (SSM session, `/vscode` code-server) can assume the role
+directly and skip both steps — so **host shell access equals control authority** over the listed
+instances. Mitigations: IMDSv2 is required on the host (`HttpTokens=required`, so an SSRF GET cannot
+fetch role credentials), the blast radius is the explicit instance list, and stop/start/reboot are
+reversible. Moving execution off-host (e.g. a Lambda that verifies the approval independently) is
+the follow-up if this boundary must be stronger. Turning off `/vscode` in production is recommended.
+
+승인 검사는 대시보드 프로세스 안에서 이뤄지고 SourceIdentity는 호출자가 정한다. 따라서 호스트 셸
+접근(SSM, /vscode)은 목록에 있는 인스턴스에 대한 제어 권한과 같다. IMDSv2 필수, 명시적 인스턴스 목록,
+되돌릴 수 있는 작업으로 피해 범위를 줄인다.
+
 ## Consequences / 결과
 
 - The AI tools stay read-only; this path is the only way AWSops changes AWS from Slack.
-- A server is controllable only after someone tags it `awsops:control=allow` — opt-in per server.
+- A server is controllable only when an admin lists its ID in `16-setup-slack-control.sh` and it is tagged `awsops:control=allow`.
 - Off by default: nothing works until `slackControl.approverIds` is set and `scripts/16-setup-slack-control.sh` has run.
 - Resource creation/deletion is out of scope here; if added later it must reuse the same two-step
   store and an equally narrow IAM role (templates only, tag-conditioned).

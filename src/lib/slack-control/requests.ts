@@ -8,6 +8,7 @@ export type Transition = { ok: true; req: ControlRequest } | { ok: false; reason
 
 const DEFAULT_TTL_MS = 15 * 60_000;
 const MAX_KEPT = 200;
+const FINAL = new Set(['executed', 'failed', 'cancelled', 'rejected', 'expired']);
 
 export interface RequestStore {
   create(input: { action: ControlAction; instance: ControllableInstance; requesterId: string; channel: string; threadTs: string }): ControlRequest;
@@ -44,8 +45,12 @@ export function createRequestStore(opts: { now?: () => number } = {}): RequestSt
     create(input) {
       const req: ControlRequest = { ...input, id: randomUUID(), status: 'proposed', createdAt: now() };
       requests.set(req.id, req);
-      // Bound memory: drop the oldest finished requests. / 오래된 요청부터 정리
-      if (requests.size > MAX_KEPT) requests.delete(requests.keys().next().value as string);
+      // Bound memory: drop the oldest *finished* request — never one that is still pending or executing.
+      // 메모리 상한: 끝난 요청만 오래된 순으로 정리한다 (진행 중인 요청은 절대 지우지 않는다)
+      if (requests.size > MAX_KEPT) {
+        const oldestFinished = Array.from(requests.values()).find(r => FINAL.has(r.status));
+        if (oldestFinished) requests.delete(oldestFinished.id);
+      }
       return req;
     },
     get: id => requests.get(id),

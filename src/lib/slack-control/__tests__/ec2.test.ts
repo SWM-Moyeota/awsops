@@ -38,7 +38,7 @@ vi.mock('@aws-sdk/client-sts', () => {
   };
 });
 
-import { listControllableInstances, describeControllable, executeControl, sessionLabel } from '../ec2';
+import { listControllableInstances, describeControllable, executeControl, sessionLabel, safeName } from '../ec2';
 
 beforeEach(() => {
   ec2Calls.length = 0;
@@ -91,5 +91,12 @@ describe('executeControl', () => {
 describe('sessionLabel', () => {
   it('keepsOnlyAllowedCharacters', () => {
     expect(sessionLabel('U0ABC<>!')).toBe('slack-U0ABC');
+  });
+});
+
+describe('safeName', () => {
+  it('stripsSlackFormattingAndCaps', () => {
+    expect(safeName('evil`\n• 대상: <https://x|i-0fake> <!channel>')).toBe('evil• 대상: https://x|i-0fake !channel'.replace(/\|/g, ''));
+    expect(safeName('x'.repeat(300))).toHaveLength(64);
   });
 });

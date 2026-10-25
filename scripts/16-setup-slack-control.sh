@@ -15,14 +15,17 @@ set -euo pipefail
 #   생성 / Creates (idempotent):                                               #
 #     IAM role  AWSopsSlackControlRole                                         #
 #       trust:  awsops-ec2-role only, SourceIdentity "slack-*" required        #
-#       allow:  ec2:Start/Stop/RebootInstances                                 #
-#               ONLY on instances tagged awsops:control=allow                  #
+#       allow:  ec2:Start/Stop/RebootInstances ONLY on the instance IDs given  #
+#               as arguments AND tagged awsops:control=allow (both required —  #
+#               a tag alone can be added by anyone in the shared account)      #
 #     EC2 role  awsops-ec2-role inline AWSopsSlackControlAssume                #
 #                                                                              #
-#   제어 대상 지정 / Opt a server in:                                           #
-#     aws ec2 create-tags --resources i-xxxx --tags Key=awsops:control,Value=allow
+#   제어 대상 지정 (둘 다 필요) / Opt a server in (both needed):                #
+#     1) aws ec2 create-tags --resources i-xxxx --tags Key=awsops:control,Value=allow
+#     2) 이 스크립트에 ID 나열 / list the ID here (the full list each time)    #
 #                                                                              #
-#   사용법 / Usage: bash scripts/16-setup-slack-control.sh                     #
+#   사용법 / Usage: bash scripts/16-setup-slack-control.sh [i-xxxx ...]        #
+#     ID 없이 실행하면 제어 권한을 모두 제거 / no IDs = remove all control      #
 #   환경 변수 (선택) / Env: AWS_PROFILE, AWS_DEFAULT_REGION, EC2_ROLE_NAME      #
 #                                                                              #
 ################################################################################
@@ -34,6 +37,14 @@ export AWS_PAGER=""
 EC2_ROLE_NAME="${EC2_ROLE_NAME:-awsops-ec2-role}"
 ROLE_NAME="AWSopsSlackControlRole"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+# The bot executes in ap-northeast-2 (src/lib/slack-control/ec2.ts) — keep the policy in the same region.
+[ "$REGION" = "ap-northeast-2" ] || { echo "REGION must be ap-northeast-2 (bot region)"; exit 1; }
+
+INSTANCE_IDS=()
+for arg in "$@"; do
+    [[ "$arg" =~ ^i-[0-9a-f]{8,17}$ ]] || { echo "잘못된 인스턴스 ID / invalid instance id: $arg"; exit 1; }
+    INSTANCE_IDS+=("$arg")
+done
 TAGS="Key=Realm,Value=awsops Key=ServiceDomain,Value=aws Key=ServiceComponent,Value=awsops-poc Key=Environment,Value=sandbox"
 
 TMP_DIR=$(mktemp -d)
@@ -59,20 +70,22 @@ cat > "$TMP_DIR/trust.json" <<EOF
 }
 EOF
 
-# The tag condition is the hard boundary: untagged servers (other teams') are denied even if the code is wrong.
-# 태그 조건이 최종 경계 — 코드가 잘못돼도 태그 없는 서버(다른 팀)는 IAM이 거부한다.
-cat > "$TMP_DIR/permissions.json" <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Sid": "StartStopRebootTaggedInstancesOnly",
-    "Effect": "Allow",
+# Explicit instance list AND the tag: other teams in the shared account can add a tag, but not edit this policy.
+# 인스턴스 목록과 태그를 둘 다 요구 — 공유 계정의 다른 팀이 태그는 붙일 수 있어도 이 정책은 못 바꾼다.
+if [ ${#INSTANCE_IDS[@]} -gt 0 ]; then
+    python3 - "$REGION" "$ACCOUNT_ID" "$TMP_DIR/permissions.json" "${INSTANCE_IDS[@]}" <<'PYEOF'
+import json, sys
+region, account, out = sys.argv[1], sys.argv[2], sys.argv[3]
+arns = [f"arn:aws:ec2:{region}:{account}:instance/{i}" for i in sys.argv[4:]]
+policy = {"Version": "2012-10-17", "Statement": [{
+    "Sid": "StartStopRebootListedAndTaggedOnly", "Effect": "Allow",
     "Action": ["ec2:StartInstances", "ec2:StopInstances", "ec2:RebootInstances"],
-    "Resource": "arn:aws:ec2:${REGION}:${ACCOUNT_ID}:instance/*",
-    "Condition": {"StringEquals": {"aws:ResourceTag/awsops:control": "allow"}}
-  }]
-}
-EOF
+    "Resource": arns,
+    "Condition": {"StringEquals": {"aws:ResourceTag/awsops:control": "allow"}},
+}]}
+json.dump(policy, open(out, "w"), indent=2)
+PYEOF
+fi
 
 cat > "$TMP_DIR/assume.json" <<EOF
 {
@@ -96,9 +109,15 @@ else
         --description "AWSops Slack approval-gated EC2 start/stop/reboot (tagged instances only)" \
         --max-session-duration 3600 --tags $TAGS >/dev/null
 fi
-aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name StartStopRebootTaggedOnly \
-    --policy-document "file://$TMP_DIR/permissions.json"
-echo -e "  ${GREEN}OK${NC} $ROLE_NAME (ec2 start/stop/reboot, tag awsops:control=allow only)"
+aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name StartStopRebootTaggedOnly 2>/dev/null || true
+if [ ${#INSTANCE_IDS[@]} -gt 0 ]; then
+    aws iam put-role-policy --role-name "$ROLE_NAME" --policy-name StartStopRebootListedOnly \
+        --policy-document "file://$TMP_DIR/permissions.json"
+    echo -e "  ${GREEN}OK${NC} $ROLE_NAME — 제어 허용 / allowed: ${INSTANCE_IDS[*]} (태그 awsops:control=allow도 필요 / tag also required)"
+else
+    aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name StartStopRebootListedOnly 2>/dev/null || true
+    echo -e "  ${GREEN}OK${NC} $ROLE_NAME — 제어 가능한 인스턴스 없음 / no instances allowed (ID를 인자로 주면 허용)"
+fi
 
 echo ""
 echo -e "${CYAN}[2/2] 대시보드 역할에 맡기 권한 / Assume permission on ${EC2_ROLE_NAME}${NC}"
@@ -109,4 +128,5 @@ echo -e "  ${GREEN}OK${NC} $EC2_ROLE_NAME / AWSopsSlackControlAssume"
 echo ""
 echo "  다음 / Next:"
 echo "   1) 제어할 서버에 태그 / tag servers:  aws ec2 create-tags --resources i-xxxx --tags Key=awsops:control,Value=allow"
-echo "   2) data/config.json에 승인자 / approvers:  \"slackControl\": {\"approverIds\": [\"U0...\"]}"
+echo "   2) 이 스크립트에 ID 나열 / list IDs:  bash scripts/16-setup-slack-control.sh i-xxxx [i-yyyy ...]"
+echo "   3) data/config.json에 승인자 / approvers:  \"slackControl\": {\"approverIds\": [\"U0...\"]}"

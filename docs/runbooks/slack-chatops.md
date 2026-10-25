@@ -51,12 +51,15 @@ AWSops: 🛠 AWS 제어 요청 — 끄기 (정지) · k8s-practice (i-...) · �
 ```
 
 - 명령은 AI가 아니라 규칙으로 해석합니다(꺼줘/켜줘/재시작/stop/start/reboot). "켜진 서버 뭐 있어?" 같은 질문은 평소처럼 AI가 답합니다.
-- **제어 대상**: 태그 `awsops:control=allow`가 붙은 EC2만 제어할 수 있습니다. 이 조건은 IAM 권한 자체에 걸려 있어서, 태그가 없는 다른 팀 서버는 AWS가 거부합니다.
-  - 태그 붙이기: `aws ec2 create-tags --resources i-xxxx --tags Key=awsops:control,Value=allow`
+- **제어 대상**: 아래 두 조건을 **모두** 만족하는 EC2만 제어할 수 있습니다. 둘 다 IAM 권한 자체에 걸려 있어서, 다른 팀 서버는 AWS가 거부합니다.
+  1. 태그: `aws ec2 create-tags --resources i-xxxx --tags Key=awsops:control,Value=allow`
+  2. 관리자가 허용 목록에 등록: `bash scripts/16-setup-slack-control.sh i-xxxx i-yyyy` (매번 전체 목록을 넘기고, ID 없이 실행하면 모두 해제)
+  - 태그만으로는 안 됩니다. 공유 계정에서는 누구나 태그를 붙일 수 있기 때문입니다.
+- **신뢰 경계**: 서버에 셸로 접근할 수 있는 사람(SSM, `/vscode`)은 승인 단계를 건너뛰고 허용 목록의 서버를 제어할 수 있습니다. 그래서 `/vscode`는 꺼 두는 것을 권장합니다(ADR-010).
 - **승인자**: `data/config.json`에 `"slackControl": {"approverIds": ["U0..."]}`를 넣습니다. 비어 있으면 기능이 꺼집니다. Slack 사용자 ID는 프로필 → ⋮ → "멤버 ID 복사"에서 찾습니다.
   - 혼자 테스트할 때만 `"allowSelfApproval": true`를 넣습니다(기본값은 false라 요청자 본인은 승인할 수 없습니다).
   - `"requestTtlMinutes"`의 기본값은 15입니다.
-- **처음 한 번**: 관리자 Mac에서 `bash scripts/16-setup-slack-control.sh`를 실행합니다(제어 전용 IAM 역할을 만듭니다).
+- **처음 한 번**: 관리자 Mac에서 `bash scripts/16-setup-slack-control.sh i-xxxx`를 실행합니다(제어 전용 IAM 역할과 허용 목록을 만듭니다).
 - **기록**: `data/slack-control/audit.jsonl`에 남고, CloudTrail에는 `SourceIdentity=slack-<승인자ID>`로 남습니다.
 - 서버를 재시작하면 승인 대기 중인 요청은 사라집니다. 다시 요청하면 됩니다.
 
