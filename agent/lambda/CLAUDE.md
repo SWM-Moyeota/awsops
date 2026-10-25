@@ -42,7 +42,8 @@ AgentCore 게이트웨이 MCP 도구용 19개 Lambda 함수 + 1개 공유 모듈
 
 ### Ops Gateway (9 tools)
 - `aws_knowledge.py` — AWS Knowledge MCP 프록시 (Proxy to AWS Knowledge MCP, 5 tools)
-- `aws_core_mcp.py` — 프롬프트 이해, AWS CLI 실행 (Prompt understanding, AWS CLI execution, 3 tools)
+- `aws_core_mcp.py` — 프롬프트 이해, 읽기 전용 AWS CLI 실행 — `is_read_only_action()`이 describe/list/get/lookup/search/batch_get(+filter_log_events, query, scan, simulate_principal_policy)만 허용하고 비밀값을 돌려주는 조회(SSM get-parameter, secretsmanager, ECR 토큰, get-object 등)는 차단 (Prompt understanding, read-only AWS CLI execution — writes and secret-returning reads are blocked, 3 tools)
+- `test_aws_core_mcp.py` — `call_aws` 읽기 전용 가드 단위 테스트, stdlib unittest, AWS 불필요. 실행: `cd agent/lambda && python3 -m unittest test_aws_core_mcp -v`
 - `steampipe-query` — Steampipe SQL 쿼리 (1 tool, VPC Lambda)
 
 ### Health Alerts (게이트웨이 타겟 아님 / not a Gateway target)
@@ -58,7 +59,7 @@ AgentCore 게이트웨이 MCP 도구용 19개 Lambda 함수 + 1개 공유 모듈
   (`credentialProviderConfigurations: GATEWAY_IAM_ROLE` required for all targets)
 - VPC Lambda: psycopg2 대신 pg8000 사용 (steampipe-query, istio-mcp)
   (VPC Lambda: pg8000, not psycopg2)
-- 모든 Lambda는 읽기 전용 — 도달성 경로 생성 외 쓰기 작업 없음
-  (All Lambda read-only — no write operations except reachability path creation)
+- 모든 Lambda는 읽기 전용 — 도달성 경로 생성 외 쓰기 작업 없음. 역할 `AWSopsLambdaNetworkRole`의 권한은 `scripts/policies/awsops-lambda-tools-readonly.json`(인라인 `ReadOnlyToolAccess`) — 도구는 대시보드 AI와 Slack에서 호출되므로 쓰기 권한(`ec2:*`, `dynamodb:*`, AmazonVPCFullAccess 등)을 다시 붙이지 않는다
+  (All Lambda read-only — no write operations except reachability path creation. The role's permissions live in `scripts/policies/awsops-lambda-tools-readonly.json` (inline `ReadOnlyToolAccess`); the tools are reachable from the dashboard AI and Slack, so never re-add write permissions)
 - 도구 스키마 형식: `inlinePayload: [{name, description, inputSchema: {type, properties, required}}]`
   (Tool schema format)

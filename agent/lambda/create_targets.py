@@ -329,7 +329,7 @@ if gw:
         'AWS Core MCP - prompt understanding, API execution (3 tools)',
         [{'name': n, 'description': d, 'inputSchema': s} for n, d, s in [
             ('prompt_understanding', 'Solution design guide', {'type': 'object', 'properties': {}}),
-            ('call_aws', 'Execute AWS CLI', {'type': 'object', 'properties': {'cli_command': prop('string', 'Command')}, 'required': ['cli_command']}),
+            ('call_aws', 'Run a read-only AWS CLI command (describe/list/get only; writes are blocked)', {'type': 'object', 'properties': {'cli_command': prop('string', 'Command')}, 'required': ['cli_command']}),
             ('suggest_aws_commands', 'Suggest commands', {'type': 'object', 'properties': {'query': prop('string', 'Query')}, 'required': ['query']}),
         ]])
     create_target(gw, 'steampipe-query-target', 'awsops-steampipe-query',

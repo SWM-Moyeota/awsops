@@ -39,13 +39,32 @@ PROMPT_UNDERSTANDING = """# AWS Solution Design Guide
 - query_flow_logs: VPC flow log analysis
 - describe_network: SG, NACL, route tables
 - run_steampipe_query: SQL against 580+ AWS tables
-- call_aws: Execute AWS CLI commands via boto3
+- call_aws: Run read-only AWS CLI commands (describe/list/get) via boto3
 - suggest_aws_commands: Get CLI command suggestions
 """
 
 
+# call_aws is reachable from chat (dashboard AI and Slack), so it may only read.
+# Defense in depth: the Lambda role is read-only too. / 채팅에서 호출되므로 조회만 허용 (IAM 역할도 읽기 전용)
+READ_ONLY_PREFIXES = ("describe_", "list_", "get_", "lookup_", "search_", "batch_get_")
+READ_ONLY_EXACT = {"filter_log_events", "query", "scan", "simulate_principal_policy"}
+# Reads that hand back secrets, credentials or object contents / 비밀값·자격 증명·객체 내용을 돌려주는 조회는 막는다
+BLOCKED_ACTIONS = {
+    "get_secret_value", "get_parameter", "get_parameters", "get_parameters_by_path", "get_parameter_history",
+    "get_password_data", "get_authorization_token", "get_login_password", "get_session_token",
+    "get_federation_token", "get_object", "get_paginator", "get_waiter",
+}
+
+
+def is_read_only_action(action):
+    """True only for boto3 operations that read without exposing secrets. / 비밀값 없는 조회 작업만 True"""
+    if action in BLOCKED_ACTIONS:
+        return False
+    return action in READ_ONLY_EXACT or action.startswith(READ_ONLY_PREFIXES)
+
+
 def call_aws(cli_command, max_results=None, role_arn=None):
-    """Execute an AWS CLI-style command via boto3. / boto3를 통해 AWS CLI 스타일 명령어를 실행합니다."""
+    """Execute a read-only AWS CLI-style command via boto3. / boto3로 읽기 전용 AWS CLI 스타일 명령어를 실행합니다."""
     # Parse CLI command into parts / CLI 명령어를 부분으로 분리
     parts = shlex.split(cli_command)
     if len(parts) < 3 or parts[0] != "aws":
@@ -53,6 +72,9 @@ def call_aws(cli_command, max_results=None, role_arn=None):
 
     service = parts[1]
     action = parts[2].replace("-", "_")
+    if not is_read_only_action(action):
+        return {"error": f"Blocked: 'aws {service} {parts[2]}' is not allowed. AWSops AI is read-only — "
+                         "only describe/list/get/lookup commands that don't return secrets can run."}
 
     # Parse --key value pairs into kwargs / --key value 쌍을 kwargs로 파싱
     kwargs = {}

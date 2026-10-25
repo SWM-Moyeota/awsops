@@ -1,0 +1,56 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOnlyTools",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:Describe*", "ec2:Get*", "ec2:Search*",
+        "tiros:*",
+        "logs:Describe*", "logs:Get*", "logs:List*", "logs:FilterLogEvents",
+        "logs:StartQuery", "logs:StopQuery", "logs:TestMetricFilter",
+        "cloudwatch:Describe*", "cloudwatch:Get*", "cloudwatch:List*",
+        "network-firewall:Describe*", "network-firewall:List*",
+        "networkmanager:Describe*", "networkmanager:Get*", "networkmanager:List*",
+        "eks:Describe*", "eks:List*", "eks:AccessKubernetesApi",
+        "ecs:Describe*", "ecs:List*",
+        "ecr:Describe*", "ecr:List*", "ecr:GetLifecyclePolicy", "ecr:GetLifecyclePolicyPreview",
+        "ecr:GetRepositoryPolicy", "ecr:GetRegistryScanningConfiguration",
+        "ecr:BatchGetRepositoryScanningConfiguration",
+        "iam:List*", "iam:Get*", "iam:SimulatePrincipalPolicy", "iam:GenerateCredentialReport",
+        "cloudtrail:LookupEvents", "cloudtrail:Describe*", "cloudtrail:Get*", "cloudtrail:List*",
+        "cloudtrail:StartQuery",
+        "ce:Get*", "ce:Describe*", "ce:List*",
+        "pricing:*",
+        "budgets:Describe*", "budgets:View*",
+        "cloudformation:ValidateTemplate", "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents", "cloudformation:ListStacks",
+        "dynamodb:Describe*", "dynamodb:List*", "dynamodb:GetItem", "dynamodb:BatchGetItem",
+        "dynamodb:Query", "dynamodb:Scan", "dynamodb:PartiQLSelect",
+        "rds:Describe*", "rds:List*",
+        "elasticache:Describe*", "elasticache:List*",
+        "kafka:Describe*", "kafka:List*", "kafka:Get*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ReachabilityAnalyzerPaths",
+      "Effect": "Allow",
+      "Action": ["ec2:CreateNetworkInsightsPath", "ec2:StartNetworkInsightsAnalysis"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TagOnlyReachabilityResourcesAtCreate",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"ec2:CreateAction": ["CreateNetworkInsightsPath", "StartNetworkInsightsAnalysis"]}}
+    },
+    {
+      "Sid": "NoWindowsPasswords",
+      "Effect": "Deny",
+      "Action": "ec2:GetPasswordData",
+      "Resource": "*"
+    }
+  ]
+}

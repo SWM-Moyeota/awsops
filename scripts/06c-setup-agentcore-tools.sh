@@ -46,35 +46,25 @@ aws iam create-role --role-name AWSopsLambdaNetworkRole \
     --tags Key=Realm,Value=awsops Key=ServiceDomain,Value=aws Key=ServiceComponent,Value=awsops-poc Key=Environment,Value=sandbox \
     2>/dev/null || true
 
-# Attach managed policies
-for POLICY in AWSLambdaBasicExecutionRole AWSLambdaVPCAccessExecutionRole AmazonVPCFullAccess; do
+# Attach managed policies (logs + VPC ENIs only — no AmazonVPCFullAccess, the tools are read-only)
+# 관리형 정책: 로그 + VPC ENI만 — 도구는 읽기 전용이라 AmazonVPCFullAccess는 붙이지 않는다
+for POLICY in AWSLambdaBasicExecutionRole AWSLambdaVPCAccessExecutionRole; do
     aws iam attach-role-policy --role-name AWSopsLambdaNetworkRole \
         --policy-arn "arn:aws:iam::aws:policy/service-role/$POLICY" 2>/dev/null || \
     aws iam attach-role-policy --role-name AWSopsLambdaNetworkRole \
         --policy-arn "arn:aws:iam::aws:policy/$POLICY" 2>/dev/null || true
 done
 
-# Inline policies for all services
-aws iam put-role-policy --role-name AWSopsLambdaNetworkRole --policy-name FullServiceAccess \
-    --policy-document '{
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Effect": "Allow",
-            "Action": [
-                "ec2:*", "tiros:*", "logs:*", "cloudwatch:*",
-                "network-firewall:*", "networkmanager:*",
-                "eks:*", "ecs:*", "ecr:*",
-                "iam:List*", "iam:Get*", "iam:SimulatePrincipalPolicy", "iam:GenerateCredentialReport",
-                "cloudtrail:*", "ce:*", "pricing:*", "budgets:Describe*", "budgets:View*",
-                "cloudformation:ValidateTemplate", "cloudformation:DescribeStacks",
-                "cloudformation:DescribeStackEvents", "cloudformation:ListStacks",
-                "dynamodb:*", "rds:Describe*", "rds:List*", "rds-data:ExecuteStatement",
-                "elasticache:Describe*", "elasticache:List*",
-                "kafka:Describe*", "kafka:List*", "kafka:Get*"
-            ],
-            "Resource": "*"
-        }]
-    }' 2>/dev/null
+# Read-only tool permissions — the tools are reachable from chat (dashboard AI, Slack), so no writes
+# except Reachability Analyzer paths. / 채팅에서 호출되므로 쓰기 없음 (도달성 분석 경로 생성만 예외)
+aws iam put-role-policy --role-name AWSopsLambdaNetworkRole --policy-name ReadOnlyToolAccess \
+    --policy-document "file://$WORK_DIR/scripts/policies/awsops-lambda-tools-readonly.json"
+
+# Remove the old broad permissions from earlier installs (ec2:*, dynamodb:*, AmazonVPCFullAccess, ...)
+# 예전 설치의 넓은 권한 제거
+aws iam delete-role-policy --role-name AWSopsLambdaNetworkRole --policy-name FullServiceAccess 2>/dev/null || true
+aws iam detach-role-policy --role-name AWSopsLambdaNetworkRole \
+    --policy-arn arn:aws:iam::aws:policy/AmazonVPCFullAccess 2>/dev/null || true
 
 echo "  AWSopsLambdaNetworkRole: created + policies attached"
 echo "  Waiting for IAM propagation (10s)..."
