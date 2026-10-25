@@ -67,10 +67,10 @@ export function createRequestStore(opts: { now?: () => number } = {}): RequestSt
       if (typeof req === 'string') return fail(req);
       if (req.status === 'proposed') return fail('요청자가 먼저 1단계 확인을 해야 해요.');
       if (req.status !== 'pending') return fail('이미 처리된 요청이에요.');
-      if (!isApprover(userId, cfg)) return fail('최종 승인 권한이 없어요. 지정된 승인자만 승인할 수 있어요.');
       if (!cfg.allowSelfApproval && userId === req.requesterId) {
         return fail('요청한 본인은 최종 승인할 수 없어요. 다른 승인자가 승인해야 해요.');
       }
+      if (!isApprover(userId, cfg)) return fail('최종 승인 권한이 없어요. 지정된 승인자만 승인할 수 있어요.');
       // Synchronous check-and-set: a second click can never see 'pending' again. / 동기 전이라 두 번 실행 불가
       req.status = 'executing';
       req.deciderId = userId;

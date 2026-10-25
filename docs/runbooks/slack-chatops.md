@@ -40,6 +40,26 @@ EC2 대시보드 서버 (src/lib/slack-chatops/bot.ts, 서버 기동 시 자동 
 - EC2 자체가 꺼진 알림은 서버 밖 워치독 Lambda가 웹훅으로 보냅니다. 서버가 꺼져 있으면 AI도 분석할 수 없으므로 버튼이 없습니다.
 - Slack 앱의 **Interactivity & Shortcuts**가 켜져 있어야 버튼 클릭이 들어옵니다. 매니페스트로 새로 만들면 켜져 있습니다. 이미 만든 앱은 화면에서 직접 켜세요. Request URL은 비워 둡니다.
 
+## Slack 제어 (2단계 승인으로 EC2 켜기·끄기·재부팅)
+
+```
+팀원 A: @AWSops k8s-practice 꺼줘
+AWSops: 🛠 AWS 제어 요청 — 끄기 (정지) · k8s-practice (i-...) · 요청자 A
+        1단계: [✅ 맞아요, 승인 요청] [취소]        ← A만 누를 수 있음
+        2단계: [✅ 최종 승인] [❌ 거절]              ← 승인자 중 A가 아닌 사람, "정말 실행할까요?" 한 번 더
+        ✅ 실행 완료 — 승인: B · 상태: running → stopping
+```
+
+- 명령은 AI가 아니라 규칙으로 해석합니다(꺼줘/켜줘/재시작/stop/start/reboot). "켜진 서버 뭐 있어?" 같은 질문은 평소처럼 AI가 답합니다.
+- **제어 대상**: 태그 `awsops:control=allow`가 붙은 EC2만 제어할 수 있습니다. 이 조건은 IAM 권한 자체에 걸려 있어서, 태그가 없는 다른 팀 서버는 AWS가 거부합니다.
+  - 태그 붙이기: `aws ec2 create-tags --resources i-xxxx --tags Key=awsops:control,Value=allow`
+- **승인자**: `data/config.json`에 `"slackControl": {"approverIds": ["U0..."]}`를 넣습니다. 비어 있으면 기능이 꺼집니다. Slack 사용자 ID는 프로필 → ⋮ → "멤버 ID 복사"에서 찾습니다.
+  - 혼자 테스트할 때만 `"allowSelfApproval": true`를 넣습니다(기본값은 false라 요청자 본인은 승인할 수 없습니다).
+  - `"requestTtlMinutes"`의 기본값은 15입니다.
+- **처음 한 번**: 관리자 Mac에서 `bash scripts/16-setup-slack-control.sh`를 실행합니다(제어 전용 IAM 역할을 만듭니다).
+- **기록**: `data/slack-control/audit.jsonl`에 남고, CloudTrail에는 `SourceIdentity=slack-<승인자ID>`로 남습니다.
+- 서버를 재시작하면 승인 대기 중인 요청은 사라집니다. 다시 요청하면 됩니다.
+
 ## 설정 (처음 한 번)
 
 1. **Slack 앱 만들기**: api.slack.com/apps → **Create New App** → **From a manifest** → 워크스페이스 선택 → `docs/runbooks/slack-chatops-manifest.yaml` 내용 붙여넣기 → Create.

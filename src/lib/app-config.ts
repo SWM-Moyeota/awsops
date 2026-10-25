@@ -87,6 +87,11 @@ export interface AppConfig {
   bedrockModelId?: string;            // Bedrock model/inference-profile ID override — for accounts without access to the default / 기본 모델 접근 불가 계정용
   slackAlertChannelId?: string;      // Slack ChatOps: channel the bot posts health alerts to (with the AI-analysis button); unset = webhook only / 헬스 알림 채널
   slackAllowedChannelIds?: string[];  // Slack ChatOps: channel IDs where @AWSops answers (empty/unset = any channel the bot is in) / 답할 채널 ID 목록
+  slackControl?: {                   // Slack approval-gated EC2 control (src/lib/slack-control) — off until approverIds is set / Slack 승인 기반 EC2 제어
+    approverIds?: string[];           // Slack user IDs allowed to give the final approval / 최종 승인 가능한 Slack 사용자 ID
+    allowSelfApproval?: boolean;      // default false: the requester cannot approve their own request / 기본 false: 요청자 본인 승인 불가
+    requestTtlMinutes?: number;       // default 15 / 요청 만료(분)
+  };
 }
 
 const DEFAULT_CONFIG: AppConfig = {

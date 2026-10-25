@@ -9,6 +9,11 @@ import { askAwsops } from './ask';
 import { createLimiter, createRecentSet } from './concurrency';
 import { handleMention, handleAnalyzeClick, type AnalyzeClick, type MentionEvent, type SlackApi } from './handle';
 import { setBotHandle } from './alert';
+import { createRequestStore } from '@/lib/slack-control/requests';
+import { maybeHandleControlMention, handleControlAction, getControlConfig, type ControlDeps } from '@/lib/slack-control/handle';
+import { listControllableInstances, describeControllable, executeControl } from '@/lib/slack-control/ec2';
+import { appendAudit } from '@/lib/slack-control/audit';
+import { CTL_PREFIX } from '@/lib/slack-control/cards';
 import type { ThreadMessage } from './format';
 
 export const BOT_TOKEN_PARAM = '/ops/awsops/slack-bot-token';
@@ -86,7 +91,20 @@ async function connect(): Promise<void> {
   const socket = new SocketModeClient({ appToken: tokens.appToken, logLevel: LogLevel.WARN });
   const limit = createLimiter(MAX_CONCURRENT_ANSWERS);
   const seen = createRecentSet(500);
+  const control: ControlDeps = {
+    slack: {
+      postMessage: args => slackApi(web).postMessage(args),
+      update: args => web.chat.update(args as Parameters<WebClient['chat']['update']>[0]),
+      postEphemeral: args => web.chat.postEphemeral(args as Parameters<WebClient['chat']['postEphemeral']>[0]),
+    },
+    store: createRequestStore(),
+    config: getControlConfig,
+    ec2: { list: listControllableInstances, describe: describeControllable, execute: executeControl },
+    audit: req => appendAudit(req),
+    teamId: auth.team_id,
+  };
   const deps = {
+    tryControl: (event: MentionEvent) => maybeHandleControlMention(event, control),
     slack: slackApi(web),
     ask: askAwsops,
     botUserId,
@@ -112,6 +130,16 @@ async function connect(): Promise<void> {
   const analyzed = createRecentSet(500);
   socket.on('interactive', async ({ ack, body }: { ack: () => Promise<void>; body: AnalyzeClick }) => {
     await ack();
+    // Control buttons: repeated clicks on one card are legitimate (step 1, then step 2) — the request
+    // store's state machine guarantees single execution, so no message-level dedupe here.
+    // 제어 버튼은 한 카드에서 여러 번 눌리는 게 정상 — 1회 실행은 요청 저장소가 보장한다.
+    const ctl = body as AnalyzeClick & { actions?: Array<{ action_id?: string; value?: string }> };
+    if (body.type === 'block_actions' && ctl.actions?.some(a => a.action_id?.startsWith(CTL_PREFIX))) {
+      handleControlAction(ctl, control).catch(e => {
+        console.warn(`[slack-control] action failed (${errName(e)})`);
+      });
+      return;
+    }
     const key = `${body.channel?.id}:${body.message?.ts}`;
     if (body.type !== 'block_actions' || !analyzed.addIfNew(key)) return;
     limit(() => handleAnalyzeClick(body, deps)).catch(e => {

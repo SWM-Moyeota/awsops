@@ -28,7 +28,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 | 컴포넌트 | 25 (cost-radar 4종 + CostRadarSummaryCard 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 11 (datasource 라우트 추가) |
-| ADR | 8 (001-008) |
+| ADR | 10 (001-010) |
 
 ## 필수 규칙
 
@@ -110,6 +110,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `collectors/` — auto-collect 에이전트 6종 (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
 - `cost-radar/` — 비용 레이더 (내장 서울 가격표로 월 비용 추정 + 정리 추천, 안내만) — `src/lib/cost-radar/CLAUDE.md`
 - `slack-chatops/` — Slack에서 `@AWSops`로 AI에게 묻기 (Socket Mode, 공개 URL 불필요) — `src/lib/slack-chatops/CLAUDE.md`
+- `slack-control/` — Slack 2단계 승인으로 EC2 켜기/끄기/재부팅 (AI 미경유, 태그 조건 IAM) — `src/lib/slack-control/CLAUDE.md`
 
 ### API 라우트 (`src/app/api/`, 24개 — 전체 목록은 `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI 라우팅 (11 routes, 멀티 라우트, SSE 스트리밍, 도구 추론, datasource 라우트)
@@ -177,6 +178,7 @@ Step 12b: 12b-setup-lambda-cross-account.sh  AI 도구 Lambda 교차 계정 접�
 Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd 유닛 등록 (Restart=always, 부팅 시 자동 시작)
 Step 14: 14-setup-health-alerts.sh        헬스 알림 워치독 (Lambda + EventBridge 3규칙 + SSM + IAM, 관리자 Mac에서 실행)
 Step 15: 15-setup-slack-chatops.sh        Slack ChatOps 토큰 2개 SSM 저장 + 서버 재시작 (Slack 앱 생성 후, 관리자 Mac에서 실행 — docs/runbooks/slack-chatops.md)
+Step 16: 16-setup-slack-control.sh        Slack 승인 기반 EC2 제어 전용 IAM 역할 (태그 awsops:control=allow만, 관리자 Mac에서 실행 — ADR-010)
 ```
 ※ Step 13 적용 후 Steampipe는 반드시 `sudo systemctl {start|stop|restart} steampipe`로 관리 — CLI `steampipe service stop`은 Restart=always가 자동으로 되돌림.
 
@@ -236,7 +238,7 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 | Components | 25 (incl. 4 cost-radar components + CostRadarSummaryCard) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 11 (incl. datasource route) |
-| ADRs | 8 (001-008) |
+| ADRs | 10 (001-010) |
 
 ## Critical Rules
 
@@ -316,6 +318,7 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 - `collectors/` — 6 auto-collect agents (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
 - `cost-radar/` — Cost Radar (monthly estimate from a bundled Seoul price table + cleanup recommendations, guidance only) — `src/lib/cost-radar/CLAUDE.md`
 - `slack-chatops/` — Ask the AI from Slack via `@AWSops` (Socket Mode, no public URL) — `src/lib/slack-chatops/CLAUDE.md`
+- `slack-control/` — Two-step-approved EC2 start/stop/reboot from Slack (no AI, tag-conditioned IAM) — `src/lib/slack-control/CLAUDE.md`
 
 ### API Routes (`src/app/api/`, 24 routes — full list in `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI routing (11 routes, multi-route, SSE streaming, tool inference, datasource route)
@@ -383,6 +386,7 @@ Step 12b: 12b-setup-lambda-cross-account.sh  AI tool Lambdas cross-account acces
 Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd unit (Restart=always, starts on boot)
 Step 14: 14-setup-health-alerts.sh        Health-alert watchdog (Lambda + 3 EventBridge rules + SSM + IAM, run from admin Mac)
 Step 15: 15-setup-slack-chatops.sh        Slack ChatOps: store 2 tokens in SSM + restart (after creating the Slack app, run from admin Mac — docs/runbooks/slack-chatops.md)
+Step 16: 16-setup-slack-control.sh        Slack approval-gated EC2 control IAM role (tag awsops:control=allow only, run from admin Mac — ADR-010)
 ```
 Note: after Step 13, manage Steampipe only via `sudo systemctl {start|stop|restart} steampipe` — a bare CLI `steampipe service stop` is auto-undone by Restart=always.
 
