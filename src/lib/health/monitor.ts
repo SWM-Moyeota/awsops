@@ -9,6 +9,7 @@ import { applyResults, initialState, loadState, saveState } from './state';
 import { formatSlackMessage, getWebhookUrl, postSlack } from './slack';
 import { checkAgentcoreRuntime, checkBedrock, checkCrossAccount, checkLambdas, checkSteampipe } from './checks';
 import { recordDailyIfMissing } from '@/lib/cost-radar/history';
+import { postAlertViaBot } from '@/lib/slack-chatops/alert';
 import type { CheckId, CheckResult, HealthState, Transition } from './types';
 
 const LOOP_INTERVAL_MS = 5 * 60 * 1000;
@@ -87,6 +88,17 @@ function persist(s: HealthState): void {
 }
 
 async function notify(m: MonitorState, transitions: Transition[], now: Date): Promise<void> {
+  const dashboardUrl = getConfig().appUrl || DEFAULT_DASHBOARD_URL;
+  const payload = formatSlackMessage(transitions, { dashboardUrl, now });
+  // Prefer the ChatOps bot (adds the "AI로 원인 분석" button on failures); fall back to the webhook.
+  // ChatOps 봇이 있으면 봇으로(장애 시 분석 버튼), 없거나 실패하면 웹훅으로 보낸다.
+  const viaBot = await postAlertViaBot(payload.text, { button: transitions.some(t => t.to === 'fail') });
+  if (viaBot.ok) {
+    m.lastSlack = { at: now.toISOString(), ok: true };
+    return;
+  }
+  if (viaBot.error) console.warn(`[health] ${viaBot.error} — falling back to the webhook`);
+
   const url = await getWebhookUrl();
   if (!url) {
     if (!m.warnedNoWebhook) {
@@ -95,8 +107,7 @@ async function notify(m: MonitorState, transitions: Transition[], now: Date): Pr
     }
     return;
   }
-  const dashboardUrl = getConfig().appUrl || DEFAULT_DASHBOARD_URL;
-  const res = await postSlack(url, formatSlackMessage(transitions, { dashboardUrl, now }));
+  const res = await postSlack(url, payload);
   m.lastSlack = { at: now.toISOString(), ok: res.ok, ...(res.error ? { error: res.error } : {}) };
   // postSlack's error text never contains the webhook URL.
   if (!res.ok) console.warn(`[health] Slack send failed: ${res.error}`);

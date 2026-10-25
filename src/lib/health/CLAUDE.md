@@ -6,7 +6,7 @@ Slack 헬스 알림의 기반. 점검 결과로부터 항목별 상태(ok/fail/u
 ## 주요 파일
 - `types.ts` — 공용 타입 (`CheckId`, `CheckStatus`, `CheckResult`, `ItemState`, `HealthState`, `Transition`) 및 `CHECK_IDS`
 - `state.ts` — 상태 머신: `initialState()`, `applyResults(prev, results, now)`, `loadState(path)`, `saveState(path, s)`, `FAIL_THRESHOLD`
-- `slack.ts` — Slack 알림: `CHECK_TITLES`, `REMEDIATION`, `formatSlackMessage(transitions, {dashboardUrl, now})`(KST, 전이 묶음 1메시지), `postSlack(url, payload)`(10s 타임아웃, 예외 없음), `getWebhookUrl()`(SSM `/ops/awsops/slack-webhook-url`, 10s abortSignal 타임아웃, 5분 캐시, 없으면 null), `sendTestMessage()` — 웹훅 URL은 로그/에러에 절대 포함하지 않는다
+- `slack.ts` — Slack 알림: `CHECK_TITLES`, `REMEDIATION`, `formatSlackMessage(transitions, {dashboardUrl, now})`(KST, 전이 묶음 1메시지), `postSlack(url, payload)`(10s 타임아웃, 예외 없음), `getWebhookUrl()`(SSM `/ops/awsops/slack-webhook-url`, 10s abortSignal 타임아웃, 5분 캐시, 없으면 null), `sendTestMessage()`(봇 경로가 있으면 분석 버튼과 함께 봇으로) — 웹훅 URL은 로그/에러에 절대 포함하지 않는다
 - `__tests__/state.test.ts` — 상태 머신/저장 단위 테스트 (vitest)
 - `checks.ts` — 서버 안 점검 (예외 없음, AWS SDK v3만 사용): `checkSteampipe()`(`steampipe.ts`의 `pingSteampipe()` — 풀 밖 단기 Client로 `select 1`), `checkBedrock()`(`getBedrockModelId()`, max_tokens 1), `checkAgentcoreRuntime()`(`agentRuntimeArn` 마지막 경로 세그먼트로 `GetAgentRuntime`, READY만 정상), `checkLambdas()`(`TOOL_LAMBDAS` 명시적 19개, `{"tool_name":"__healthcheck__"}`, 동시 4개, 호출당 20s), `classifyLambdaProbe()`(Runtime.ImportModuleError/HandlerNotFound/UserCodeSyntaxError/ExitError 또는 timed out만 실패)
   - `checkCrossAccount()` — 연결된 대상 계정마다 AWSopsReadOnlyRole AssumeRole(External ID, 10s) / AssumeRole into every connected target account (5-min loop, item `cross-account`)
@@ -22,6 +22,7 @@ Slack 헬스 알림의 기반. 점검 결과로부터 항목별 상태(ok/fail/u
 - 상태 파일(`data/health-status.json`)은 `.tmp`에 쓴 뒤 `renameSync`로 원자적 교체, 파일이 없거나 깨져 있으면 `initialState()`로 폴백
 - 상태 파일은 런타임 산출물이므로 git에 커밋하지 않는다 (`.gitignore`)
 - 모니터는 `/api/ai` import로 시작되지 않는다 — 시작은 `/api/health`·`/api/steampipe`(캐시 워머와 함께 지연 시작)·기동 스크립트(09 재시도, 13 ExecStartPost) 담당. `reportAgentcoreInvoke`는 모니터 시작 여부와 무관하게 상태를 갱신한다
+- 알림은 `slack-chatops/alert.ts`의 `postAlertViaBot`을 먼저 시도(장애 전이가 있으면 "AI로 원인 분석" 버튼)하고, 봇 경로가 없거나 실패하면 웹훅으로 보낸다
 - 웹훅 미설정 경고는 프로세스당 1회, 웹훅 URL은 절대 로그에 남기지 않는다
 
 ---
@@ -34,7 +35,7 @@ Foundation of the Slack health alerts. Pure logic that updates per-item status (
 ## Key Files
 - `types.ts` — Shared types (`CheckId`, `CheckStatus`, `CheckResult`, `ItemState`, `HealthState`, `Transition`) and `CHECK_IDS`
 - `state.ts` — State machine: `initialState()`, `applyResults(prev, results, now)`, `loadState(path)`, `saveState(path, s)`, `FAIL_THRESHOLD`
-- `slack.ts` — Slack delivery: `CHECK_TITLES`, `REMEDIATION`, `formatSlackMessage(transitions, {dashboardUrl, now})` (KST, all transitions bundled into one message), `postSlack(url, payload)` (10s timeout, never throws), `getWebhookUrl()` (SSM `/ops/awsops/slack-webhook-url`, 10s abortSignal timeout, 5-min cache, null if missing), `sendTestMessage()` — the webhook URL is never logged or returned in errors
+- `slack.ts` — Slack delivery: `CHECK_TITLES`, `REMEDIATION`, `formatSlackMessage(transitions, {dashboardUrl, now})` (KST, all transitions bundled into one message), `postSlack(url, payload)` (10s timeout, never throws), `getWebhookUrl()` (SSM `/ops/awsops/slack-webhook-url`, 10s abortSignal timeout, 5-min cache, null if missing), `sendTestMessage()` (through the bot with the analyze button when available) — the webhook URL is never logged or returned in errors
 - `__tests__/state.test.ts` — State machine / persistence unit tests (vitest)
 - `checks.ts` — In-server checks (never throw, AWS SDK v3 only): `checkSteampipe()` (`pingSteampipe()` in `steampipe.ts` — `select 1` on a short-lived Client outside the pool), `checkBedrock()` (`getBedrockModelId()`, max_tokens 1), `checkAgentcoreRuntime()` (`GetAgentRuntime` on the last path segment of `agentRuntimeArn`, only READY is ok), `checkLambdas()` (explicit 19-name `TOOL_LAMBDAS`, `{"tool_name":"__healthcheck__"}`, concurrency 4, 20s per call), `classifyLambdaProbe()` (fails only on Runtime.ImportModuleError/HandlerNotFound/UserCodeSyntaxError/ExitError or timed out)
   - `checkCrossAccount()` — AssumeRole into every connected target account with the stored External ID (5-min loop, item `cross-account`, error name only)
@@ -50,4 +51,5 @@ Foundation of the Slack health alerts. Pure logic that updates per-item status (
 - The state file (`data/health-status.json`) is written to `.tmp` then swapped in with `renameSync`; a missing or corrupt file falls back to `initialState()`
 - The state file is a runtime artifact — never commit it (`.gitignore`)
 - Importing `/api/ai` does not start the monitor — `/api/health` and `/api/steampipe` (lazily, next to the cache warmer) and the startup scripts (09 with retries, 13 ExecStartPost) do. `reportAgentcoreInvoke` updates state whether or not the loop is running
+- Alerts try `postAlertViaBot` (`slack-chatops/alert.ts`) first — with the "AI로 원인 분석" button when any transition is a failure — and fall back to the webhook when the bot path is absent or fails
 - The missing-webhook warning is logged at most once per process; the webhook URL is never logged

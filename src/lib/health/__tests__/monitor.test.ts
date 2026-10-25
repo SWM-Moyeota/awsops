@@ -6,6 +6,7 @@ import path from 'node:path';
 const cwSend = vi.fn(async (..._a: unknown[]) => ({}));
 const getWebhookUrl = vi.fn(async (): Promise<string | null> => null);
 const postSlack = vi.fn(async () => ({ ok: true }));
+const postAlertViaBot = vi.fn(async (..._a: unknown[]): Promise<{ ok: boolean; error?: string }> => ({ ok: false }));
 const checks = vi.hoisted(() => ({
   checkSteampipe: vi.fn(async () => ({ id: 'steampipe', ok: true, message: 'ok' })),
   checkBedrock: vi.fn(async () => ({ id: 'bedrock', ok: true, message: 'ok' })),
@@ -25,6 +26,7 @@ vi.mock('../slack', async (orig) => ({
   postSlack: (...a: unknown[]) => postSlack(...(a as [])),
 }));
 vi.mock('@/lib/app-config', () => ({ getConfig: () => ({}) }));
+vi.mock('@/lib/slack-chatops/alert', () => ({ postAlertViaBot: (...a: unknown[]) => postAlertViaBot(...a) }));
 
 import {
   ensureHealthMonitorStarted, reportAgentcoreInvoke, getHealthSnapshot, runOnce,
@@ -42,6 +44,7 @@ beforeEach(() => {
   cwSend.mockClear();
   getWebhookUrl.mockReset().mockResolvedValue(null);
   postSlack.mockClear();
+  postAlertViaBot.mockReset().mockResolvedValue({ ok: false });
   for (const f of Object.values(checks)) f.mockClear();
 });
 
@@ -131,6 +134,34 @@ describe('runOnce', () => {
     expect(getHealthSnapshot().lastSlack?.ok).toBe(true);
     checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: true, message: 'ok' });
     checks.checkAgentcoreRuntime.mockResolvedValue({ id: 'agentcore-runtime', ok: true, message: 'ok' });
+  });
+
+  it('sendsThroughBotWithAnalyzeButtonWhenAvailable', async () => {
+    getWebhookUrl.mockResolvedValue('https://hooks.slack.com/services/T/B/SECRET');
+    postAlertViaBot.mockResolvedValue({ ok: true });
+    checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: false, message: 'down' });
+    await runOnce();
+    await runOnce();
+    await flush();
+    expect(postAlertViaBot).toHaveBeenCalledTimes(1);
+    const [text, opts] = postAlertViaBot.mock.calls[0] as [string, { button: boolean }];
+    expect(text).toContain('down');
+    expect(opts).toEqual({ button: true });
+    expect(postSlack).not.toHaveBeenCalled();
+    expect(getHealthSnapshot().lastSlack?.ok).toBe(true);
+    checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: true, message: 'ok' });
+  });
+
+  it('fallsBackToWebhookWhenBotPostFails', async () => {
+    getWebhookUrl.mockResolvedValue('https://hooks.slack.com/services/T/B/SECRET');
+    postAlertViaBot.mockResolvedValue({ ok: false, error: 'Slack bot post failed (not_in_channel)' });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: false, message: 'down' });
+    await runOnce();
+    await runOnce();
+    await flush();
+    expect(postSlack).toHaveBeenCalledTimes(1);
+    checks.checkSteampipe.mockResolvedValue({ id: 'steampipe', ok: true, message: 'ok' });
   });
 
   it('slowChecksOnlyWhenRequested', async () => {

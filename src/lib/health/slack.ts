@@ -2,6 +2,7 @@
 // 헬스 알림용 Slack 메시지 포맷 및 전송. 웹훅 URL은 절대 로그/에러에 포함하지 않는다.
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 import type { CheckId, Transition } from './types';
+import { postAlertViaBot } from '@/lib/slack-chatops/alert';
 
 export const CHECK_TITLES: Record<CheckId, string> = {
   steampipe: 'Steampipe 데이터베이스',
@@ -104,8 +105,15 @@ export async function getWebhookUrl(): Promise<string | null> {
   }
 }
 
+const TEST_TEXT = '✅ [AWSops] 테스트 알림 — Slack 연결 정상';
+
 export async function sendTestMessage(): Promise<{ ok: boolean; error?: string }> {
+  // Through the bot when configured, with the analyze button so it can be tried end to end.
+  // 봇이 설정돼 있으면 분석 버튼까지 달아 보낸다 (버튼 동작 확인용)
+  const viaBot = await postAlertViaBot(TEST_TEXT, { button: true });
+  if (viaBot.ok) return viaBot;
+  if (viaBot.error) console.warn(`[health] ${viaBot.error} — falling back to the webhook`);
   const url = await getWebhookUrl();
   if (!url) return { ok: false, error: 'webhook not configured' };
-  return postSlack(url, { text: '✅ [AWSops] 테스트 알림 — Slack 연결 정상' });
+  return postSlack(url, { text: TEST_TEXT });
 }

@@ -7,7 +7,8 @@ import { WebClient } from '@slack/web-api';
 import { getConfig } from '@/lib/app-config';
 import { askAwsops } from './ask';
 import { createLimiter, createRecentSet } from './concurrency';
-import { handleMention, type MentionEvent, type SlackApi } from './handle';
+import { handleMention, handleAnalyzeClick, type AnalyzeClick, type MentionEvent, type SlackApi } from './handle';
+import { setBotHandle } from './alert';
 import type { ThreadMessage } from './format';
 
 export const BOT_TOKEN_PARAM = '/ops/awsops/slack-bot-token';
@@ -98,8 +99,23 @@ async function connect(): Promise<void> {
     // Ack within 3s or Slack redelivers; the answer is posted later. / 3초 안에 ack — 답은 나중에 게시
     await ack();
     if (!seen.addIfNew(body?.event_id ?? `${event.channel}:${event.ts}`)) return;
+    // Channel IDs are not secret — logged so an admin can find the alert channel for config.json.
+    // 채널 ID는 비밀이 아니다 — slackAlertChannelId 설정용으로 남긴다
+    console.log(`[slack-chatops] mention in channel ${event.channel}`);
     limit(() => handleMention(event, deps)).catch(e => {
       console.warn(`[slack-chatops] mention handling failed (${errName(e)})`);
+    });
+  });
+
+  // Button clicks ("AI로 원인 분석") arrive over the same socket as `interactive` envelopes.
+  // 버튼 클릭도 같은 소켓으로 들어온다 (interactive). 알림 1건당 분석은 1번만.
+  const analyzed = createRecentSet(500);
+  socket.on('interactive', async ({ ack, body }: { ack: () => Promise<void>; body: AnalyzeClick }) => {
+    await ack();
+    const key = `${body.channel?.id}:${body.message?.ts}`;
+    if (body.type !== 'block_actions' || !analyzed.addIfNew(key)) return;
+    limit(() => handleAnalyzeClick(body, deps)).catch(e => {
+      console.warn(`[slack-chatops] alert analysis failed (${errName(e)})`);
     });
   });
   socket.on('connected', () => { status = { connected: true }; });
@@ -113,6 +129,13 @@ async function connect(): Promise<void> {
     throw e;
   }
   status = { connected: true };
+  // Let the health monitor post alerts (with the analyze button) through this bot.
+  setBotHandle({
+    async postMessage(args) {
+      const r = await web.chat.postMessage(args as Parameters<WebClient['chat']['postMessage']>[0]);
+      return { ts: r.ts };
+    },
+  });
   console.log(`[slack-chatops] connected as ${auth.user ?? botUserId} (Socket Mode)`);
 }
 

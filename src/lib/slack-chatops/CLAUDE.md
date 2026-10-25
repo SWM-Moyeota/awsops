@@ -8,6 +8,8 @@ Slack에서 `@AWSops`를 부르면 대시보드 AI(`/api/ai`)에게 물어 같�
 - `handle.ts` — `handleMention(event, deps)`: 다른 봇·다른 워크스페이스(`user_team`) 무시 → `config.slackAllowedChannelIds`가 있으면 그 채널만 → 빈 질문이면 도움말 → "확인 중" 답글 → (스레드면) `conversations.replies`로 맥락 구성 → `ask` → 답글을 `markdown` 블록으로 교체, 블록이 거부되면 일반 텍스트로 재시도, AI 실패 시 한국어 오류 안내.
 - `ask.ts` — `askAwsops(messages)`: `http://127.0.0.1:$PORT/api/ai`에 `{stream:false, lang:'ko'}` POST, 240초 타임아웃.
 - `format.ts` — `extractQuestion`, `buildConversation`(우리 봇만 assistant, 다른 봇·사람은 user, 최근 10개, 같은 역할 병합, user로 시작), `markdownToMrkdwn`(폴백용), `toSlackMessage`(11,000자에서 자르기 + 출처·소요 시간·대시보드 링크 footer).
+- `alert.ts` — 봇으로 보내는 헬스 알림: `postAlertViaBot(text, {button})`(`config.slackAlertChannelId` + 봇 연결이 있을 때만, 없으면 `{ok:false}` → 호출자가 웹훅 폴백), `buildAlertBlocks`(section + "🤖 AI로 원인 분석" 버튼 `ANALYZE_ACTION_ID`, 클릭 후엔 요청자 표시), `buildAnalysisPrompt`, `setBotHandle/getBotHandle`(`globalThis.__awsopsSlackBotHandle` — instrumentation 번들과 라우트 번들이 모듈 상태를 공유하지 않아서).
+- `handle.ts`의 `handleAnalyzeClick(payload, deps)` — `interactive` 봉투의 block_actions: 버튼을 요청자 표시로 교체 → 알림 스레드에 원인 분석. 알림 1건당 1회(`bot.ts`에서 채널+ts 중복 제거).
 - `concurrency.ts` — `createLimiter(max)`, `createRecentSet(size)`.
 - 기동: `src/instrumentation.ts` (`next.config.mjs`의 `experimental.instrumentationHook`). Slack SDK는 `serverComponentsExternalPackages`로 번들에서 제외한다.
 
@@ -29,6 +31,8 @@ Mention `@AWSops` in Slack and the dashboard AI (`/api/ai`) answers in the same 
 - `handle.ts` — `handleMention(event, deps)`: ignore bots and other workspaces (`user_team`) → only `config.slackAllowedChannelIds` channels when set → help text for an empty question → "checking" reply → thread context via `conversations.replies` → `ask` → replace the reply with a `markdown` block, retry as plain text if blocks are rejected, Korean error notice when the AI fails.
 - `ask.ts` — `askAwsops(messages)`: POST `{stream:false, lang:'ko'}` to `http://127.0.0.1:$PORT/api/ai`, 240s timeout.
 - `format.ts` — `extractQuestion`, `buildConversation` (only our bot is assistant; people and other bots are user; last 10; same-role merge; starts with user), `markdownToMrkdwn` (fallback), `toSlackMessage` (truncate at 11,000 chars + via/elapsed/dashboard-link footer).
+- `alert.ts` — Health alerts posted by the bot: `postAlertViaBot(text, {button})` (only with `config.slackAlertChannelId` + a connected bot; otherwise `{ok:false}` → caller falls back to the webhook), `buildAlertBlocks` (section + "🤖 AI로 원인 분석" button `ANALYZE_ACTION_ID`, requester note after a click), `buildAnalysisPrompt`, `setBotHandle/getBotHandle` (`globalThis.__awsopsSlackBotHandle` — the instrumentation bundle and route bundles don't share module state).
+- `handleAnalyzeClick(payload, deps)` in `handle.ts` — block_actions from the `interactive` envelope: swap the button for a requester note → cause analysis in the alert thread. Once per alert (channel+ts dedupe in `bot.ts`).
 - `concurrency.ts` — `createLimiter(max)`, `createRecentSet(size)`.
 - Startup: `src/instrumentation.ts` (`experimental.instrumentationHook` in `next.config.mjs`). Slack SDKs are kept out of the bundle via `serverComponentsExternalPackages`.
 

@@ -1,10 +1,11 @@
-// One @AWSops mention → placeholder reply in the thread → AI answer replaces it.
-// @AWSops 멘션 1건 처리: 스레드에 "확인 중" 답글 → AI 답으로 교체.
+// One @AWSops mention (or one "AI로 원인 분석" click) → placeholder reply in the thread → AI answer replaces it.
+// @AWSops 멘션 또는 알림 버튼 클릭 1건 처리: 스레드에 "확인 중" 답글 → AI 답으로 교체.
 import {
   extractQuestion, buildConversation, toSlackMessage, footerText,
   PLACEHOLDER_TEXT, HELP_TEXT, type ChatMessage, type ThreadMessage,
 } from './format';
 import type { AskResult } from './ask';
+import { ANALYZE_ACTION_ID, buildAlertBlocks, buildAnalysisPrompt } from './alert';
 
 export interface MentionEvent {
   type: 'app_mention';
@@ -69,12 +70,6 @@ export async function handleMention(event: MentionEvent, deps: HandleDeps): Prom
     return;
   }
 
-  const placeholder = await slack.postMessage({ channel, thread_ts: threadTs, text: PLACEHOLDER_TEXT });
-  const reply = async (text: string, blocks?: unknown[]) => {
-    if (placeholder.ts) await slack.update({ channel, ts: placeholder.ts, text, ...(blocks ? { blocks } : {}) });
-    else await slack.postMessage({ channel, thread_ts: threadTs, text, ...(blocks ? { blocks } : {}) });
-  };
-
   let messages: ChatMessage[] = [{ role: 'user', content: question }];
   if (event.thread_ts) {
     try {
@@ -84,6 +79,47 @@ export async function handleMention(event: MentionEvent, deps: HandleDeps): Prom
       console.warn(`[slack-chatops] thread history unavailable (${logName(e)}) — answering the question alone`);
     }
   }
+  await answerInThread(channel, threadTs, messages, deps);
+}
+
+/** Block-actions payload fields we use (Socket Mode `interactive` envelope body). */
+export interface AnalyzeClick {
+  type: string;
+  user?: { id?: string; team_id?: string };
+  channel?: { id?: string };
+  message?: { ts?: string; text?: string };
+  actions?: Array<{ action_id?: string }>;
+}
+
+/**
+ * "AI로 원인 분석" click on a bot-posted health alert: swap the button for "who asked",
+ * then answer in the alert's thread with the alert text as the question.
+ * 버튼을 "누가 요청했는지"로 바꾸고, 알림 스레드에 원인 분석을 단다.
+ */
+export async function handleAnalyzeClick(p: AnalyzeClick, deps: HandleDeps): Promise<void> {
+  if (p.type !== 'block_actions' || !p.actions?.some(a => a.action_id === ANALYZE_ACTION_ID)) return;
+  if (deps.teamId && p.user?.team_id && p.user.team_id !== deps.teamId) return;
+  const channel = p.channel?.id;
+  const ts = p.message?.ts;
+  const text = p.message?.text;
+  if (!channel || !ts || !text) return;
+
+  try {
+    await deps.slack.update({ channel, ts, text, blocks: buildAlertBlocks(text, { button: false, requestedBy: p.user?.id }) });
+  } catch (e) {
+    console.warn(`[slack-chatops] could not mark alert as requested (${logName(e)})`);
+  }
+  await answerInThread(channel, ts, [{ role: 'user', content: buildAnalysisPrompt(text) }], deps);
+}
+
+/** Placeholder in the thread → ask the AI → replace the placeholder; never leaves it hanging. */
+async function answerInThread(channel: string, threadTs: string, messages: ChatMessage[], deps: HandleDeps): Promise<void> {
+  const { slack } = deps;
+  const placeholder = await slack.postMessage({ channel, thread_ts: threadTs, text: PLACEHOLDER_TEXT });
+  const reply = async (text: string, blocks?: unknown[]) => {
+    if (placeholder.ts) await slack.update({ channel, ts: placeholder.ts, text, ...(blocks ? { blocks } : {}) });
+    else await slack.postMessage({ channel, thread_ts: threadTs, text, ...(blocks ? { blocks } : {}) });
+  };
 
   const started = Date.now();
   let answer: AskResult;

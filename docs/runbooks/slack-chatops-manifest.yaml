@@ -20,7 +20,7 @@ settings:
     bot_events:
       - app_mention
   interactivity:
-    is_enabled: false
+    is_enabled: true    # 헬스 알림의 "AI로 원인 분석" 버튼 (Socket Mode라 Request URL 불필요)
   org_deploy_enabled: false
   socket_mode_enabled: true
   token_rotation_enabled: false

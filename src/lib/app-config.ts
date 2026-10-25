@@ -85,6 +85,7 @@ export interface AppConfig {
   appUrl?: string;                    // Public app URL, logout redirect target (e.g. "https://awsops.dev1.musinsa.io/")
   crossAccountExternalId?: string;    // sts:ExternalId for AWSopsReadOnlyRole in target accounts (written by 12-setup-multi-account.sh) / 대상 계정 역할 External ID
   bedrockModelId?: string;            // Bedrock model/inference-profile ID override — for accounts without access to the default / 기본 모델 접근 불가 계정용
+  slackAlertChannelId?: string;      // Slack ChatOps: channel the bot posts health alerts to (with the AI-analysis button); unset = webhook only / 헬스 알림 채널
   slackAllowedChannelIds?: string[];  // Slack ChatOps: channel IDs where @AWSops answers (empty/unset = any channel the bot is in) / 답할 채널 ID 목록
 }
 

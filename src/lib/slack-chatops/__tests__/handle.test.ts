@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { handleMention, CHANNEL_NOT_ALLOWED_TEXT, type SlackApi, type MentionEvent } from '../handle';
+import { handleMention, handleAnalyzeClick, CHANNEL_NOT_ALLOWED_TEXT, type SlackApi, type MentionEvent } from '../handle';
+import { ANALYZE_ACTION_ID } from '../alert';
 import { PLACEHOLDER_TEXT } from '../format';
 
 function fakeSlack(over: Partial<SlackApi> = {}): SlackApi & { calls: Record<string, unknown[]> } {
@@ -128,5 +129,50 @@ describe('handleMention', () => {
     await handleMention(ev(), deps(slack));
     expect(slack.update).toHaveBeenCalledTimes(3);
     expect((slack.calls.update[0] as { text: string }).text).toContain('Slack에 올리지 못했어요');
+  });
+});
+
+describe('handleAnalyzeClick', () => {
+  const click = (p: Record<string, unknown> = {}) => ({
+    type: 'block_actions',
+    user: { id: 'UALICE', team_id: 'T_OURS' },
+    channel: { id: 'C_ALERT' },
+    message: { ts: '70.0', text: '🔴 [AWSops] Steampipe 데이터베이스 장애\n• 원인: ECONNREFUSED' },
+    actions: [{ action_id: ANALYZE_ACTION_ID }],
+    ...p,
+  });
+
+  it('marksAlertAsRequestedThenAnswersInAlertThread', async () => {
+    const slack = fakeSlack();
+    const d = { ...deps(slack), teamId: 'T_OURS' };
+    await handleAnalyzeClick(click(), d);
+    const marked = slack.calls.update[0] as { ts: string; blocks: unknown[] };
+    expect(marked.ts).toBe('70.0');
+    expect(JSON.stringify(marked.blocks)).toContain('<@UALICE>');
+    expect(JSON.stringify(marked.blocks)).not.toContain(ANALYZE_ACTION_ID);
+    expect(slack.calls.post[0]).toMatchObject({ channel: 'C_ALERT', thread_ts: '70.0', text: PLACEHOLDER_TEXT });
+    const asked = (d.ask.mock.calls[0] as unknown as [Array<{ content: string }>])[0];
+    expect(asked).toHaveLength(1);
+    expect(asked[0].content).toContain('ECONNREFUSED');
+    expect(slack.calls.update[1]).toMatchObject({ ts: '100.1', text: '*2대* 실행 중' });
+  });
+
+  it('stillAnswersWhenMarkingFails', async () => {
+    let n = 0;
+    const slack = fakeSlack({ update: vi.fn(async (a) => { n += 1; if (n === 1) throw new Error('cant_update_message'); slack.calls.update.push(a); }) });
+    const d = deps(slack);
+    await handleAnalyzeClick(click(), d);
+    expect(d.ask).toHaveBeenCalled();
+  });
+
+  it('ignoresOtherActionsAndOtherWorkspaces', async () => {
+    const slack = fakeSlack();
+    const d = { ...deps(slack), teamId: 'T_OURS' };
+    await handleAnalyzeClick(click({ actions: [{ action_id: 'something_else' }] }), d);
+    await handleAnalyzeClick(click({ user: { id: 'UX', team_id: 'T_OTHER' } }), d);
+    await handleAnalyzeClick(click({ message: { ts: '70.0' } }), d);
+    expect(slack.postMessage).not.toHaveBeenCalled();
+    expect(slack.update).not.toHaveBeenCalled();
+    expect(d.ask).not.toHaveBeenCalled();
   });
 });
