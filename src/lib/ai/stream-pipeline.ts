@@ -16,13 +16,13 @@ import { streamText } from './bedrock';
 import { recordAndSave } from './stats';
 import { classifyIntent } from './classify';
 import { generateSQL, queryAWS } from './sql';
-import { generateTopologyParams, topologyContent } from './topology';
 import { generateDatasourceQuery } from './datasource-query';
 import { invokeAgentCore } from './agentcore';
 import { handleSingleRoute } from './json-pipeline';
 import type { StreamPipelineInput } from './pipeline-input';
 import type { StepCtx, StepResult } from './steps/types';
 import { codeStep } from './steps/code';
+import { topologyStep } from './steps/topology';
 
 // Former POST-scope closure variables arrive through `input` under their old names.
 // 예전 POST 스코프의 클로저 변수는 `input`으로 받아 원래 이름 그대로 쓴다.
@@ -94,14 +94,7 @@ export function runStreaming(input: StreamPipelineInput): ReadableStream {
         // Handler: Topology View — resolve VPC, reply with a deep link (single-route; multi-route delegates to handleSingleRoute)
         // 토폴로지뷰 핸들러 — 대상 VPC 결정 후 딥링크로 응답 (단일 라우트; 멀티 라우트는 handleSingleRoute로 위임)
         if (!isMulti && config.handler === 'topology') {
-          send('status', { step: 'topology-resolving', message: STATUS.topologyResolving });
-          const { params, vpcs, error } = await generateTopologyParams(messages, accountId);
-          const content = topologyContent(params, vpcs, isEn, error);
-          send('done', {
-            content, model: getBedrockModelLabel(),
-            via: config.display, queriedResources: ['steampipe'], route,
-            inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
-          });
+          sendDone(await topologyStep(ctx, { isEn }));
           controller.close();
           return;
         }

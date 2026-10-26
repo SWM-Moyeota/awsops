@@ -15,12 +15,12 @@ import { invokeText } from './bedrock';
 import { extractUsedTools } from './tools';
 import { classifyIntent } from './classify';
 import { generateSQL, queryAWS } from './sql';
-import { generateTopologyParams, topologyContent } from './topology';
 import { generateDatasourceQuery } from './datasource-query';
 import { invokeAgentCore } from './agentcore';
 import type { PipelineInput } from './pipeline-input';
 import type { StepCtx } from './steps/types';
 import { codeStep } from './steps/code';
+import { topologyStep } from './steps/topology';
 
 // ============================================================================
 // Single route handler / 단일 라우트 핸들러
@@ -79,13 +79,7 @@ export async function handleSingleRoute(
   // Topology View handler (non-streaming, for multi-route participation)
   // 토폴로지뷰 핸들러 (비스트리밍, 멀티 라우트 참여용)
   if (config.handler === 'topology') {
-    const isEn = lang === 'en';
-    const { params, vpcs, error } = await generateTopologyParams(messages, accountId);
-    return {
-      content: topologyContent(params, vpcs, isEn, error),
-      via: config.display,
-      queriedResources: ['steampipe'],
-    };
+    return topologyStep(ctx, { isEn: lang === 'en' });
   }
 
   // Datasource handler (non-streaming, for multi-route participation)
