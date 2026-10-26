@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import Header from '@/components/layout/Header';
 import StatsCard from '@/components/dashboard/StatsCard';
@@ -8,6 +8,8 @@ import StatusBadge from '@/components/dashboard/StatusBadge';
 import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import DataTable from '@/components/table/DataTable';
+import CreatorBadge from '@/components/changes/CreatorBadge';
+import { useCreators } from '@/components/changes/useCreators';
 import { Database, X, HardDrive, Network, Shield, Tag, Activity, Search } from 'lucide-react';
 import { LineChart, Line, Tooltip, XAxis } from 'recharts';
 import SafeResponsiveContainer from '@/components/charts/SafeResponsiveContainer';
@@ -150,6 +152,12 @@ export default function RDSPage() {
     return typeof tags === 'object' ? tags : {};
   };
 
+  const creatorKeys = useMemo(
+    () => filteredList.filter((r: any) => r.account_id && r.db_instance_identifier).map((r: any) => `${r.account_id}:${r.db_instance_identifier}${r.create_time ? `|${new Date(r.create_time).toISOString()}` : ''}`),
+    [filteredList],
+  );
+  const creators = useCreators(creatorKeys);
+
   return (
     <div className="p-6 space-y-6 animate-fade-in">
       <Header title={t('rds.title')} subtitle={t('rds.subtitle')} onRefresh={() => fetchData(true)} />
@@ -200,6 +208,7 @@ export default function RDSPage() {
             ),
           },
           { key: 'region', label: t('common.region') },
+          { key: '__creator', label: t('changes.creator'), render: (_v: unknown, row: any) => <CreatorBadge lookup={creators[`${row.account_id}:${row.db_instance_identifier}`]} /> },
         ]}
         data={loading && !filteredList.length ? undefined : filteredList}
         onRowClick={(row) => fetchDetail(row.db_instance_identifier)}

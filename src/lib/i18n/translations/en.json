@@ -660,6 +660,8 @@
   "cloudtrail.multiRegionTrails": "Multi-Region",
   "cloudtrail.validatedTrails": "Validated",
 
+  "changes.creator": "Created by",
+
   "cost.title": "Cost Explorer",
   "cost.subtitle": "AWS cost analysis and breakdown",
   "cost.serviceName": "Service",

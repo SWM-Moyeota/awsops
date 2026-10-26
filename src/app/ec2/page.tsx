@@ -7,6 +7,8 @@ import StatusBadge from '@/components/dashboard/StatusBadge';
 import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import DataTable from '@/components/table/DataTable';
+import CreatorBadge from '@/components/changes/CreatorBadge';
+import { useCreators } from '@/components/changes/useCreators';
 import { Server, X, Cpu, HardDrive, Network, Shield, Tag, Search } from 'lucide-react';
 import { queries as ec2Q } from '@/lib/queries/ec2';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -140,6 +142,12 @@ export default function EC2Page() {
     return typeof tags === 'object' ? tags : {};
   };
 
+  const creatorKeys = useMemo(
+    () => filteredList.filter((r: any) => r.account_id && r.instance_id).map((r: any) => `${r.account_id}:${r.instance_id}${r.launch_time ? `|${new Date(r.launch_time).toISOString()}` : ''}`),
+    [filteredList],
+  );
+  const creators = useCreators(creatorKeys);
+
   return (
     <div className="p-6 space-y-6 animate-fade-in">
       <Header title={t('ec2.title')} subtitle={t('ec2.subtitle')} onRefresh={() => fetchData(true)} />
@@ -202,6 +210,7 @@ export default function EC2Page() {
           { key: 'private_ip_address', label: t('ec2.privateIp') },
           { key: 'vpc_id', label: t('ec2.vpcId') },
           { key: 'launch_time', label: t('ec2.launchTime'), render: (v: string) => v ? new Date(v).toLocaleDateString() : '--' },
+          { key: '__creator', label: t('changes.creator'), render: (_v: unknown, row: any) => <CreatorBadge lookup={creators[`${row.account_id}:${row.instance_id}`]} /> },
         ]}
         data={loading && !filteredList.length ? undefined : filteredList}
         onRowClick={(row) => fetchDetail(row.instance_id)}

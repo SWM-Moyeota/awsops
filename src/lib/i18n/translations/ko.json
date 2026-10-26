@@ -660,6 +660,8 @@
   "cloudtrail.multiRegionTrails": "멀티 리전",
   "cloudtrail.validatedTrails": "검증됨",
 
+  "changes.creator": "만든 사람",
+
   "cost.title": "비용 탐색기",
   "cost.subtitle": "AWS 비용 분석 및 내역",
   "cost.serviceName": "서비스",

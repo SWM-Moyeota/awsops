@@ -8,6 +8,8 @@ import StatusBadge from '@/components/dashboard/StatusBadge';
 import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import DataTable from '@/components/table/DataTable';
+import CreatorBadge from '@/components/changes/CreatorBadge';
+import { useCreators } from '@/components/changes/useCreators';
 import { Database, X, Shield, Settings, Tag, Search, Users } from 'lucide-react';
 import { queries as s3Q } from '@/lib/queries/s3';
 import { useAccountContext } from '@/contexts/AccountContext';
@@ -128,6 +130,12 @@ export default function S3Page() {
     return typeof tags === 'object' ? tags : {};
   };
 
+  const creatorKeys = useMemo(
+    () => filteredList.filter((r: any) => r.account_id && r.name).map((r: any) => `${r.account_id}:${r.name}${r.creation_date ? `|${new Date(r.creation_date).toISOString()}` : ''}`),
+    [filteredList],
+  );
+  const creators = useCreators(creatorKeys);
+
   return (
     <div className="p-6 space-y-6 animate-fade-in">
       <Header title={t('s3.title')} subtitle={t('s3.subtitle')} onRefresh={() => fetchData(true)} />
@@ -222,6 +230,7 @@ export default function S3Page() {
               : <span className="text-gray-500 text-xs">Private</span>
           },
           { key: 'creation_date', label: t('s3.creationDate'), render: (v: string) => v ? new Date(v).toLocaleDateString() : '--' },
+          { key: '__creator', label: t('changes.creator'), render: (_v: unknown, row: any) => <CreatorBadge lookup={creators[`${row.account_id}:${row.name}`]} /> },
         ]}
         data={loading && !filteredList.length ? undefined : filteredList}
         onRowClick={(row) => fetchDetail(row.name)}

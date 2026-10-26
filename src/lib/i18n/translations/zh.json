@@ -609,6 +609,7 @@
   "cloudtrail.activeTrails": "活跃",
   "cloudtrail.multiRegionTrails": "多区域",
   "cloudtrail.validatedTrails": "已验证",
+  "changes.creator": "创建者",
   "cost.title": "成本分析 (Cost Explorer)",
   "cost.subtitle": "AWS 成本分析与明细",
   "cost.serviceName": "服务",
