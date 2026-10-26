@@ -6,7 +6,6 @@ import { resolveModelId } from './models';
 import { bedrockClient } from './clients';
 import { ROUTE_REGISTRY } from './registry';
 import { getSystemPrompt, SYNTHESIS_PROMPT_SUFFIX } from './prompts';
-import { pick } from './status';
 import { extractUsedTools } from './tools';
 import { sseEvent, simulateStreaming, streamBedrockToSSE } from './sse';
 import { streamText } from './bedrock';
@@ -20,6 +19,7 @@ import { codeStep } from './steps/code';
 import { topologyStep } from './steps/topology';
 import { sqlStep } from './steps/sql';
 import { datasourceStep } from './steps/datasource';
+import { autoCollectStep } from './steps/auto-collect';
 
 // Former POST-scope closure variables arrive through `input` under their old names.
 // 예전 POST 스코프의 클로저 변수는 `input`으로 받아 원래 이름 그대로 쓴다.
@@ -111,39 +111,14 @@ export function runStreaming(input: StreamPipelineInput): ReadableStream {
         }
 
         // Handler: Auto-collect (eks-optimize, db-optimize, msk-optimize, idle-scan, trace-analyze, incident)
-        // 자동 데이터 수집 분석 핸들러 — collector 파일을 route key로 동적 import
+        // 자동 데이터 수집 분석 핸들러 — 오류면 `${route}-error` 상태 후 아래로 계속 (gateway)
         if (config.handler === 'auto-collect') {
           try {
-            const collectorModule = await import(`@/lib/collectors/${route}`);
-            const collector = collectorModule.default as import('@/lib/collectors/types').Collector;
-
-            const data = await collector.collect(send, accountId, isEn);
-            const context = collector.formatContext(data);
-
-            send('status', { step: `${route}-analyzing`, message: pick(clientLang,
-              `🤖 Analyzing with ${collector.displayName}...`,
-              `🤖 ${collector.displayName} 분석 중...`,
-              `🤖 正在使用 ${collector.displayName} 分析...`) });
-
-            const modelId = resolveModelId(modelKey);
-            const bedrockMessages = messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content }));
-            bedrockMessages[bedrockMessages.length - 1].content += context;
-
-            const streamResult = await streamBedrockToSSE(
-              { modelId, system: collector.analysisPrompt, messages: bedrockMessages, maxTokens: 8192 },
-              send,
-            );
-            totalInputTokens += streamResult.inputTokens;
-            totalOutputTokens += streamResult.outputTokens;
-
+            const r = await autoCollectStep(ctx, { isEn, modelId: resolveModelId(modelKey) });
+            addTokens(r);
             const timeMs = Date.now() - callStartTime;
-            recordAndSave({ route, gateway: route, responseTimeMs: timeMs, usedTools: data.usedTools, success: true, via: data.viaSummary, question: lastMessage, summary: streamResult.content || '', userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
-            send('done', {
-              content: streamResult.content || 'No response', model: getBedrockModelLabel(),
-              via: data.viaSummary, queriedResources: data.queriedResources, route,
-              usedTools: data.usedTools,
-              inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
-            });
+            recordAndSave({ route, gateway: route, responseTimeMs: timeMs, usedTools: r.usedTools, success: true, via: r.via, question: lastMessage, summary: r.content || '', userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
+            sendDone({ ...r, content: r.content || 'No response' });
             controller.close();
             return;
           } catch (err: any) {

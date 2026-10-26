@@ -18,6 +18,7 @@ import { codeStep } from './steps/code';
 import { topologyStep } from './steps/topology';
 import { sqlStep } from './steps/sql';
 import { datasourceStep } from './steps/datasource';
+import { autoCollectStep } from './steps/auto-collect';
 
 // ============================================================================
 // Single route handler / 단일 라우트 핸들러
@@ -58,27 +59,11 @@ export async function handleSingleRoute(
     return datasourceStep(ctx, { variant: 'json', modelId: rawModelId(modelKey), emptyContent: '' });
   }
 
-  // Auto-collect handler (non-streaming, for multi-route participation)
-  // 자동 수집 핸들러 (비스트리밍, 멀티 라우트 참여용)
+  // Auto-collect handler (non-streaming, for multi-route participation) — any error → null
+  // 자동 수집 핸들러 (비스트리밍, 멀티 라우트 참여용) — 오류면 null
   if (config.handler === 'auto-collect') {
     try {
-      const collectorModule = await import(`@/lib/collectors/${route}`);
-      const collector = collectorModule.default as import('@/lib/collectors/types').Collector;
-      const noopSend = () => {};
-      const data = await collector.collect(noopSend, accountId, true);
-      const context = collector.formatContext(data);
-
-      const bedrockMessages = messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content }));
-      bedrockMessages[bedrockMessages.length - 1].content += context;
-      const body = JSON.stringify({
-        anthropic_version: 'bedrock-2023-05-31', max_tokens: 8192, system: collector.analysisPrompt, messages: bedrockMessages,
-      });
-      const response = await bedrockClient.send(new InvokeModelCommand({
-        modelId: rawModelId(modelKey), contentType: 'application/json', accept: 'application/json',
-        body: new TextEncoder().encode(body),
-      }));
-      const analysisText = JSON.parse(new TextDecoder().decode(response.body)).content?.[0]?.text || '';
-      return { content: analysisText, via: data.viaSummary, queriedResources: data.queriedResources, usedTools: data.usedTools };
+      return await autoCollectStep(ctx, { isEn: true, modelId: rawModelId(modelKey) });
     } catch {
       return null;
     }
