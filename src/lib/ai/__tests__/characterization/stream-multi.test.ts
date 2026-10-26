@@ -443,7 +443,7 @@ describe('/api/ai streaming multi-route (characterization)', () => {
         usedTools: [], inputTokens: 0, outputTokens: 0,
       }],
     ]);
-    let conv = mocks.bedrock.calls('converse');
+    const conv = mocks.bedrock.calls('converse');
     expect(conv).toHaveLength(1);
     expect(conv[0].input.system).toEqual([{ text: SYSTEM_NONE + SYNTH_SUFFIX }]);
     expect(conv[0].input.messages).toEqual([{ role: 'user', content: [{ text: synthText(KO) }] }]);
