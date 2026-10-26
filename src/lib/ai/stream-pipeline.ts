@@ -1,10 +1,7 @@
 // SSE streaming pipeline — moved verbatim from route.ts (the ReadableStream body of POST)
 // SSE 스트리밍 파이프라인 — route.ts POST의 ReadableStream 본문을 그대로 옮김
 import { ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
-import { getBedrockModelLabel, getDefaultDatasource } from '@/lib/app-config';
-import type { DatasourceType } from '@/lib/app-config';
-import { queryDatasource } from '@/lib/datasource-client';
-import { detectDatasourceTypes, DATASOURCE_TYPES } from '@/lib/datasource-registry';
+import { getBedrockModelLabel } from '@/lib/app-config';
 import { resolveModelId } from './models';
 import { bedrockClient } from './clients';
 import { ROUTE_REGISTRY } from './registry';
@@ -15,7 +12,6 @@ import { sseEvent, simulateStreaming, streamBedrockToSSE } from './sse';
 import { streamText } from './bedrock';
 import { recordAndSave } from './stats';
 import { classifyIntent } from './classify';
-import { generateDatasourceQuery } from './datasource-query';
 import { invokeAgentCore } from './agentcore';
 import { handleSingleRoute } from './json-pipeline';
 import type { StreamPipelineInput } from './pipeline-input';
@@ -23,6 +19,7 @@ import type { StepCtx, StepResult } from './steps/types';
 import { codeStep } from './steps/code';
 import { topologyStep } from './steps/topology';
 import { sqlStep } from './steps/sql';
+import { datasourceStep } from './steps/datasource';
 
 // Former POST-scope closure variables arrive through `input` under their old names.
 // 예전 POST 스코프의 클로저 변수는 `input`으로 받아 원래 이름 그대로 쓴다.
@@ -100,90 +97,16 @@ export function runStreaming(input: StreamPipelineInput): ReadableStream {
         }
 
         // Handler: External Datasource (single-route only; multi-route delegates to handleSingleRoute)
-        // 외부 데이터소스 핸들러 (단일 라우트 전용; 멀티 라우트는 handleSingleRoute로 위임)
+        // 외부 데이터소스 핸들러 (단일 라우트 전용; 멀티 라우트는 handleSingleRoute로 위임) — 실패하면 gateway(ops)로
         if (!isMulti && config.handler === 'datasource') {
-          const dsTypes = detectDatasourceTypes(lastMessage);
-          if (dsTypes.length === 0) {
-            send('status', { step: 'datasource-no-type', message: '데이터소스 타입을 감지할 수 없습니다. 프로메테우스, 로키, 템포, 클릭하우스 중 하나를 지정해주세요.' });
-            // Fall through to general handler
-          } else {
-            // Parallel query generation + execution for all detected types
-            // 감지된 모든 타입에 대해 병렬 쿼리 생성 + 실행
-            const dsResults = await Promise.allSettled(
-              dsTypes.map(async (dsType) => {
-                const ds = getDefaultDatasource(dsType);
-                if (!ds) {
-                  send('status', { step: 'datasource-not-found', message: `${DATASOURCE_TYPES[dsType].label} 데이터소스가 설정되지 않았습니다.` });
-                  return null;
-                }
-                send('status', { step: 'datasource-generating', message: `${DATASOURCE_TYPES[dsType].label} ${DATASOURCE_TYPES[dsType].queryLanguage} 쿼리 생성 중...` });
-                let dsQuery: string | null = await generateDatasourceQuery(messages, dsType);
-                if (!dsQuery) return null;
-                for (let attempt = 0; attempt < 2 && dsQuery; attempt++) {
-                  send('status', { step: 'datasource-querying', message: `${ds.name}에 쿼리 실행 중${attempt > 0 ? ' (재시도)' : ''}...`, query: dsQuery });
-                  try {
-                    const result = await queryDatasource(ds, dsQuery, { start: '1h' });
-                    return { dsType, ds, dsQuery, result };
-                  } catch (err: any) {
-                    if (attempt === 0) {
-                      send('status', { step: 'datasource-retrying', message: `${DATASOURCE_TYPES[dsType].label} 쿼리 오류 수정 중...` });
-                      const fixMessages = [
-                        ...messages.slice(-4),
-                        { role: 'assistant' as const, content: `I generated this ${DATASOURCE_TYPES[dsType].queryLanguage} query: ${dsQuery}` },
-                        { role: 'user' as const, content: `That query failed with error: ${err.message}. Fix the query.` },
-                      ];
-                      dsQuery = await generateDatasourceQuery(fixMessages, dsType);
-                    }
-                  }
-                }
-                return null;
-              })
-            );
-
-            const successResults = dsResults
-              .filter((r): r is PromiseFulfilledResult<{ dsType: DatasourceType; ds: any; dsQuery: string; result: any }> =>
-                r.status === 'fulfilled' && r.value != null)
-              .map(r => r.value);
-
-            if (successResults.length > 0) {
-              const modelId = resolveModelId(modelKey);
-              const isMultiDs = successResults.length > 1;
-              send('status', { step: 'datasource-analyzing', message: isMultiDs
-                ? `${successResults.length}개 데이터소스 상관 분석 중...`
-                : `${successResults[0].result.metadata?.totalRows || successResults[0].result.rows.length}건 결과 분석 중...` });
-
-              const combinedContext = successResults.map(s =>
-                `\n\n--- LIVE ${DATASOURCE_TYPES[s.dsType].label.toUpperCase()} DATA (${s.result.rows.length} rows) ---\n` +
-                `Datasource: ${s.ds.name} (${s.ds.url})\n${DATASOURCE_TYPES[s.dsType].queryLanguage}: ${s.dsQuery}\n` +
-                `\`\`\`json\n${JSON.stringify(s.result.rows.slice(0, 100), null, 2)}\n\`\`\``
-              ).join('\n');
-
-              const bedrockMessages = messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content }));
-              bedrockMessages[bedrockMessages.length - 1].content += combinedContext;
-
-              const correlationHint = isMultiDs ? '\n\nIMPORTANT: The user asked about multiple datasources. Provide cross-source correlation analysis — identify patterns, correlations, and potential root causes across the different data sources.' : '';
-              const streamResult = await streamBedrockToSSE(
-                { modelId, system: SYSTEM_PROMPT + correlationHint, messages: bedrockMessages },
-                send,
-              );
-              totalInputTokens += streamResult.inputTokens;
-              totalOutputTokens += streamResult.outputTokens;
-              const dsContent = streamResult.content || 'No response';
-              const dsTools = successResults.map(s => `${s.dsType}: ${s.dsQuery}`);
-              const viaStr = successResults.map(s => `${DATASOURCE_TYPES[s.dsType].label} (${s.result.rows.length} rows)`).join(' + ');
-              const dsTimeMs = Date.now() - callStartTime;
-              recordAndSave({ route, gateway: `datasource:${successResults.map(s => s.dsType).join('+')}`, responseTimeMs: dsTimeMs, usedTools: dsTools, success: true, via: viaStr, question: lastMessage, summary: dsContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
-              send('done', {
-                content: dsContent, model: getBedrockModelLabel(),
-                via: `Datasource Analytics: ${viaStr}`,
-                queriedResources: successResults.map(s => s.dsType), route,
-                usedTools: dsTools,
-                inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
-              });
-              controller.close();
-              return;
-            }
-            send('status', { step: 'datasource-fallback', message: '데이터소스 쿼리 실패. Bedrock으로 폴백합니다.' });
+          const r = await datasourceStep(ctx, { variant: 'stream', modelId: resolveModelId(modelKey), emptyContent: 'No response' });
+          if (r) {
+            addTokens(r);
+            const dsTimeMs = Date.now() - callStartTime;
+            recordAndSave({ route, gateway: `datasource:${r.queriedResources.join('+')}`, responseTimeMs: dsTimeMs, usedTools: r.usedTools, success: true, via: r.extra.statsVia, question: lastMessage, summary: r.content, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
+            sendDone(r);
+            controller.close();
+            return;
           }
         }
 

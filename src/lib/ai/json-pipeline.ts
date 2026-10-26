@@ -2,10 +2,7 @@
 // JSON(비스트리밍) 파이프라인 — route.ts에서 그대로 옮김
 import { NextResponse } from 'next/server';
 import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
-import { getBedrockModelLabel, getDefaultDatasource } from '@/lib/app-config';
-import type { DatasourceType } from '@/lib/app-config';
-import { queryDatasource } from '@/lib/datasource-client';
-import { detectDatasourceTypes, DATASOURCE_TYPES } from '@/lib/datasource-registry';
+import { getBedrockModelLabel } from '@/lib/app-config';
 import { resolveModelId, rawModelId } from './models';
 import { bedrockClient } from './clients';
 import { ROUTE_REGISTRY, type RouteType } from './registry';
@@ -14,13 +11,13 @@ import { buildStatus } from './status';
 import { invokeText } from './bedrock';
 import { extractUsedTools } from './tools';
 import { classifyIntent } from './classify';
-import { generateDatasourceQuery } from './datasource-query';
 import { invokeAgentCore } from './agentcore';
 import type { PipelineInput } from './pipeline-input';
 import type { StepCtx } from './steps/types';
 import { codeStep } from './steps/code';
 import { topologyStep } from './steps/topology';
 import { sqlStep } from './steps/sql';
+import { datasourceStep } from './steps/datasource';
 
 // ============================================================================
 // Single route handler / 단일 라우트 핸들러
@@ -33,7 +30,6 @@ export async function handleSingleRoute(
   const { messages, modelKey, lang, accountId, accountAlias, requestId } = input;
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   const config = ROUTE_REGISTRY[route];
-  const lastMessage = messages[messages.length - 1]?.content || '';
   const ctx: StepCtx = {
     route, messages, lang, accountId, accountAlias, requestId,
     systemPrompt: SYSTEM_PROMPT, status: buildStatus(lang), emit: () => {}, llm: invokeText,
@@ -57,57 +53,9 @@ export async function handleSingleRoute(
   }
 
   // Datasource handler (non-streaming, for multi-route participation)
-  // 데이터소스 핸들러 (비스트리밍, 멀티 라우트 참여용)
+  // 데이터소스 핸들러 (비스트리밍, 멀티 라우트 참여용) — 실패하면 null → 단일 라우트는 Bedrock 폴백
   if (config.handler === 'datasource') {
-    const dsTypes = detectDatasourceTypes(lastMessage);
-    if (dsTypes.length === 0) return null;
-
-    const dsResults = await Promise.allSettled(dsTypes.map(async (dsType) => {
-      const ds = getDefaultDatasource(dsType);
-      if (!ds) return null;
-      let dsQuery: string | null = await generateDatasourceQuery(messages, dsType);
-      if (!dsQuery) return null;
-      for (let attempt = 0; attempt < 2 && dsQuery; attempt++) {
-        try {
-          const result = await queryDatasource(ds, dsQuery, { start: '1h' });
-          return { dsType, ds, dsQuery, result };
-        } catch (err: any) {
-          if (attempt === 0) {
-            const fixMsgs = [...messages.slice(-4),
-              { role: 'assistant' as const, content: `I generated this ${DATASOURCE_TYPES[dsType].queryLanguage} query: ${dsQuery}` },
-              { role: 'user' as const, content: `That query failed with error: ${err.message}. Fix the query.` }];
-            dsQuery = await generateDatasourceQuery(fixMsgs, dsType);
-          }
-        }
-      }
-      return null;
-    }));
-
-    const successful = dsResults
-      .filter((r): r is PromiseFulfilledResult<{ dsType: DatasourceType; ds: any; dsQuery: string; result: any }> =>
-        r.status === 'fulfilled' && r.value != null)
-      .map(r => r.value);
-    if (successful.length === 0) return null;
-
-    const contextData = successful.map(s =>
-      `--- LIVE ${DATASOURCE_TYPES[s.dsType].label.toUpperCase()} DATA (${s.result.rows.length} rows) ---\n` +
-      `Datasource: ${s.ds.name}\n${DATASOURCE_TYPES[s.dsType].queryLanguage}: ${s.dsQuery}\n` +
-      `\`\`\`json\n${JSON.stringify(s.result.rows.slice(0, 80), null, 2)}\n\`\`\``
-    ).join('\n\n');
-
-    const bedrockMessages = messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content }));
-    bedrockMessages[bedrockMessages.length - 1].content += '\n\n' + contextData;
-    const body = JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: SYSTEM_PROMPT, messages: bedrockMessages,
-    });
-    const response = await bedrockClient.send(new InvokeModelCommand({
-      modelId: rawModelId(modelKey), contentType: 'application/json', accept: 'application/json',
-      body: new TextEncoder().encode(body),
-    }));
-    const analysisText = JSON.parse(new TextDecoder().decode(response.body)).content?.[0]?.text || '';
-    const viaStr = successful.map(s => `${DATASOURCE_TYPES[s.dsType].label} (${s.result.rows.length} rows)`).join(' + ');
-    const tools = successful.map(s => `${s.dsType}: ${s.dsQuery}`);
-    return { content: analysisText, via: `Datasource Analytics: ${viaStr}`, queriedResources: successful.map(s => s.dsType), usedTools: tools };
+    return datasourceStep(ctx, { variant: 'json', modelId: rawModelId(modelKey), emptyContent: '' });
   }
 
   // Auto-collect handler (non-streaming, for multi-route participation)
@@ -177,7 +125,7 @@ async function synthesizeResponses(
 // Non-streaming handler — supports multi-route / 비스트리밍 — 멀티 라우트 지원
 // ============================================================================
 export async function handleNonStreaming(input: PipelineInput) {
-  const { messages, modelKey, lang, accountId, accountAlias, requestId } = input;
+  const { messages, modelKey, lang } = input;
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   try {
     const classifyResult = await classifyIntent(messages);
