@@ -3,6 +3,7 @@
 import type { Estimate, RawInventory, Trend } from './types';
 import { buildEstimate, collectionFailed } from './estimate';
 import { readJson, writeJsonAtomic } from './store';
+import { kstDay, toSnapshotResources, writeSnapshotAccount, pruneSnapshots } from './snapshots';
 
 export type HistoryEntry = {
   accountId: string;
@@ -17,12 +18,6 @@ export type HistoryFile = { entries: HistoryEntry[] };
 const FILE = 'history.json';
 const KEEP_DAYS = 90;
 const DAY_MS = 86_400_000;
-const KST_MS = 9 * 3_600_000;
-
-/** KST calendar day (YYYY-MM-DD) of an instant. / KST 기준 날짜. */
-function kstDay(d: Date): string {
-  return new Date(d.getTime() + KST_MS).toISOString().slice(0, 10);
-}
 
 /** True only for a complete (non-partial) entry of that KST day. / 그날의 완전한 기록이 있을 때만 true. */
 export function hasEntryForDay(hist: HistoryFile, accountId: string, now: Date): boolean {
@@ -109,13 +104,16 @@ export function recordDailyIfMissing(now: Date = new Date(), deps?: DailyDeps): 
         try {
           const inv = await d.collectInventory(id);
           if (collectionFailed(inv)) continue;
-          hist = recordEstimate(hist, buildEstimate([inv], id), now);
+          const est = buildEstimate([inv], id);
+          hist = recordEstimate(hist, est, now);
           wrote = true;
+          if (est.warnings.length === 0) await writeSnapshotAccount(kstDay(now), id, toSnapshotResources(est));
         } catch {
           // one account failing must not stop the others / 한 계정 실패가 다른 계정을 막지 않음
         }
       }
       if (wrote) await writeHistory(hist);
+      await pruneSnapshots(now);
     } catch {
       // never throws / 예외 없음
     }

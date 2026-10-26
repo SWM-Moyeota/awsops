@@ -20,8 +20,8 @@ export async function readJson<T>(name: string, fallback: T): Promise<T> {
 /** Write temp file in the same directory, then rename. / 같은 디렉터리에 임시 파일 후 rename. */
 export async function writeJsonAtomic(name: string, value: unknown): Promise<void> {
   const dir = costRadarDir();
-  await fs.promises.mkdir(dir, { recursive: true });
   const file = path.join(dir, name);
+  await fs.promises.mkdir(path.dirname(file), { recursive: true }); // name may include a subdirectory / 하위 폴더 허용
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   try {
     await fs.promises.writeFile(tmp, JSON.stringify(value));
