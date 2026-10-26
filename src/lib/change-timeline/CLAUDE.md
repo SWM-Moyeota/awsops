@@ -25,7 +25,7 @@
 
 ## 규칙
 - AWS를 바꾸는 API를 호출하지 않는다. CloudTrail 내용·IP·자격 증명을 로그에 남기지 않고, 오류 이름만 남긴다.
-- CloudTrail 호출은 반드시 `cloudTrailSlot`을 거친다(계정·리전당 초당 2회 한도를 비용 레이더와 공유).
+- CloudTrail 호출은 반드시 `cloudTrailSlot`을 거친다(계정·리전당 초당 1회로 비용 레이더와 공유 — AWS 한도 2회 중 나머지는 /cloudtrail 페이지·AI Lambda 몫).
 - 새 리소스 종류를 추적하려면 `catalog.ts`에 이벤트를, `parse.ts`에 이름 추출을, `src/components/changes/format.ts`에 라벨을 함께 추가한다.
 - "누가" 질문 해석에 LLM을 쓰지 않는다. 생성·삭제 동사도 없고 기록도 없으면 AI로 넘긴다(일반 질문을 가로채지 않는다).
 - 깨진 월 파일은 `.corrupt-*`로 남으므로 복구는 수동으로 한다.

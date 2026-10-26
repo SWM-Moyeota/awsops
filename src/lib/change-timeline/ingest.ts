@@ -24,7 +24,7 @@ const DEFAULT_MAX_PAGES = 1000; // per-name safety cap, never expected to hit / 
 
 export const defaultLookup: LookupFn = async (accountId, region, p) => {
   // Credentials first: a cold AssumeRole must not delay the send after the pacer slot.
-  // 자격증명을 먼저 받고 슬롯을 잡는다 (AssumeRole 지연이 600ms 간격을 깨지 않게).
+  // 자격증명을 먼저 받고 슬롯을 잡는다 (AssumeRole 지연이 1초 간격을 깨지 않게).
   const creds = await accountCredentials(accountId, SESSION);
   await cloudTrailSlot(accountId, region);
   const client = new CloudTrailClient({ region, ...(creds ? { credentials: creds } : {}) });
