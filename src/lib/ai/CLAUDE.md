@@ -36,7 +36,7 @@ route.ts (GET/POST)
 - `stream-pipeline.ts` — `runStreaming(input): ReadableStream`: 상태 이벤트, 단계 호출 순서와 넘어가는 순서, 15초 keepalive, `recordAndSave`, 토큰 합계, 오류 처리, 멀티 라우트, `synthesizeResponsesStreaming`(ConverseStream). SSE 응답 헤더는 route.ts에 있다.
 
 ## 단계 계약 (`steps/types.ts`)
-- 모양: `(ctx: StepCtx, opts) => Promise<StepResult | null>`. `null`이면 "이 단계는 답을 못 냈다"는 뜻이고, 다음 행선지는 호출한 파이프라인이 정한다. auto-collect만 예외로, null 대신 오류를 던지고 try/catch는 각 파이프라인이 갖는다.
+- 모양: `(ctx: StepCtx, opts) => Promise<StepResult | null>`. `null`이면 "이 단계는 답을 못 냈다"는 뜻이고, 다음 행선지는 호출한 파이프라인이 정한다. Bedrock·Steampipe 오류는 모든 단계에서 그대로 위로 던져진다(스트리밍 `error` 이벤트, JSON 500, 멀티 라우트에서는 실패한 참가자). 파이프라인이 일부러 잡는 것은 auto-collect 오류뿐이다(스트리밍은 `${route}-error` 후 gateway, JSON은 null 후 Bedrock 폴백).
 - `StepCtx` = `{ route, messages, lang?, accountId?, accountAlias?, requestId, systemPrompt, status, emit, llm }`.
   - JSON(`handleSingleRoute`): `emit = () => {}`, `llm = invokeText`.
   - 스트림: `emit = send`, `llm = req => streamText(req, send)`(답이 chunk로 흘러간다).
@@ -117,7 +117,7 @@ route.ts (GET/POST)
 - `stream-pipeline.ts` — `runStreaming(input): ReadableStream`. It owns the status events, the order in which steps run and fall through, the 15 s keepalives, `recordAndSave`, the token totals, error handling, multi-route and `synthesizeResponsesStreaming` (ConverseStream). The SSE response headers stay in route.ts.
 
 ## Step contract (`steps/types.ts`)
-- Shape: `(ctx: StepCtx, opts) => Promise<StepResult | null>`. `null` means the step produced no answer; the calling pipeline decides where to go next. The one exception is auto-collect: it throws instead of returning null, and each pipeline keeps its own try/catch.
+- Shape: `(ctx: StepCtx, opts) => Promise<StepResult | null>`. `null` means the step produced no answer; the calling pipeline decides where to go next. Bedrock/Steampipe errors propagate from every step (stream `error` event, JSON 500, or a rejected multi-route participant). Auto-collect is the only step whose throw the pipelines catch on purpose (stream: `${route}-error` then gateway; JSON: null then Bedrock fallback).
 - `StepCtx` = `{ route, messages, lang?, accountId?, accountAlias?, requestId, systemPrompt, status, emit, llm }`.
   - JSON (`handleSingleRoute`): `emit = () => {}`, `llm = invokeText`.
   - Stream: `emit = send`, `llm = req => streamText(req, send)` (the answer goes out as chunks).
