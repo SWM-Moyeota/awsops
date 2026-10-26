@@ -154,7 +154,7 @@ describe('explainChange — snapshot mode', () => {
     });
     const r = await explainChange({ accountId: '__all__', days: 7, now: NOW }, d);
     expect(r.mode).toBe('snapshot');
-    expect(r.notes).toContain(`기준일에 없던 계정: ${B}`);
+    expect(r.notes).toContain(`기준일 스냅샷에 없던 계정 ${B}은(는) 비교에서 뺐어요`);
     // B is missing from the base: excluded from both sides (never "base 0 → everything added").
     // C has no live resources left; it is still in scope (base ∪ live), so its removals show.
     expect(r.baseMonthly).toBe(510);

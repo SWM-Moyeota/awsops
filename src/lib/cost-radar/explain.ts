@@ -25,7 +25,7 @@ const DAY_MS = 86_400_000;
 
 export const NOTE_TIMELINE_ONLY = '아직 비교할 과거 스냅샷이 없어서 기록 기반으로 추정했어요';
 export const noteBaseDay = (day: string) => `기준일을 ${day}로 맞췄어요`;
-export const noteMissingAccount = (id: string) => `기준일에 없던 계정: ${id}`;
+export const noteMissingAccount = (id: string) => `기준일 스냅샷에 없던 계정 ${id}은(는) 비교에서 뺐어요`;
 export const noteExcludedAccount = (id: string) => `이번 조회에서 계정 ${id} 정보를 못 가져와 비교에서 뺐어요`;
 export const noteExcludedCategory = (category: CategoryId, accountId?: string) =>
   `이번 조회에서 ${accountId ? `계정 ${accountId}의 ` : ''}${categoryLabel(category, '')} 정보를 못 가져와 비교에서 뺐어요`;
