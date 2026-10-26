@@ -123,3 +123,12 @@ describe('searchByText', () => {
     expect(await searchByText('zzz')).toEqual([]);
   });
 });
+
+describe('rdsCaseInsensitive', () => {
+  it('matchesLowercaseStoredRdsIds', async () => {
+    const { rec } = await import('./helpers');
+    const r = rec('d', '2026-10-01T00:00:00Z', { resourceType: 'rds-instance', resourceId: 'moyeota-dev-db', resourceName: 'moyeota-dev-db' });
+    const out = await findCreators([`${r.accountId}:MoYeota-Dev-DB`], { read: async () => [r], state: async () => ({ accounts: {} }) as never });
+    expect(out[0].status).toBe('found');
+  });
+});

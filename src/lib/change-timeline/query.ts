@@ -89,7 +89,7 @@ export async function findCreators(keys: KeyInput[], deps: QueryDeps = {}): Prom
     const rid = key.slice(i + 1);
     const mine = records
       .filter((r) => !r.failed && r.accountId === accountId
-        && (r.resourceId === rid || (r.resourceType === 's3-bucket' && r.resourceName === rid)))
+        && (r.resourceId === rid || (/^rds-/.test(r.resourceType) && r.resourceId.toLowerCase() === rid.toLowerCase()) || (r.resourceType === 's3-bucket' && r.resourceName === rid)))
       .sort(byTimeDesc);
     const created = mine.find((r) => r.kind === 'create');
     if (!created) {

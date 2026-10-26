@@ -17,8 +17,8 @@
   - "작업한 사람" 수는 `person`과 `root`만 센다. 자동과 AWSops 줄은 생성·삭제 숫자에만 넣는다.
 - `ingest.ts` — `ingestOnce`는 계정마다 `ap-northeast-2`, `us-east-1` 순서로 돈다.
   - 처음에는 이벤트 이름마다 90일치를 채운다. 이름 하나가 끝날 때마다 상태를 저장해서 중간에 멈춰도 이어서 한다.
-  - 이후에는 증분으로, 이름마다 `lastTo − 20분`부터 지금까지 끝까지 페이지를 넘긴다(잘림 없음).
-  - 모든 호출은 `src/lib/cloudtrail-access.ts`의 `cloudTrailSlot`(계정·리전당 600ms, 비용 레이더와 공유)을 거친다. 다른 계정은 `accountCredentials`로 AssumeRole한다.
+  - 이후에는 증분으로, 이름마다 `lastTo − 60분`부터 지금까지 끝까지 페이지를 넘긴다(잘림 없음).
+  - 모든 호출은 `src/lib/cloudtrail-access.ts`의 `cloudTrailSlot`(계정·리전당 초당 1회(1 request/s per account+region, 공유 limiter), 비용 레이더와 공유)을 거친다. 다른 계정은 `accountCredentials`로 AssumeRole한다.
   - 계정이나 리전 하나가 실패해도 나머지는 계속 돌고, 실패는 `lastError`에 남는다.
 - `loop.ts` — `ensureChangeTimelineStarted()`: `globalThis` 싱글턴으로 30초 뒤 첫 실행, 이후 10분마다 돈다. 실행이 겹치지 않고 프로덕션에서만 동작한다. `instrumentation.ts`와 `/api/changes*`가 기동한다. `setDailySummaryHook`으로 Slack 요약을 매 tick 호출한다.
 - `slack.ts` — `detectWhoQuestion`, `answerWho`, `maybeHandleChangeQuestion`(봇의 `tryChangeQuestion`, AI 앞에서 규칙으로 처리), `buildDailySummary`, `maybeSendDailySummary`(KST 09:00 이후 어제 요약을 하루 1번, 0건이면 보내지 않음, 실패하면 다음 tick에 재시도, 메모리 가드로 이중 발송 방지).
@@ -45,7 +45,7 @@ Collects **who created and deleted which resources** across the connected accoun
   - Tool detection.
 - `store.ts` — monthly JSON files plus `state.json`. Writes are atomic and serialized, and records are deduped by id. A corrupt month file is moved aside. Read errors other than ENOENT never overwrite.
 - `query.ts` — `queryChanges`, `findCreators`, `searchByText`. People = `person` and `root` only.
-- `ingest.ts` — a resumable per-name 90-day backfill, then a per-name incremental with a 20-minute overlap and no truncation. Calls go through the shared pacer. Failures are isolated per account and region.
+- `ingest.ts` — a resumable per-name 90-day backfill, then a per-name incremental with a 60-minute overlap and no truncation. Calls go through the shared pacer. Failures are isolated per account and region.
 - `loop.ts` — the globalThis singleton loop: 30 s first run, then 10 minutes, no overlap, production only, with a daily-summary hook.
 - `slack.ts` — the rule-based who-question (falls through to the AI when there is no verb and no record) and the once-a-day 09:00 KST summary.
 
@@ -54,3 +54,8 @@ Collects **who created and deleted which resources** across the connected accoun
 - All CloudTrail calls go through `cloudTrailSlot`.
 - A new resource type needs catalog, parse and format changes together.
 - No LLM in the who-question parsing.
+
+## Operating notes
+- Steady state is about 46 CloudTrail calls per account per tick (1 request/s per account+region, shared limiter).
+- Incremental overlap is 60 minutes (CloudTrail delivery can lag past 15 minutes; dedupe makes re-reads free).
+- Accepted limitation: EC2 "만든 사람" uses `launch_time` as the createdAt hint, so a restarted old instance may show "기록 없음" instead of "90일보다 오래돼서".

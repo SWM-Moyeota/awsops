@@ -61,7 +61,7 @@ describe('ingestOnce', () => {
     // unfinished names are backfilled; the two finished ones only get the short incremental window
     expect(asked).toEqual([...names.slice(2), ...names.slice(0, 2)]);
     const inc = second.calls.filter((c) => c[1] === 'ap-northeast-2').slice(-2);
-    expect(inc.every((c) => c[2].start.getTime() === NOW.getTime() - 20 * 60_000)).toBe(true);
+    expect(inc.every((c) => c[2].start.getTime() === NOW.getTime() - 60 * 60_000)).toBe(true);
   });
 
   it('incrementalUsesOverlapAndDedupes', async () => {
@@ -72,7 +72,7 @@ describe('ingestOnce', () => {
     expect((await ingestOnce({ lookup: g.fn, now: later, accounts: [A] })).added).toBe(0);
     const ap = g.calls.filter((c) => c[1] === 'ap-northeast-2');
     expect(ap.map((c) => c[2].eventName)).toEqual(eventNamesFor('ap-northeast-2'));
-    expect(ap.every((c) => c[2].start.getTime() === NOW.getTime() - 20 * 60_000 && c[2].end.getTime() === later.getTime())).toBe(true);
+    expect(ap.every((c) => c[2].start.getTime() === NOW.getTime() - 60 * 60_000 && c[2].end.getTime() === later.getTime())).toBe(true);
   });
 
   it('oneAccountFailureDoesNotStopOthers', async () => {

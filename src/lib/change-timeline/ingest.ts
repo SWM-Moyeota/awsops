@@ -19,7 +19,7 @@ export type LookupFn = (
 const SESSION = 'awsops-change-timeline';
 const REGIONS: TrackedRegion[] = ['ap-northeast-2', 'us-east-1'];
 const BACKFILL_DAYS = 90;
-const OVERLAP_MS = 20 * 60_000;
+const OVERLAP_MS = 60 * 60_000;
 const DEFAULT_MAX_PAGES = 1000; // per-name safety cap, never expected to hit / 이름별 안전 상한
 
 export const defaultLookup: LookupFn = async (accountId, region, p) => {

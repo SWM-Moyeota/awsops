@@ -16,19 +16,33 @@ const KST_MS = 9 * 3_600_000;
 const DAY_MS = 86_400_000;
 const NAME_TOKEN = /[A-Za-z0-9][A-Za-z0-9._:/-]{2,}/g;
 // Service words people write next to the name ("EC2 i-0abc 누가…") — not resource names.
-const SERVICE_WORDS = new Set(['ec2', 's3', 'rds', 'eks', 'ecs', 'ecr', 'vpc', 'iam', 'aws', 'nat', 'ebs', 'sg', 'alb', 'nlb', 'elb']);
+const SERVICE_WORDS = new Set([
+  'ec2', 's3', 'rds', 'eks', 'ecs', 'ecr', 'vpc', 'iam', 'aws', 'nat', 'ebs', 'sg', 'alb', 'nlb', 'elb',
+  'lambda', 'dynamodb', 'elasticache', 'cloudtrail', 'cloudformation', 'bucket', 'instance', 'cluster', 'function',
+  'table', 'repository', 'service', 'user', 'role', 'subnet', 'snapshot', 'volume',
+]);
+const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** All plausible resource-name tokens, in order. / 리소스 이름 후보 전부(순서대로). */
+export function extractCandidates(text: string): string[] {
+  const t = text.replace(/<@[^>]+>/g, ' ');
+  const out: string[] = [];
+  for (const m of t.match(NAME_TOKEN) ?? []) {
+    const s = m.replace(/[._:/-]+$/, '');
+    if (s.length >= 3 && !SERVICE_WORDS.has(s.toLowerCase()) && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
 
 export function detectWhoQuestion(text: string): WhoQuestion | null {
   const t = text.replace(/<@[^>]+>/g, ' ').trim();
   if (!/누가|누구/.test(t)) return null;
   const kind = /지웠|지운|삭제|없앴|제거/.test(t) ? 'delete' : /만들|만든|생성/.test(t) ? 'create' : 'any';
-  const target = (t.match(NAME_TOKEN) ?? [])
-    .map((s) => s.replace(/[._:/-]+$/, ''))
-    .find((s) => s.length >= 3 && !SERVICE_WORDS.has(s.toLowerCase()));
+  const target = extractCandidates(t)[0];
   return target ? { kind, target } : null;
 }
 
-const subject = (r: ChangeRecord): string => (r.actor.kind === 'person' ? `${r.actor.name}님이` : withSubject(r.actor.name));
+const subject = (r: ChangeRecord): string => esc(r.actor.kind === 'person' ? `${r.actor.name}님이` : withSubject(r.actor.name));
 const when = (iso: string): string => `${kstDate(iso)} ${kstTime(iso)}`;
 
 interface Group { create?: ChangeRecord; del?: ChangeRecord; latest: string }
@@ -49,7 +63,7 @@ function groupByResource(records: ChangeRecord[]): Group[] {
 
 export function answerWho(q: WhoQuestion, records: ChangeRecord[]): string {
   const groups = groupByResource(records);
-  if (groups.length === 0) return `최근 90일 기록에서 \`${q.target}\`을(를) 찾지 못했어요`;
+  if (groups.length === 0) return `최근 90일 기록에서 \`${esc(q.target)}\`을(를) 찾지 못했어요`;
 
   const head = (g: Group): ChangeRecord => (q.kind === 'delete' ? g.del ?? g.create! : g.create ?? g.del!);
   const status = (g: Group): string => (g.del ? `${kstDate(g.del.time)} ${subject(g.del)} 지웠어요` : '아직 있어요');
@@ -59,18 +73,18 @@ export function answerWho(q: WhoQuestion, records: ChangeRecord[]): string {
     const r = head(g);
     const { who, rest } = sentence(r);
     return [
-      `${resourceEmoji(r.resourceType)} *${who}${rest}*`,
-      `${r.resourceName} · ${resourceTypeLabel(r.resourceType)}`,
+      `${resourceEmoji(r.resourceType)} *${esc(who + rest)}*`,
+      `${esc(r.resourceName)} · ${resourceTypeLabel(r.resourceType)}`,
       `${when(r.time)} · ${toolLabel(r.tool, r.via)}`,
       status(g),
     ].join('\n');
   }
 
-  const lines = [`\`${q.target}\`와(과) 비슷한 리소스가 ${groups.length}개 있어요`];
+  const lines = [`\`${esc(q.target)}\`와(과) 비슷한 리소스가 ${groups.length}개 있어요`];
   for (const g of groups.slice(0, MAX_CANDIDATES)) {
     const r = head(g);
     const { who, rest } = sentence(r);
-    lines.push(`• ${resourceEmoji(r.resourceType)} ${r.resourceName} · ${resourceTypeLabel(r.resourceType)} — ${who}${rest} (${kstDate(r.time)})`);
+    lines.push(`• ${resourceEmoji(r.resourceType)} ${esc(r.resourceName)} · ${resourceTypeLabel(r.resourceType)} — ${esc(who + rest)} (${kstDate(r.time)})`);
   }
   if (groups.length > MAX_CANDIDATES) lines.push(`…외 ${groups.length - MAX_CANDIDATES}개. 이름을 더 정확히 알려 주세요`);
   return lines.join('\n');
@@ -93,7 +107,7 @@ export function buildDailySummary(records: ChangeRecord[], dayKst: string): stri
     for (const r of people.filter((p) => p.kind === kind)) counts.set(r.actor.name, (counts.get(r.actor.name) ?? 0) + 1);
     Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .forEach(([name, n]) => parts.push(`${name} ${label} ${n}`));
+      .forEach(([name, n]) => parts.push(`${esc(name)} ${label} ${n}`));
   }
   if (parts.length) lines.push(parts.join(' · '));
   return lines.join('\n');
@@ -148,7 +162,11 @@ export async function maybeHandleChangeQuestion(event: MentionEvent, deps: { rep
   const q = detectWhoQuestion(event.text);
   if (!q) return false;
   try {
-    const found = await searchByText(q.target);
+    let found: ChangeRecord[] = [];
+    for (const cand of extractCandidates(event.text)) {
+      found = await searchByText(cand);
+      if (found.length > 0) break;
+    }
     // Without a create/delete verb this may be an ordinary question ("누가 Grafana 쓰나요?") — let the AI have it.
     // 만들/지우는 동사가 없으면 일반 질문일 수 있어 기록이 없을 때는 AI로 넘긴다.
     if (q.kind === 'any' && found.length === 0) return false;

@@ -11,7 +11,7 @@ import ChangeSummary from './ChangeSummary';
 import ChangeFilters from './ChangeFilters';
 import ChangeRow from './ChangeRow';
 import ChangeDetailPanel from './ChangeDetailPanel';
-import { groupByKstDay, kstTime, summarySentence } from './format';
+import { groupByKstDay, kstDate, kstTime, summarySentence } from './format';
 
 const SEARCH_DEBOUNCE_MS = 300;
 const BACKFILL_POLL_MS = 30_000;
@@ -134,7 +134,7 @@ export default function ChangeTimelineView() {
                 {t('changes.statusBackfilling')}
               </span>
             )}
-            {status.lastIngestAt && <span>{t('changes.statusLastIngest', { time: kstTime(status.lastIngestAt) })}</span>}
+            {status.lastIngestAt && <span>{t('changes.statusLastIngest', { time: `${kstDate(status.lastIngestAt)} ${kstTime(status.lastIngestAt)}` })}</span>}
             {status.failedAccounts.length > 0 && (
               <span className="text-[#ff5f6d]">
                 {t('changes.statusFailed', { alias: status.failedAccounts.map(aliasOf).join(', ') })}

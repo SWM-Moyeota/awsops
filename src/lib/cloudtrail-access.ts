@@ -3,7 +3,7 @@
 import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
 import { getConfig } from '@/lib/app-config';
 
-export const CLOUDTRAIL_MIN_INTERVAL_MS = 600;
+export const CLOUDTRAIL_MIN_INTERVAL_MS = 1000; // 1 request/s per account+region (headroom for callers outside the limiter)
 const ROLE = 'AWSopsReadOnlyRole';
 const STS_REGION = 'ap-northeast-2';
 
@@ -20,9 +20,9 @@ function state(): State {
 }
 
 /**
- * Resolve once >= 600 ms has passed since the previous slot for this account+region.
+ * Resolve once >= 1000 ms has passed since the previous slot for this account+region.
  * Slots are claimed synchronously, so concurrent callers queue up in order.
- * 같은 계정+리전의 이전 호출로부터 600ms가 지나면 resolve. 동시 호출은 순서대로 대기.
+ * 같은 계정+리전의 이전 호출로부터 1초가 지나면 resolve. 동시 호출은 순서대로 대기.
  */
 export async function cloudTrailSlot(accountId: string, region: string): Promise<void> {
   const s = state();
@@ -40,7 +40,7 @@ export async function accountCredentials(accountId: string, sessionName: string)
   const acct = cfg.accounts?.find((a) => a.accountId === accountId);
   if (!acct || acct.isHost) return undefined;
   const cache = state().creds;
-  const hit = cache.get(accountId);
+  const hit = cache.get(`${accountId}:${sessionName}`);
   if (hit && hit.expires - 60_000 > Date.now()) return hit.creds;
   const res = await new STSClient({ region: STS_REGION }).send(new AssumeRoleCommand({
     RoleArn: `arn:aws:iam::${accountId}:role/${ROLE}`,
@@ -51,7 +51,7 @@ export async function accountCredentials(accountId: string, sessionName: string)
   const c = res.Credentials;
   if (!c?.AccessKeyId || !c.SecretAccessKey) throw new Error('NoCredentials');
   const creds = { accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken };
-  cache.set(accountId, { creds, expires: c.Expiration ? new Date(c.Expiration).getTime() : Date.now() + 900_000 });
+  cache.set(`${accountId}:${sessionName}`, { creds, expires: c.Expiration ? new Date(c.Expiration).getTime() : Date.now() + 900_000 });
   return creds;
 }
 

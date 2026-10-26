@@ -150,3 +150,35 @@ describe('maybeHandleChangeQuestion', () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('whoQuestionCandidates', () => {
+  const ev = (text: string) => ({ type: 'app_mention' as const, text, ts: '1.0', channel: 'C1' });
+  it('skipsServiceWordsAndTriesEachCandidate', async () => {
+    await appendRecords([
+      rec('l', '2026-10-26T05:00:00Z', { resourceType: 'lambda-function', resourceId: 'order-fn', resourceName: 'order-fn' }),
+      rec('r', '2026-10-26T05:00:00Z', { resourceType: 'rds-instance', resourceId: 'moyeota-dev-db', resourceName: 'moyeota-dev-db' }),
+    ]);
+    const reply = vi.fn(async (_t: string) => {});
+    expect(await maybeHandleChangeQuestion(ev('<@U1> Lambda 함수 order-fn 누가 만들었어?'), { reply })).toBe(true);
+    expect(reply.mock.calls[0][0]).toContain('order-fn');
+    expect(reply.mock.calls[0][0]).not.toContain('찾지 못했어요');
+    expect(await maybeHandleChangeQuestion(ev('<@U1> RDS moyeota-dev-db 누가 만들었어?'), { reply })).toBe(true);
+    expect(reply.mock.calls[1][0]).toContain('moyeota-dev-db');
+    expect(await maybeHandleChangeQuestion(ev('<@U1> nothere-xyz order-fn 누가 만들었어?'), { reply })).toBe(true);
+    expect(reply.mock.calls[2][0]).toContain('order-fn');
+    expect(reply.mock.calls[2][0]).not.toContain('찾지 못했어요');
+  });
+});
+
+describe('slackEscaping', () => {
+  it('escapesNamesAndTarget', () => {
+    const r = bucket('a', '2026-10-26T05:02:00Z', { resourceName: '<!channel>', resourceId: 'x', actor: { kind: 'person', name: '<https://x|y>' } });
+    const out = answerWho({ kind: 'create', target: '<!channel>&' }, [r]);
+    expect(out).not.toMatch(/<[!h]/);
+    expect(out).toContain('&lt;!channel&gt;');
+    expect(out).toContain('&lt;https://x|y&gt;');
+    expect(answerWho({ kind: 'create', target: '<!channel>&' }, [])).toContain('&lt;!channel&gt;&amp;');
+    const s = buildDailySummary([rec('1', '2026-10-25T01:00:00Z', { actor: { kind: 'person', name: '<!here>' } })], '2026-10-25')!;
+    expect(s).toContain('&lt;!here&gt;');
+  });
+});

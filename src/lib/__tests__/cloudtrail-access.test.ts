@@ -32,10 +32,10 @@ describe('cloudtrail-access', () => {
     const d = cloudTrailSlot('1', 'us-east-1').then(() => times.push(Date.now() - t0));
     await vi.advanceTimersByTimeAsync(0);
     expect(times).toEqual([0, 0, 0]); // a, c, d immediate; b waits
-    await vi.advanceTimersByTimeAsync(600);
+    await vi.advanceTimersByTimeAsync(1000);
     await Promise.all([a, b, c, d]);
     expect(times).toHaveLength(4);
-    expect(times[3]).toBeGreaterThanOrEqual(600);
+    expect(times[3]).toBeGreaterThanOrEqual(1000);
   });
 
   it('hostAccountUsesDefaultChain', async () => {
@@ -55,5 +55,14 @@ describe('cloudtrail-access', () => {
     expect(input.DurationSeconds).toBe(900);
     await accountCredentials('222222222222', 'awsops-x');
     expect(stsSend).toHaveBeenCalledTimes(1);
+  });
+
+  it('cachesCredentialsPerSessionName', async () => {
+    stsSend.mockResolvedValue({ Credentials: { AccessKeyId: 'a', SecretAccessKey: 's', Expiration: new Date(Date.now() + 900_000) } });
+    await accountCredentials('222222222222', 'one');
+    await accountCredentials('222222222222', 'two');
+    expect(stsSend).toHaveBeenCalledTimes(2);
+    await accountCredentials('222222222222', 'one');
+    expect(stsSend).toHaveBeenCalledTimes(2);
   });
 });
