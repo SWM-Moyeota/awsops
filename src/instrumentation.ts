@@ -8,5 +8,9 @@ export async function register() {
     // Slack ChatOps: SSM 토큰이 있을 때만 연결, 서버 기동을 막거나 실패시키지 않는다.
     const { startSlackChatops } = await import('./lib/slack-chatops/bot');
     void startSlackChatops();
+    // Change timeline: CloudTrail ingest loop (production only, never throws).
+    // 변경 기록: CloudTrail 수집 루프 (프로덕션 전용).
+    const { ensureChangeTimelineStarted } = await import('./lib/change-timeline/loop');
+    ensureChangeTimelineStarted();
   }
 }

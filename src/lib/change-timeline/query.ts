@@ -1,8 +1,9 @@
 // Change timeline query layer: filtered list, creator lookup, text search.
 // 변경 기록 조회: 필터 목록, 생성자 조회, 텍스트 검색.
+import { eventNamesFor } from './catalog';
 import { readRecords, readState } from './store';
 import type {
-  AccountRegionState, ChangeRecord, ChangesQuery, ChangesResponse, CreatorLookup, IngestState, RangeId,
+  AccountRegionState, ChangeRecord, ChangesQuery, ChangesResponse, CreatorLookup, IngestState, RangeId, TrackedRegion,
 } from './types';
 
 const MAX_RECORDS = 500;
@@ -31,7 +32,7 @@ const byTimeDesc = (a: ChangeRecord, b: ChangeRecord) => (a.time < b.time ? 1 : 
 export async function queryChanges(q: ChangesQuery, deps: QueryDeps = {}): Promise<ChangesResponse> {
   const read = deps.read ?? readRecords;
   const getState = deps.state ?? readState;
-  const namesFor = deps.namesFor ?? (() => []);
+  const namesFor = deps.namesFor ?? ((region: string) => eventNamesFor(region as TrackedRegion));
   const now = q.now ?? new Date();
   const all = q.accountId === '__all__';
 
