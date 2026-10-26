@@ -17,7 +17,7 @@ const KIND_STYLE: Record<ChangeRecord['kind'], { bg: string; tag: string; label:
 /** Icon background: grey for auto/AWSops, else green (create) or red (delete). / 자동은 회색, 생성 초록, 삭제 빨강. */
 export function iconTone(r: ChangeRecord): string {
   if (r.actor.kind === 'auto' || r.actor.kind === 'awsops') return 'bg-[#1a2540]';
-  return KIND_STYLE[r.kind].bg;
+  return (KIND_STYLE[r.kind] ?? KIND_STYLE.create).bg;
 }
 
 export function KindTag({ kind }: { kind: ChangeRecord['kind'] }) {

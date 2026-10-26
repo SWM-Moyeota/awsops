@@ -101,8 +101,9 @@ export default function ChangeTimelineView() {
   const closePanel = useCallback(() => setSelected(null), []);
 
   const filtered = !!(kind || actor || type || q);
+  const neutralEmpty = kind === 'state' || kind === 'modify';
   const status = data?.status;
-  const emptyReason = !status ? '' : filtered ? t('changes.emptyFiltered')
+  const emptyReason = !status ? '' : neutralEmpty ? t('changes.emptyNoMatch') : filtered ? t('changes.emptyFiltered')
     : status.backfilling ? t('changes.emptyBackfilling')
     : !status.lastIngestAt ? t('changes.emptyNotStarted')
     : t('changes.emptyNoChanges');

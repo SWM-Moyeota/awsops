@@ -150,4 +150,13 @@ describe('state kinds', () => {
     const st = await queryChanges({ accountId: '__all__', range: '7d', now, kinds: ['stop', 'start'] }, deps);
     expect(st.records.map((r) => r.id)).toEqual(['c', 'd']);
   });
+  it('searchByTextIgnoresStateAndModify', async () => {
+    const recs = [
+      rec('a', '2026-10-26T05:00:00Z', { kind: 'create', resourceName: 'web' }),
+      rec('b', '2026-10-26T04:00:00Z', { kind: 'stop', resourceName: 'web' }),
+      rec('c', '2026-10-26T03:00:00Z', { kind: 'modify', resourceName: 'web' }),
+    ];
+    const hits = await searchByText('web', { read: async () => recs });
+    expect(hits.map((r) => r.id)).toEqual(['a']);
+  });
 });

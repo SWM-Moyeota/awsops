@@ -1546,6 +1546,7 @@
   "changes.kindStart": "启动",
   "changes.kindModify": "变更",
   "changes.kindState": "启动/停止",
+  "changes.emptyNoMatch": "没有符合此条件的记录",
   "changes.filters": "变更记录筛选",
   "changes.searchPlaceholder": "按资源名称查找",
   "changes.searchClear": "清除搜索",

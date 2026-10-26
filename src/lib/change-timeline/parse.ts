@@ -131,7 +131,7 @@ const EXTRACT: Partial<Record<ResourceType, Extractor>> = {
     const fallback = requestNameTag(req);
     return items.flatMap((i) => one(getStr(i, 'instanceId'), nameTag(isObj(i) ? get(i, 'tagSet.items') : undefined) ?? fallback));
   },
-  'ebs-volume': (req, resp, k) => one(k === 'create' ? getStr(resp, 'volumeId') : getStr(req, 'volumeId'), requestNameTag(req)),
+  'ebs-volume': (req, resp, k) => one(k === 'create' ? getStr(resp, 'volumeId') : getStr(req, 'ModifyVolumeRequest.VolumeId', 'volumeId'), requestNameTag(req)),
   'ebs-snapshot': (req, resp, k) => one(k === 'create' ? getStr(resp, 'snapshotId') : getStr(req, 'snapshotId'), requestNameTag(req)),
   'security-group': (req, resp, k) =>
     k === 'create' ? one(getStr(resp, 'groupId') ?? getStr(req, 'groupName'), getStr(req, 'groupName'))
@@ -197,6 +197,11 @@ export function toRecords(raw: unknown, accountId: string): ChangeRecord[] {
     // Only an instance-type change moves the price; other attribute edits are noise.
     // 인스턴스 타입 변경만 비용에 영향을 준다. 다른 속성 변경은 기록하지 않는다.
     if (eventName === 'ModifyInstanceAttribute' && !get(raw.requestParameters, 'instanceType')) return [];
+
+    // Only class/storage/IOPS/Multi-AZ changes move the RDS price.
+    // RDS는 클래스·스토리지·IOPS·Multi-AZ 변경만 비용에 영향을 준다.
+    if (eventName === 'ModifyDBInstance'
+      && !['dBInstanceClass', 'allocatedStorage', 'storageType', 'iops', 'multiAZ'].some((k) => isObj(raw.requestParameters) && k in raw.requestParameters)) return [];
 
     const resources = safeExtract(t, raw);
     if (resources.length === 0) return [];

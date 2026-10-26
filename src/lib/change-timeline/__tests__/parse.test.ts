@@ -5,6 +5,11 @@ import createBucket from './fixtures/CreateBucket.json';
 import runInstances from './fixtures/RunInstances.json';
 import createSg from './fixtures/CreateSecurityGroup.json';
 import createDb from './fixtures/CreateDBInstance.json';
+import modVol from './fixtures/ModifyVolume.json';
+import stopReal from './fixtures/StopInstances.json';
+import startReal from './fixtures/StartInstances.json';
+import modAttr from './fixtures/ModifyInstanceAttribute.json';
+import modDb from './fixtures/ModifyDBInstance.json';
 
 const ACCT = '111122223333';
 const clone = <T,>(o: T): any => JSON.parse(JSON.stringify(o));
@@ -261,7 +266,7 @@ describe('stop/start/modify', () => {
     expect(toRecords(ev('ec2.amazonaws.com', 'ModifyInstanceAttribute', { instanceId: 'i-0aaa', groupId: ['sg-1'] }), ACCT)).toEqual([]);
   });
   it('rdsStopStartModify', () => {
-    const req = { dBInstanceIdentifier: 'moyeota-prod' };
+    const req = { dBInstanceIdentifier: 'moyeota-prod', dBInstanceClass: 'db.m5.large' };
     const kinds = [['StopDBInstance', 'stop'], ['StartDBInstance', 'start'], ['ModifyDBInstance', 'modify']] as const;
     for (const [name, kind] of kinds) {
       const r = toRecords(ev('rds.amazonaws.com', name, req), ACCT);
@@ -270,9 +275,26 @@ describe('stop/start/modify', () => {
     }
   });
   it('modifyVolume', () => {
-    const r = toRecords(ev('ec2.amazonaws.com', 'ModifyVolume', { volumeId: 'vol-0abc', size: 200, volumeType: 'gp3' }), ACCT);
+    const r = toRecords(modVol, ACCT);
     expect(r).toHaveLength(1);
-    expect(r[0]).toMatchObject({ kind: 'modify', resourceType: 'ebs-volume', resourceId: 'vol-0abc' });
+    expect(r[0]).toMatchObject({ kind: 'modify', resourceType: 'ebs-volume', resourceId: 'vol-09cd5dbbfb8730472' });
+    // flat fallback
+    expect(toRecords(ev('ec2.amazonaws.com', 'ModifyVolume', { volumeId: 'vol-0abc' }), ACCT)[0].resourceId).toBe('vol-0abc');
+  });
+  it('realFixtures', () => {
+    const stop = toRecords(stopReal, ACCT);
+    expect(stop).toHaveLength(1);
+    expect(stop[0]).toMatchObject({ kind: 'stop', resourceId: 'i-0806bafeb330307d5', tool: 'cli' });
+    expect(toRecords(startReal, ACCT)[0]).toMatchObject({ kind: 'start', resourceId: 'i-0806bafeb330307d5' });
+    expect(toRecords(modAttr, ACCT)[0]).toMatchObject({ kind: 'modify', resourceId: 'i-080ea8886236b06e5' });
+  });
+  it('modifyDbInstanceOnlyForCostFields', () => {
+    expect(toRecords(modDb, ACCT)).toEqual([]); // real log-export/parameter-group change
+    for (const k of ['dBInstanceClass', 'allocatedStorage', 'storageType', 'iops', 'multiAZ']) {
+      const e = clone(modDb);
+      e.requestParameters = { ...e.requestParameters, [k]: k === 'multiAZ' ? true : 'x' };
+      expect(toRecords(e, ACCT)).toHaveLength(1);
+    }
   });
   it('catalogRegions', () => {
     for (const n of ['StopInstances', 'StartInstances', 'ModifyInstanceAttribute']) expect(findTracked(n, 'ec2.amazonaws.com')?.region).toBe('ap-northeast-2');

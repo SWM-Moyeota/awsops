@@ -1,0 +1,67 @@
+{
+ "eventVersion": "1.11",
+ "userIdentity": {
+  "type": "IAMUser",
+  "principalId": "AIDAEXAMPLE",
+  "arn": "arn:aws:iam::111122223333:user/sungyoon",
+  "accountId": "111122223333",
+  "accessKeyId": "AKIAEXAMPLE",
+  "userName": "sungyoon",
+  "sessionContext": {
+   "attributes": {
+    "creationDate": "2026-09-10T10:56:55Z",
+    "mfaAuthenticated": "false"
+   }
+  }
+ },
+ "eventTime": "2026-09-10T11:05:38Z",
+ "eventSource": "ec2.amazonaws.com",
+ "eventName": "ModifyVolume",
+ "awsRegion": "ap-northeast-2",
+ "sourceIPAddress": "203.0.113.10",
+ "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/203.0.113.10 Safari/537.36",
+ "requestParameters": {
+  "ModifyVolumeRequest": {
+   "VolumeId": "vol-09cd5dbbfb8730472",
+   "VolumeType": "gp3",
+   "Size": 30,
+   "Throughput": 125,
+   "Iops": 3000
+  }
+ },
+ "responseElements": {
+  "ModifyVolumeResponse": {
+   "xmlns": "http://ec2.amazonaws.com/doc/2016-11-15/",
+   "volumeModification": {
+    "targetIops": 3000,
+    "originalMultiAttachEnabled": false,
+    "targetThroughput": 125,
+    "originalThroughput": 125,
+    "originalIops": 3000,
+    "modificationState": "modifying",
+    "targetSize": 30,
+    "targetVolumeType": "gp3",
+    "volumeId": "vol-09cd5dbbfb8730472",
+    "progress": 0,
+    "startTime": "2026-09-10T11:05:38.000Z",
+    "originalSize": 8,
+    "targetMultiAttachEnabled": false,
+    "originalVolumeType": "gp3"
+   },
+   "requestId": "203b9bf3-94d6-4989-9295-a51d976e862e"
+  }
+ },
+ "requestID": "203b9bf3-94d6-4989-9295-a51d976e862e",
+ "eventID": "0469c5f0-b884-4b08-a1ac-d7c44aa3792d",
+ "readOnly": false,
+ "eventType": "AwsApiCall",
+ "managementEvent": true,
+ "recipientAccountId": "111122223333",
+ "eventCategory": "Management",
+ "tlsDetails": {
+  "tlsVersion": "TLSv1.3",
+  "cipherSuite": "TLS_AES_128_GCM_SHA256",
+  "clientProvidedHostHeader": "ec2.ap-northeast-2.amazonaws.com"
+ },
+ "sessionCredentialFromConsole": "true"
+}

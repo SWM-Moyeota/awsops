@@ -1638,6 +1638,7 @@
   "changes.kindStart": "Started",
   "changes.kindModify": "Modified",
   "changes.kindState": "Start/Stop",
+  "changes.emptyNoMatch": "No records match this filter.",
   "changes.filters": "Change filters",
   "changes.searchPlaceholder": "Search by resource name",
   "changes.searchClear": "Clear search",

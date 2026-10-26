@@ -1,0 +1,156 @@
+{
+ "eventVersion": "1.11",
+ "userIdentity": {
+  "type": "IAMUser",
+  "principalId": "AIDAEXAMPLE",
+  "arn": "arn:aws:iam::111122223333:user/sungyoon",
+  "accountId": "111122223333",
+  "accessKeyId": "AKIAEXAMPLE",
+  "userName": "sungyoon",
+  "sessionContext": {
+   "attributes": {
+    "creationDate": "2026-10-15T05:08:16Z",
+    "mfaAuthenticated": "false"
+   }
+  }
+ },
+ "eventTime": "2026-10-15T05:52:26Z",
+ "eventSource": "rds.amazonaws.com",
+ "eventName": "ModifyDBInstance",
+ "awsRegion": "ap-northeast-2",
+ "sourceIPAddress": "203.0.113.10",
+ "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/203.0.113.10 Safari/537.36",
+ "requestParameters": {
+  "dBInstanceIdentifier": "moyeota-dev-db",
+  "applyImmediately": true,
+  "dBParameterGroupName": "postgres18",
+  "allowMajorVersionUpgrade": false,
+  "cloudwatchLogsExportConfiguration": {
+   "enableLogTypes": [
+    "postgresql"
+   ],
+   "disableLogTypes": []
+  }
+ },
+ "responseElements": {
+  "dBInstanceIdentifier": "moyeota-dev-db",
+  "dBInstanceClass": "db.m5.large",
+  "engine": "postgres",
+  "dBInstanceStatus": "available",
+  "masterUsername": "moyeota",
+  "endpoint": {
+   "address": "moyeota-dev-db.example.ap-northeast-2.rds.amazonaws.com",
+   "port": 5432,
+   "hostedZoneId": "ZLA2NUCOLGUUR"
+  },
+  "allocatedStorage": 20,
+  "instanceCreateTime": "2026-09-21T08:40:55Z",
+  "preferredBackupWindow": "14:51-15:21",
+  "backupRetentionPeriod": 7,
+  "dBSecurityGroups": [],
+  "vpcSecurityGroups": [
+   {
+    "vpcSecurityGroupId": "sg-0978b350bea1e8759",
+    "status": "active"
+   }
+  ],
+  "dBParameterGroups": [
+   {
+    "dBParameterGroupName": "postgres18",
+    "parameterApplyStatus": "applying"
+   }
+  ],
+  "availabilityZone": "ap-northeast-2a",
+  "dBSubnetGroup": {
+   "dBSubnetGroupName": "moyeota-db-subnet-group",
+   "dBSubnetGroupDescription": "moyeota subnet group",
+   "vpcId": "vpc-0058fbf64c6ff73ba",
+   "subnetGroupStatus": "Complete",
+   "subnets": [
+    {
+     "subnetIdentifier": "subnet-0c14f33161de99eb3",
+     "subnetAvailabilityZone": {
+      "name": "ap-northeast-2a"
+     },
+     "subnetOutpost": {},
+     "subnetStatus": "Active"
+    },
+    {
+     "subnetIdentifier": "subnet-0cd400ca0f4c1cf96",
+     "subnetAvailabilityZone": {
+      "name": "ap-northeast-2c"
+     },
+     "subnetOutpost": {},
+     "subnetStatus": "Active"
+    }
+   ]
+  },
+  "preferredMaintenanceWindow": "sat:17:54-sat:18:24",
+  "upgradeRolloutOrder": "second",
+  "pendingModifiedValues": {
+   "pendingCloudwatchLogsExports": {
+    "logTypesToEnable": [
+     "postgresql"
+    ]
+   }
+  },
+  "latestRestorableTime": "2026-10-15T05:45:32Z",
+  "multiAZ": false,
+  "engineVersion": "18.3",
+  "autoMinorVersionUpgrade": true,
+  "readReplicaDBInstanceIdentifiers": [],
+  "licenseModel": "postgresql-license",
+  "storageThroughput": 0,
+  "optionGroupMemberships": [
+   {
+    "optionGroupName": "default:postgres-18",
+    "status": "in-sync"
+   }
+  ],
+  "publiclyAccessible": false,
+  "storageType": "gp2",
+  "dbInstancePort": 0,
+  "storageEncrypted": true,
+  "kmsKeyId": "arn:aws:kms:ap-northeast-2:111122223333:key/0def5aee-e7b9-4804-84d9-f4eb86df163c",
+  "dbiResourceId": "db-JYNAFWUBRHZDHYSUCBVIJBXYFE",
+  "cACertificateIdentifier": "rds-ca-rsa2048-g1",
+  "domainMemberships": [],
+  "copyTagsToSnapshot": true,
+  "monitoringInterval": 60,
+  "enhancedMonitoringResourceArn": "arn:aws:logs:ap-northeast-2:111122223333:log-group:RDSOSMetrics:log-stream:db-JYNAFWUBRHZDHYSUCBVIJBXYFE",
+  "monitoringRoleArn": "arn:aws:iam::111122223333:role/rds-monitoring-role",
+  "dBInstanceArn": "arn:aws:rds:ap-northeast-2:111122223333:db:moyeota-dev-db",
+  "iAMDatabaseAuthenticationEnabled": false,
+  "databaseInsightsMode": "advanced",
+  "performanceInsightsEnabled": true,
+  "performanceInsightsKMSKeyId": "arn:aws:kms:ap-northeast-2:111122223333:key/0def5aee-e7b9-4804-84d9-f4eb86df163c",
+  "performanceInsightsRetentionPeriod": 465,
+  "deletionProtection": false,
+  "associatedRoles": [],
+  "httpEndpointEnabled": false,
+  "tagList": [],
+  "customerOwnedIpEnabled": false,
+  "networkType": "IPV4",
+  "backupTarget": "region",
+  "certificateDetails": {
+   "cAIdentifier": "rds-ca-rsa2048-g1",
+   "validTill": "2027-10-07T05:45:21Z"
+  },
+  "dedicatedLogVolume": false,
+  "engineLifecycleSupport": "open-source-rds-extended-support-disabled",
+  "vPCNetworkingEnabled": true
+ },
+ "requestID": "dee5b0b5-2f41-4bd8-bea5-d050fc04d27a",
+ "eventID": "98ba757d-1aac-42f1-bffb-187edc76c583",
+ "readOnly": false,
+ "eventType": "AwsApiCall",
+ "managementEvent": true,
+ "recipientAccountId": "111122223333",
+ "eventCategory": "Management",
+ "tlsDetails": {
+  "tlsVersion": "TLSv1.3",
+  "cipherSuite": "TLS_AES_128_GCM_SHA256",
+  "clientProvidedHostHeader": "rds.ap-northeast-2.amazonaws.com"
+ },
+ "sessionCredentialFromConsole": "true"
+}

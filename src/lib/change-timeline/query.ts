@@ -107,7 +107,8 @@ export async function findCreators(keys: KeyInput[], deps: QueryDeps = {}): Prom
 export async function searchByText(text: string, deps: QueryDeps = {}): Promise<ChangeRecord[]> {
   const read = deps.read ?? readRecords;
   const t = text.toLowerCase();
-  const all = (await read(new Date(0), new Date())).filter((r) => !r.failed);
+  // create/delete only: state/modify rows are not "who made it" answers (Slack relies on this).
+  const all = (await read(new Date(0), new Date())).filter((r) => !r.failed && (r.kind === 'create' || r.kind === 'delete'));
   const exact = all.filter((r) => r.resourceName.toLowerCase() === t || r.resourceId.toLowerCase() === t);
   const hits = exact.length ? exact : all.filter((r) => r.resourceName.toLowerCase().includes(t) || r.resourceId.toLowerCase().includes(t));
   return hits.sort(byTimeDesc).slice(0, MAX_SEARCH);
