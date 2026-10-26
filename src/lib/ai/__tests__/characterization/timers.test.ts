@@ -39,6 +39,12 @@ function sseReader(res: Response) {
 
 const names = (all: Array<[string, any]>) => all.map(([e, d]) => (e === 'status' ? `status:${d.step}` : e));
 
+const TICKS_TO_75 = ['15', '30', '45', '60', '75'];
+/** Seconds of the "(Ns)" progress statuses for `step`, in order. */
+const progressSecs = (all: Array<[string, any]>, step: string) =>
+  all.filter(([e, d]) => e === 'status' && d.step === step && /\(\d+s\)$/.test(d.message))
+    .map(([, d]) => d.message.match(/\((\d+)s\)$/)![1]);
+
 describe('/api/ai timers (characterization)', () => {
   it('gatewayTimeoutAndKeepalive (stream)', async () => {
     vi.useFakeTimers();
@@ -68,9 +74,10 @@ describe('/api/ai timers (characterization)', () => {
       '🤖 Running Ops Gateway (9 tools) tools... (45s)',
     ]);
 
-    // Up to 89.999 s: still hanging, no timeout reported, no fallback.
+    // Up to 89.999 s: still hanging, no timeout reported, no fallback; exactly five progress ticks.
     await vi.advanceTimersByTimeAsync(44999);
     expect(mocks.reportAgentcoreInvoke).not.toHaveBeenCalled();
+    expect(progressSecs(r.all, 'agentcore')).toEqual(TICKS_TO_75);
     expect(names(r.all)).not.toContain('status:fallback');
     expect(r.isDone()).toBe(false);
 
@@ -82,8 +89,8 @@ describe('/api/ai timers (characterization)', () => {
     expect(mocks.reportAgentcoreInvoke).toHaveBeenCalledWith(expect.any(String), 'timeout');
 
     const n = names(r.all);
-    const agentcoreProgress = r.all.filter(([e, d]) => e === 'status' && d.step === 'agentcore' && d.message.includes('Running'));
-    expect(agentcoreProgress.map(([, d]) => d.message.match(/\((\d+)s\)/)![1])).toEqual(['15', '30', '45', '60', '75', '90']);
+    // A '(90s)' tick may or may not land before the 90 s timeout (same-instant tie); at most one, and only '90'.
+    expect([TICKS_TO_75, [...TICKS_TO_75, '90']]).toContainEqual(progressSecs(r.all, 'agentcore'));
     const fbIdx = n.indexOf('status:fallback');
     expect(fbIdx).toBeGreaterThan(-1);
     expect(r.all[fbIdx][1].message).toBe('🔄 Bedrock Direct fallback...');
@@ -129,6 +136,77 @@ describe('/api/ai timers (characterization)', () => {
     expect(mocks.reportAgentcoreInvoke).toHaveBeenCalledWith(expect.any(String), 'success');
   });
 
+  it('multiRouteKeepaliveAndTimeout', async () => {
+    vi.useFakeTimers();
+    mocks.bedrock.classify(['network', 'cost']);
+    mocks.agent.reply('HANG');
+    mocks.bedrock.stream(['MF1', 'MF2']);
+
+    const res = await POST(aiRequest({ stream: true, messages: user('vpc and cost') }));
+    const r = sseReader(res);
+    const head: Array<[string, any]> = [
+      ['status', { step: 'classifying', message: '🔍 Analyzing question...' }],
+      ['status', { step: 'classified', route: 'network', routes: ['network', 'cost'], message: '📡 Multi-route: Network Gateway (17 tools) + Cost Gateway (9 tools)' }],
+      ['status', { step: 'multi-call', message: '🤖 Calling 2 Gateways in parallel...' }],
+    ];
+    const tick = (sec: number): [string, any] => ['status', { step: 'multi-call', message: `🤖 Running 2 Gateways... (${sec}s)` }];
+
+    await vi.advanceTimersByTimeAsync(14999);
+    expect(r.all).toEqual(head);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(r.all).toEqual([...head, tick(15)]);
+
+    // Up to 89.999 s: progress every 15 s, both participants still hanging, nothing reported.
+    await vi.advanceTimersByTimeAsync(74999);
+    expect(r.all).toEqual([...head, tick(15), tick(30), tick(45), tick(60), tick(75)]);
+    expect(mocks.reportAgentcoreInvoke).not.toHaveBeenCalled();
+    expect(r.isDone()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    await r.pump;
+
+    // Each participant times out once; both reports share ONE requestId.
+    const reports = mocks.reportAgentcoreInvoke.mock.calls;
+    expect(reports).toHaveLength(2);
+    expect(reports.map(c => c.slice(1))).toEqual([['timeout'], ['timeout']]);
+    expect(typeof reports[0][0]).toBe('string');
+    expect(reports[1][0]).toBe(reports[0][0]);
+    expect(mocks.agent.calls('InvokeAgentRuntimeCommand').map(c => c.payload.gateway).sort()).toEqual(['cost', 'network']);
+
+    // A '(90s)' tick may or may not land before the 90 s timeouts (same-instant tie); at most one.
+    expect([TICKS_TO_75, [...TICKS_TO_75, '90']]).toContainEqual(progressSecs(r.all, 'multi-call'));
+    const fbIdx = r.all.findIndex(([e, d]) => e === 'status' && d.step === 'fallback');
+    expect(fbIdx).toBeGreaterThan(-1);
+    const pre = r.all.slice(0, fbIdx);
+    expect([
+      [...head, tick(15), tick(30), tick(45), tick(60), tick(75)],
+      [...head, tick(15), tick(30), tick(45), tick(60), tick(75), tick(90)],
+    ]).toContainEqual(pre);
+    expect(r.all.slice(fbIdx)).toEqual([
+      ['status', { step: 'fallback', message: '🔄 Gateway timeout, switching to Bedrock Direct...' }],
+      ['chunk', { delta: 'MF1' }],
+      ['chunk', { delta: 'MF2' }],
+      ['done', {
+        content: 'MF1MF2', model: 'test-label',
+        via: 'Bedrock Direct (multi-route fallback: network+cost timed out)', queriedResources: [],
+        route: 'network', routes: ['network', 'cost'], usedTools: [],
+        inputTokens: 0, outputTokens: 0,
+      }],
+    ]);
+    expect(mocks.bedrock.calls('stream')).toHaveLength(1);
+    expect(mocks.bedrock.calls('converse')).toHaveLength(0);
+
+    // Progress interval and both timeouts are gone; nothing arrives after done.
+    expect(vi.getTimerCount()).toBe(0);
+    const before = r.all.length;
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(r.all.length).toBe(before);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(mocks.reportAgentcoreInvoke).toHaveBeenCalledTimes(2);
+  });
+
   it('gatewayTimeoutJsonPath', async () => {
     vi.useFakeTimers();
     mocks.agent.reply('HANG');
@@ -140,8 +218,11 @@ describe('/api/ai timers (characterization)', () => {
     const { status, body } = await p;
 
     expect(status).toBe(200);
-    expect(body.content).toBe('JSON FALLBACK');
-    expect(body.via).toContain('Bedrock Direct');
+    expect(body).toEqual({
+      content: 'JSON FALLBACK', model: 'test-label', via: 'Bedrock Direct (fallback)',
+      queriedResources: [], route: 'general', routes: ['general'],
+    });
+    expect(body).not.toHaveProperty('usedTools');
     expect(mocks.reportAgentcoreInvoke).toHaveBeenCalledTimes(1);
     expect(mocks.reportAgentcoreInvoke).toHaveBeenCalledWith(expect.any(String), 'timeout');
     expect(mocks.bedrock.calls('stream')).toHaveLength(0);
