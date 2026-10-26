@@ -22,7 +22,7 @@ describe('answerCostQuestion', () => {
   it('answerHasHeadlineTop3AndUnexplained', () => {
     const causes = [1, 2, 3, 4].map((i) => cause({ name: `db-${i}<x>&`, impact: 10 * (5 - i) }));
     const t = answerCostQuestion(resp({ causes }));
-    expect(t).toContain('+$45.00');
+    expect(t).toContain('$45.00 늘었어요');
     expect(t).toContain('db-1&lt;x&gt;&amp;');
     expect(t).toContain('db-3');
     expect(t).not.toContain('db-4');
@@ -42,8 +42,8 @@ describe('costSummaryLine', () => {
     expect(costSummaryLine(resp({ mode: 'timeline-only' }))).toBeNull();
     expect(costSummaryLine(resp({ delta: 0.4 }))).toBeNull();
     expect(costSummaryLine(resp({ delta: -0.99 }))).toBeNull();
-    expect(costSummaryLine(resp())).toBe('💸 어제보다 월 예상 비용 +$45.00 — 가장 큰 원인: jiwoo님 RDS moyeota-test-db (+$38.00)');
-    expect(costSummaryLine(resp({ delta: -12.4, causes: [] }))).toBe('💸 어제보다 월 예상 비용 −$12.40');
+    expect(costSummaryLine(resp())).toBe('💸 어제보다 월 예상 비용이 $45.00 늘었어요 — 가장 큰 원인: jiwoo님이 RDS moyeota-test-db를 만들었어요 (+$38.00)');
+    expect(costSummaryLine(resp({ delta: -12.4, causes: [] }))).toBe('💸 어제보다 월 예상 비용이 $12.40 줄었어요');
   });
 });
 
@@ -56,7 +56,7 @@ describe('maybeHandleCostQuestion', () => {
     expect(explain).not.toHaveBeenCalled();
     expect(await maybeHandleCostQuestion(ev('<@U1> 비용 왜 늘었어?'), { reply, explain })).toBe(true);
     expect(explain).toHaveBeenCalledWith({ accountId: '__all__', days: 7 });
-    expect(reply.mock.calls[0][0]).toContain('+$45.00');
+    expect(reply.mock.calls[0][0]).toContain('$45.00 늘었어요');
   });
   it('picksDaysFromText', async () => {
     const reply = vi.fn(async (_t: string) => {});

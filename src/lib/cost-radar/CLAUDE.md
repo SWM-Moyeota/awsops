@@ -14,9 +14,12 @@ Steampipe 리소스로부터 고정 비용(월 730h 환산)을 추정하고 정�
 - `creators.ts` — `lookupCreators(items)`: CloudTrail `LookupEvents`로 생성자 조회. ID 형태별 생성 이벤트만 인정(`vol-`→CreateVolume 등), 계정+리전당 초당 1회(1 request/s per account+region, 공유 limiter), 대상 계정은 `AWSopsReadOnlyRole` + External ID, 캐시 `creators.json`(found 영구, unknown 24시간 후 재시도), 예외 없음
 - `snapshots.ts` — 일별 리소스 단위 스냅샷(`snapshots/YYYY-MM-DD.json`, KST, 40일 보관, 월 비용 > 0만). `writeSnapshotAccount`는 계정별 병합·직렬화·원자적 쓰기. `recordDailyIfMissing`가 경고 없는 추정만 기록(부분 스냅샷 생략)하고 실행마다 `pruneSnapshots` 호출
 - `history.ts` — 일별 이력(`history.json`, 계정·KST 일당 1건, 90일 보관). 경고가 있던 기록은 `partial`(같은 날 다시 기록 가능, 추세 기준으로 안 씀). `trendFor(hist, 현재 계정별 월 추정, now)`는 정확히 7일 전 기록과 비교. `recordDailyIfMissing(now?, deps?)`: 완전한 오늘 기록이 없는 계정만 한 계정씩 수집·기록, 예외 없음·중복 실행 방지·전 카테고리 실패 계정은 기록 안 함. 헬스 모니터 5분 루프에서 fire-and-forget(60초 제한)으로 호출
+- `explain.ts` — 돈 탐정 엔진 `explainChange({accountId, days, now?}, deps?)`: 기준일 스냅샷과 현재 추정을 리소스 단위로 비교해 원인(`causes`, 추가/삭제/변경 + 금액 영향)을 만들고 변경 기록(`readRecords`)에서 누가 했는지 붙인다. `unexplained = delta − Σ impact`(센트 반올림, 항상 표시). 스냅샷이 없으면 `mode: 'timeline-only'`로 정직하게 안내, 기준일에 없던 계정은 0으로 보고 `notes`에 표시, 가격이 그대로인 중지/시작은 원인이 아님, 원인은 최대 50개. 새 CloudTrail/Steampipe 호출 없음
+- `explain-deps.ts` — `defaultExplainDeps()`: 운영 의존성(`snapshots.ts`의 `readSnapshot`/`listSnapshotDays`, 변경 기록 `readRecords`, 캐시된 레이더 추정)을 지연 로드로 연결 — 테스트는 디스크·AWS를 건드리지 않음
+- `slack.ts` — Slack 연동: `detectCostQuestion`, `answerCostQuestion`, `costSummaryLine`(아침 요약의 비용 한 줄, $1 미만·기록 기반 모드·실패 시 생략), `maybeHandleCostQuestion`(봇이 AI 앞에서 처리). `explainChange`는 주입(`bot.ts`가 지연 import). 문구는 `components/cost-radar/explain-format.ts`와 공유하고 `&`·`<`·`>`만 이스케이프
 - `store.ts` — `data/cost-radar/` JSON 읽기/원자적 쓰기 (`COST_RADAR_DATA_DIR`로 재정의, 테스트용)
 - `radar.ts` — `buildRadarResponse(accountId, deps)`(의존성 주입, 계정 순차 수집, 전 계정 전 카테고리 실패 시 `RadarCollectionError` → 500·미캐시, 경고가 있으면 추세 숨김), `getRadarResponse`(계정별 5분 캐시, 실패 미캐시), `parseCreatorIds`(최대 50개, 첫 두 콜론만 분리), `RadarInputError`(400)
-- `__tests__/*.test.ts` — 단위 테스트 (vitest: pricing, collect, estimate, recommend, creators, history, api)
+- `__tests__/*.test.ts` — 단위 테스트 (vitest: pricing, collect, estimate, recommend, creators, history, api, snapshots, explain, slack)
 - 생성 스크립트: `scripts/tools/build-price-table.py` (AWS 공개 일괄 가격표 CSV, 표준 라이브러리만, 로컬 실행 후 JSON과 `price-as-of.ts` 커밋)
 
 ## 규칙
@@ -24,7 +27,7 @@ Steampipe 리소스로부터 고정 비용(월 730h 환산)을 추정하고 정�
 - gp3는 기본 3000 IOPS / 125 MB/s 초과분만 과금. 스냅샷은 볼륨 크기 기준 상한값. LB는 LCU 제외. RDS Aurora 스토리지는 사용량 기반이라 미포함. ElastiCache는 Redis 단가 기준(Valkey는 약 20% 저렴)
 - DB 접근은 `@/lib/steampipe`의 `runQuery`만, SQL에 `$` 금지. 대시보드 캐시 워머에는 넣지 않는다
 - 가격표 갱신: `python3 scripts/tools/build-price-table.py` 실행 후 JSON·`price-as-of.ts` 커밋. CSV는 저장소 밖 임시 폴더에 두고 커밋하지 않는다
-- 런타임 산출물은 `data/cost-radar/` (git 제외)
+- 런타임 산출물은 `data/cost-radar/` (git 제외) — 일별 스냅샷은 `data/cost-radar/snapshots/`에 40일 보관
 
 ---
 
@@ -44,9 +47,12 @@ Server logic of Cost Radar: estimates the fixed monthly cost (730 h) of switched
 - `creators.ts` — `lookupCreators(items)`: creator via CloudTrail `LookupEvents`; only the create event matching the id shape counts (`vol-` -> CreateVolume, ...); 1 request/s per account+region (shared limiter); target accounts via `AWSopsReadOnlyRole` + External ID; cache `creators.json` (found forever, unknown retried after 24 h); never throws
 - `snapshots.ts` — daily per-resource snapshots (`snapshots/YYYY-MM-DD.json`, KST, 40 days, monthly > 0 only). `writeSnapshotAccount` merges per account, serialized + atomic. `recordDailyIfMissing` writes only warning-free estimates (partial snapshots skipped) and calls `pruneSnapshots` once per run
 - `history.ts` — daily history (`history.json`, one entry per account per KST day, 90 days). An entry recorded with warnings is `partial` (may be replaced the same day, never a trend baseline). `trendFor(hist, live per-account monthly, now)` compares with the entries exactly 7 days earlier. `recordDailyIfMissing(now?, deps?)`: collects only accounts lacking a complete entry for today, one account at a time; never throws, de-duplicates overlapping runs, skips accounts whose every category failed. Called fire-and-forget (60 s cap) from the health monitor's 5-min loop
+- `explain.ts` — Cost Detective engine `explainChange({accountId, days, now?}, deps?)`: compares the base-day snapshot with the current estimate per resource into `causes` (added/removed/changed + dollar impact) and attaches who did it from change records (`readRecords`). `unexplained = delta − Σ impact` (rounded to cents, always shown). No snapshot yet returns `mode: 'timeline-only'` with an honest note; an account missing from the base day counts as 0 and is flagged in `notes`; a stop/start with an unchanged price is not a cause; at most 50 causes. No new CloudTrail/Steampipe calls
+- `explain-deps.ts` — `defaultExplainDeps()`: lazily wires the production deps (`readSnapshot`/`listSnapshotDays` from `snapshots.ts`, change-timeline `readRecords`, the cached radar estimate) so tests never touch disk or AWS
+- `slack.ts` — Slack integration: `detectCostQuestion`, `answerCostQuestion`, `costSummaryLine` (the morning summary's cost line; omitted under $1, in timeline-only mode, or on failure), `maybeHandleCostQuestion` (handled by the bot before the AI). `explainChange` is injected (`bot.ts` imports it lazily). Wording is shared with `components/cost-radar/explain-format.ts`; only `&`, `<`, `>` are escaped here
 - `store.ts` — JSON read / atomic write under `data/cost-radar/` (`COST_RADAR_DATA_DIR` overrides it in tests)
 - `radar.ts` — `buildRadarResponse(accountId, deps)` (injected deps, accounts collected sequentially, `RadarCollectionError` -> 500 and not cached when every category of every account failed, no trend while there are warnings), `getRadarResponse` (5-min per-account cache, failures not cached), `parseCreatorIds` (max 50, splits on first two colons only), `RadarInputError` (400)
-- `__tests__/*.test.ts` — unit tests (vitest: pricing, collect, estimate, recommend, creators, history, api)
+- `__tests__/*.test.ts` — unit tests (vitest: pricing, collect, estimate, recommend, creators, history, api, snapshots, explain, slack)
 - Generator: `scripts/tools/build-price-table.py` (public bulk price-list CSVs, stdlib only, run locally and commit the JSON and `price-as-of.ts`)
 
 ## Rules
@@ -54,4 +60,4 @@ Server logic of Cost Radar: estimates the fixed monthly cost (730 h) of switched
 - gp3 bills only IOPS/throughput above the 3000 / 125 MB/s baseline. Snapshots use volume size (upper bound). LB excludes LCU. Aurora storage (usage-based) is not added. ElastiCache uses Redis rates (Valkey is ~20% cheaper)
 - DB access only via `runQuery` from `@/lib/steampipe`; no `$` in SQL. Not part of the dashboard cache warmer
 - Refresh: run the script and commit the JSON and `price-as-of.ts`; keep the CSVs in a temp dir outside the repo
-- Runtime data lives in `data/cost-radar/` (git-ignored)
+- Runtime data lives in `data/cost-radar/` (git-ignored) — daily snapshots in `data/cost-radar/snapshots/`, kept 40 days

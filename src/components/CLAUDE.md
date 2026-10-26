@@ -28,6 +28,7 @@
 - `cost-radar/SavingsCard.tsx` — 추천 1건 알약 카드 (클릭 시 상세)
 - `cost-radar/RecommendationPanel.tsx` — 추천 상세 모달 (만든 사람 지연 조회, CLI 복사, 콘솔 링크, **실행 버튼 없음**)
 - `cost-radar/CostExplainPanel.tsx` — 돈 탐정 패널 (`/api/cost-radar/explain`, 어제/7일/30일 칩, 원인 순위·누가·언제, 설명되지 않은 변화)
+- `cost-radar/explain-format.ts` — 돈 탐정 문구 순수 함수 (`headline`·`causeSentence`·`money`·`categoryLabel`·`causeDate`), Slack 답변도 공유
 
 ### changes/ — 변경 기록 (5 + 헬퍼) — 자세한 내용은 `changes/CLAUDE.md`
 - `changes/ChangeTimelineView.tsx` — `/changes` 본문 (요약 문장, 칩 필터, 검색, 날짜별 목록, 상태 줄, 빈·오류·로딩 상태)
@@ -87,6 +88,7 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 - `cost-radar/SavingsCard.tsx` — pill card per recommendation (click opens detail)
 - `cost-radar/RecommendationPanel.tsx` — recommendation detail modal (lazy creator lookup, CLI copy, console link, **no action buttons**)
 - `cost-radar/CostExplainPanel.tsx` — Cost Detective panel (`/api/cost-radar/explain`, yesterday/7/30-day chips, ranked causes with who/when, unexplained remainder)
+- `cost-radar/explain-format.ts` — pure Korean copy helpers for the Cost Detective (`headline`, `causeSentence`, `money`, `categoryLabel`, `causeDate`), shared with the Slack answer
 
 ### changes/ — Change timeline (5 + helpers) — see `changes/CLAUDE.md`
 - `changes/ChangeTimelineView.tsx` — `/changes` body (summary sentence, pill filters, search, day-grouped rows, status line, empty/error/loading states)

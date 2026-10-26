@@ -22,9 +22,9 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 | 항목 | 수치 |
 |------|------|
 | 페이지 | 44 (/changes 추가) |
-| 라우트 | 70 (페이지 44 + API 26) |
+| 라우트 | 71 (페이지 44 + API 27) |
 | SQL 쿼리 파일 | 25 |
-| API 라우트 | 26 (changes, changes/creators 추가) |
+| API 라우트 | 27 (changes, changes/creators, cost-radar/explain 추가) |
 | 컴포넌트 | 31 (changes 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 19 (등록표 `src/lib/ai/registry.ts`의 라우트 수 — 아래 우선순위 표는 그중 대표 11개) |
@@ -108,7 +108,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `report-scheduler.ts` — 자동 진단 스케줄러 (weekly/biweekly/monthly)
 - `sns-notification.ts` — SNS 이메일 알림 (토픽 생성, 구독 동기화, 진단 완료 발행)
 - `collectors/` — auto-collect 에이전트 6종 (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
-- `cost-radar/` — 비용 레이더 (내장 서울 가격표로 월 비용 추정 + 정리 추천, 안내만) — `src/lib/cost-radar/CLAUDE.md`
+- `cost-radar/` — 비용 레이더 (내장 서울 가격표로 월 비용 추정 + 정리 추천, 안내만) + 돈 탐정 (월 비용이 왜 바뀌었는지 설명, 일별 스냅샷 + 변경 기록 기반) — `src/lib/cost-radar/CLAUDE.md`
 - `ai/` — `/api/ai` 본체: 등록표(19 라우트), 의도 분류, 공유 처리기 단계(`steps/`), JSON·SSE 파이프라인, Bedrock/AgentCore 호출 — `src/lib/ai/CLAUDE.md`
 - `slack-chatops/` — Slack에서 `@AWSops`로 AI에게 묻기 (Socket Mode, 공개 URL 불필요) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Slack 2단계 승인으로 EC2 켜기/끄기/재부팅 (AI 미경유, 태그 조건 IAM) — `src/lib/slack-control/CLAUDE.md`
@@ -237,9 +237,9 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 | Item | Count |
 |------|-------|
 | Pages | 44 (incl. /changes) |
-| Routes | 70 (44 pages + 26 APIs) |
+| Routes | 71 (44 pages + 27 APIs) |
 | SQL Query Files | 25 |
-| API Routes | 26 (incl. changes, changes/creators) |
+| API Routes | 27 (incl. changes, changes/creators, cost-radar/explain) |
 | Components | 31 (incl. 6 changes components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 19 (routes in the registry, `src/lib/ai/registry.ts` — the priority table below shows the main 11) |
@@ -321,7 +321,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `report-scheduler.ts` — Auto-diagnosis scheduler (weekly/biweekly/monthly)
 - `sns-notification.ts` — SNS email notifications (topic creation, subscription sync, diagnosis completion publish)
 - `collectors/` — 6 auto-collect agents (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
-- `cost-radar/` — Cost Radar (monthly estimate from a bundled Seoul price table + cleanup recommendations, guidance only) — `src/lib/cost-radar/CLAUDE.md`
+- `cost-radar/` — Cost Radar (monthly estimate from a bundled Seoul price table + cleanup recommendations, guidance only) + Cost Detective (explains why the monthly estimate changed, from daily snapshots + change records) — `src/lib/cost-radar/CLAUDE.md`
 - `ai/` — the `/api/ai` engine: route registry (19 routes), intent classification, shared handler steps (`steps/`), JSON and SSE pipelines, Bedrock/AgentCore calls — `src/lib/ai/CLAUDE.md`
 - `slack-chatops/` — Ask the AI from Slack via `@AWSops` (Socket Mode, no public URL) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Two-step-approved EC2 start/stop/reboot from Slack (no AI, tag-conditioned IAM) — `src/lib/slack-control/CLAUDE.md`

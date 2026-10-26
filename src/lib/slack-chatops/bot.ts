@@ -19,11 +19,12 @@ import { setDailySummaryHook } from '@/lib/change-timeline/loop';
 import { maybeHandleCostQuestion, costSummaryLine, type ExplainFn } from '@/lib/cost-radar/slack';
 import type { ThreadMessage } from './format';
 
-// INTEGRATION POINT (controller): Task 3's explainChange does not exist in this branch yet.
-// After merging Task 3, replace the body with:
-//   const { explainChange } = await import('@/lib/cost-radar/explain'); return explainChange(opts);
-// Until then the cost question replies with a generic failure and the morning cost line is omitted.
-const explainCost: ExplainFn = async () => { throw Object.assign(new Error('not wired'), { name: 'ExplainNotWired' }); };
+// Cost Detective engine is loaded lazily (pulls snapshots/radar); only the nodejs runtime ever runs the bot.
+// 돈 탐정 엔진은 지연 로드 — 봇은 nodejs 런타임에서만 실행된다.
+const explainCost: ExplainFn = async (opts) => {
+  const { explainChange } = await import('@/lib/cost-radar/explain');
+  return explainChange(opts);
+};
 
 export const BOT_TOKEN_PARAM = '/ops/awsops/slack-bot-token';
 export const APP_TOKEN_PARAM = '/ops/awsops/slack-app-token';
