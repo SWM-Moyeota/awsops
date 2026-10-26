@@ -236,20 +236,85 @@ describe('state kinds and cost line', () => {
     await maybeSendDailySummary({ now, post, costLine: async () => '💸 어제보다 월 예상 비용 +$45.00' });
     expect(post.mock.calls[0][0]).toMatch(/어제 1개가 생겼어요[\s\S]*\n💸 어제보다 월 예상 비용 \+\$45\.00$/);
   });
-  it('summaryTimesOutSlowCostLine', async () => {
+  // A cost line that never settles. / 끝나지 않는 비용 줄
+  const hanging = () => vi.fn(() => new Promise<string | null>(() => {}));
+  // One loop tick: wait until the cost line is called (store I/O runs first), then advance fake time.
+  // 한 틱: 비용 줄이 호출될 때까지 기다린 뒤 가짜 시간을 돌린다.
+  type CostFn = ReturnType<typeof vi.fn>;
+  const tick = async (opts: { now: Date; post: (t: string) => Promise<boolean>; costLine: CostFn }, ms = 60_001) => {
+    const before = opts.costLine.mock.calls.length;
+    let settled = false;
+    const p = maybeSendDailySummary(opts as Parameters<typeof maybeSendDailySummary>[0]).then(() => { settled = true; });
+    while (!settled && opts.costLine.mock.calls.length === before) await new Promise((r) => setImmediate(r));
+    if (!settled && ms > 0) await vi.advanceTimersByTimeAsync(ms);
+    await p;
+  };
+  it('summaryTimesOutSlowCostLineAfter60s', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {
       const post = vi.fn(async (_t: string) => true);
-      let called!: () => void;
-      const started = new Promise<void>((r) => { called = r; });
-      const p = maybeSendDailySummary({ now, post, costLine: () => { called(); return new Promise<string | null>(() => {}); } });
-      await started;
-      await vi.advanceTimersByTimeAsync(20_001);
+      const slow = hanging();
+      let settled = false;
+      const p = maybeSendDailySummary({ now, post, costLine: slow }).then(() => { settled = true; });
+      while (slow.mock.calls.length === 0) await new Promise((r) => setImmediate(r));
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(settled).toBe(false); // 20s is no longer the limit
+      await vi.advanceTimersByTimeAsync(1_001);
       await p;
+      expect(post).not.toHaveBeenCalled(); // first timeout: summary delayed to the next tick
+    } finally { vi.useRealTimers(); }
+  });
+  it('timedOutCostLineIsNotCachedAndRetriedNextTick', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const post = vi.fn(async (_t: string) => true);
+      const slow = hanging();
+      await tick({ now, post, costLine: slow });
+      expect(slow).toHaveBeenCalledTimes(1);
+      expect(post).not.toHaveBeenCalled();
+      const fast = vi.fn(async () => '💸 x');
+      await tick({ now, post, costLine: fast }, 0);
+      expect(fast).toHaveBeenCalledTimes(1);
       expect(post).toHaveBeenCalledTimes(1);
+      expect(post.mock.calls[0][0]).toContain('💸 x');
+    } finally { vi.useRealTimers(); }
+  });
+  it('sendsWithoutCostLineAfterTwoDelayedTicks', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const post = vi.fn(async (_t: string) => true);
+      const slow = hanging();
+      await tick({ now, post, costLine: slow });
+      await tick({ now, post, costLine: slow });
+      expect(post).not.toHaveBeenCalled();
+      await tick({ now, post, costLine: slow });
+      expect(slow).toHaveBeenCalledTimes(3);
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(post.mock.calls[0][0]).toContain('어제 1개가 생겼어요');
       expect(post.mock.calls[0][0]).not.toContain('💸');
+      await tick({ now, post, costLine: slow }, 0);
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(slow).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
+  it('aTimedOutLineGivenUpIsNotRecomputedAfterAFailedPost', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const post = vi.fn(async (_t: string) => false);
+      const slow = hanging();
+      for (let i = 0; i < 3; i++) await tick({ now, post, costLine: slow });
+      expect(post).toHaveBeenCalledTimes(1);
+      await tick({ now, post, costLine: slow }, 0);
+      expect(post).toHaveBeenCalledTimes(2);
+      expect(slow).toHaveBeenCalledTimes(3);
     } finally { vi.useRealTimers(); }
   });
 });

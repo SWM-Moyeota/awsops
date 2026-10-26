@@ -59,7 +59,7 @@ describe('queryChanges', () => {
     const rs: ChangeRecord[] = [];
     for (let i = 0; i < 510; i++) rs.push(rec(`r${i}`, new Date(Date.UTC(2026, 9, 20, 0, 0, i)).toISOString()));
     await appendRecords(rs);
-    const r = await queryChanges(q());
+    const r = await queryChanges(q({ range: '7d' }));
     expect(r.records.length).toBe(500);
     expect(r.truncated).toBe(true);
     expect(r.records[0].id).toBe('r509');
@@ -139,16 +139,21 @@ describe('state kinds', () => {
     const recs = [
       rec('a', '2026-10-26T05:00:00Z', { kind: 'create' }),
       rec('b', '2026-10-26T04:00:00Z', { kind: 'delete' }),
-      rec('c', '2026-10-26T03:00:00Z', { kind: 'stop' }),
-      rec('d', '2026-10-26T02:00:00Z', { kind: 'start' }),
-      rec('e', '2026-10-26T01:00:00Z', { kind: 'modify' }),
+      rec('c', '2026-10-26T03:00:00Z', { kind: 'stop', actor: P('scheduler-bob') }),
+      rec('d', '2026-10-26T02:00:00Z', { kind: 'start', actor: P('scheduler-bob') }),
+      rec('e', '2026-10-26T01:00:00Z', { kind: 'modify', actor: P('dba-kim') }),
     ];
     const deps = { read: async () => recs, state: async () => ({ accounts: {} }) };
     const all = await queryChanges({ accountId: '__all__', range: '7d', now }, deps);
     expect(all.records).toHaveLength(5);
+    // stop/start/modify actors are not counted: the summary stays create/delete only
     expect(all.summary).toEqual({ creates: 1, deletes: 1, people: 1 });
+    expect(all.facets.people).toEqual(['sungyoon']);
     const st = await queryChanges({ accountId: '__all__', range: '7d', now, kinds: ['stop', 'start'] }, deps);
     expect(st.records.map((r) => r.id)).toEqual(['c', 'd']);
+    expect(st.summary).toEqual({ creates: 0, deletes: 0, people: 0 });
+    // the state view still offers its own people as filter choices
+    expect(st.facets.people).toEqual(['scheduler-bob']);
   });
   it('searchByTextIgnoresStateAndModify', async () => {
     const recs = [
@@ -158,5 +163,29 @@ describe('state kinds', () => {
     ];
     const hits = await searchByText('web', { read: async () => recs });
     expect(hits.map((r) => r.id)).toEqual(['a']);
+  });
+  it('peopleCountsCreateDeleteActorsOnly', async () => {
+    const now = new Date('2026-10-26T06:00:00Z');
+    const recs = [
+      rec('a', '2026-10-26T05:00:00Z', { kind: 'create', actor: P('jiwoo') }),
+      rec('b', '2026-10-26T04:00:00Z', { kind: 'delete', actor: P('minsu') }),
+      rec('c', '2026-10-26T03:00:00Z', { kind: 'stop', actor: P('ops-a') }),
+      rec('d', '2026-10-26T02:00:00Z', { kind: 'modify', actor: P('ops-b') }),
+      rec('e', '2026-10-26T01:00:00Z', { kind: 'start', actor: { kind: 'root', name: 'root' } }),
+    ];
+    const r = await queryChanges({ accountId: '__all__', range: '7d', now }, { read: async () => recs, state: async () => ({ accounts: {} }) });
+    expect(r.summary.people).toBe(2);
+    expect(r.facets.people).toEqual(['jiwoo', 'minsu']);
+  });
+  it('recordCapIs500ForShortRangesAnd1000ForLongOnes', async () => {
+    const now = new Date('2026-10-26T06:00:00Z');
+    const recs = Array.from({ length: 1200 }, (_, i) => rec(`r${i}`, new Date(now.getTime() - (i + 1) * 60_000).toISOString()));
+    const deps = { read: async () => recs, state: async () => ({ accounts: {} }) };
+    for (const [range, cap] of [['24h', 500], ['7d', 500], ['30d', 1000], ['90d', 1000], ['all', 1000]] as const) {
+      const r = await queryChanges({ accountId: '__all__', range, now }, deps);
+      expect(r.records, range).toHaveLength(cap);
+      expect(r.truncated, range).toBe(true);
+      expect(r.records[0].id).toBe('r0'); // newest first
+    }
   });
 });

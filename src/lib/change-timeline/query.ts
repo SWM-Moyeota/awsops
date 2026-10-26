@@ -6,7 +6,8 @@ import type {
   AccountRegionState, ChangeRecord, ChangesQuery, ChangesResponse, CreatorLookup, IngestState, RangeId, TrackedRegion,
 } from './types';
 
-const MAX_RECORDS = 500;
+/** Records returned per range (newest first); long ranges get more so creates/deletes are not starved by state rows. */
+const MAX_RECORDS: Record<RangeId, number> = { '24h': 500, '7d': 500, '30d': 1000, '90d': 1000, all: 1000 };
 const MAX_SEARCH = 20;
 const HOURS: Record<Exclude<RangeId, 'all'>, number> = { '24h': 24, '7d': 168, '30d': 720, '90d': 2160 };
 
@@ -39,8 +40,14 @@ export async function queryChanges(q: ChangesQuery, deps: QueryDeps = {}): Promi
   const scoped = (await read(rangeStart(q.range, now), now))
     .filter((r) => !r.failed && (all || r.accountId === q.accountId) && (!q.kind || r.kind === q.kind) && (!q.kinds || q.kinds.includes(r.kind)));
   const isPerson = (r: ChangeRecord) => r.actor.kind === 'person' || r.actor.kind === 'root';
+  const isCreateOrDelete = (r: ChangeRecord) => r.kind === 'create' || r.kind === 'delete';
+  // People = create/delete actors (the summary stays create/delete only). A view filtered to other kinds only
+  // (e.g. the state view) lists its own actors so its person filter still has choices.
+  // 사람 수·필터는 생성/삭제 기준. 상태 변경만 보는 화면은 그 기록의 사람을 필터 후보로 쓴다.
+  const wanted = q.kinds ?? (q.kind ? [q.kind] : null);
+  const otherKindsOnly = !!wanted && !wanted.some((k) => k === 'create' || k === 'delete');
   const facets = {
-    people: Array.from(new Set(scoped.filter(isPerson).map((r) => r.actor.name))).sort(),
+    people: Array.from(new Set(scoped.filter((r) => isPerson(r) && (otherKindsOnly || isCreateOrDelete(r))).map((r) => r.actor.name))).sort(),
     resourceTypes: Array.from(new Set(scoped.map((r) => r.resourceType))).sort(),
   };
 
@@ -53,14 +60,14 @@ export async function queryChanges(q: ChangesQuery, deps: QueryDeps = {}): Promi
   const summary = {
     creates: filtered.filter((r) => r.kind === 'create').length,
     deletes: filtered.filter((r) => r.kind === 'delete').length,
-    people: new Set(filtered.filter(isPerson).map((r) => r.actor.name)).size,
+    people: new Set(filtered.filter((r) => isPerson(r) && isCreateOrDelete(r)).map((r) => r.actor.name)).size,
   };
 
   const entries = Object.entries((await getState()).accounts).filter(([k]) => all || k.split(':')[0] === q.accountId);
   const from = entries.map(([, s]) => s.backfillFrom).sort()[0] ?? null;
   const last = entries.map(([, s]) => s.lastRunAt).filter((x): x is string => !!x).sort().pop() ?? null;
   return {
-    records: filtered.slice(0, MAX_RECORDS),
+    records: filtered.slice(0, MAX_RECORDS[q.range]),
     summary,
     facets,
     status: {
@@ -69,7 +76,7 @@ export async function queryChanges(q: ChangesQuery, deps: QueryDeps = {}): Promi
       backfilling: entries.some(([k, s]) => !isBackfillComplete(s, namesFor(k.split(':')[1] ?? ''))),
       failedAccounts: Array.from(new Set(entries.filter(([, s]) => s.lastError).map(([k]) => k.split(':')[0]))),
     },
-    truncated: filtered.length > MAX_RECORDS,
+    truncated: filtered.length > MAX_RECORDS[q.range],
   };
 }
 

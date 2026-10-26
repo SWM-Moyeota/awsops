@@ -124,29 +124,45 @@ async function postViaBot(text: string): Promise<boolean> {
   return true;
 }
 
-const COST_LINE_TIMEOUT_MS = 20_000;
-/** The cost line is optional: a failure or a slow provider must never block the summary. / 비용 줄은 선택 사항 */
-async function safeCostLine(fn: () => Promise<string | null>): Promise<string | null> {
+// The loop runs in the background, so the cost line may take a while (a cold radar collection). / 백그라운드라 넉넉히
+export const COST_LINE_TIMEOUT_MS = 60_000;
+/** Ticks the summary may be delayed by cost-line timeouts before it is sent without the line. / 최대 지연 틱 수 */
+export const COST_LINE_MAX_DELAYS = 2;
+
+/**
+ * The cost line is optional: a failure or a slow provider must never block the summary for long.
+ * `timedOut` tells a timeout (worth retrying next tick) from a real failure (final). / 시간 초과는 재시도 대상
+ */
+async function safeCostLine(fn: () => Promise<string | null>): Promise<{ line: string | null; timedOut: boolean }> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await Promise.race([
+    const line = await Promise.race([
       fn(),
       new Promise<never>((_, rej) => { timer = setTimeout(() => rej(Object.assign(new Error('timeout'), { name: 'TimeoutError' })), COST_LINE_TIMEOUT_MS); }),
     ]);
+    return { line, timedOut: false };
   } catch (e) {
-    console.warn(`[change-timeline] cost line omitted (${e instanceof Error ? e.name : 'Error'})`);
-    return null;
+    const name = e instanceof Error ? e.name : 'Error';
+    console.warn(`[change-timeline] cost line omitted (${name})`);
+    return { line: null, timedOut: name === 'TimeoutError' };
   } finally {
     if (timer) clearTimeout(timer);
   }
 }
 
 let lastSentDay: string | undefined;
-/** Test helper: forget the in-memory sent-day guard. / 테스트용: 메모리 가드 초기화. */
+// Final cost line of a day (a value, null, or given up after timeouts) and the timeouts seen so far.
+// 그날의 확정된 비용 줄(값·null·시간 초과 포기)과 지금까지의 시간 초과 횟수.
 let costCache: { day: string; line: string | null } | undefined;
-export function resetDailySummaryGuard(): void { lastSentDay = undefined; costCache = undefined; }
+let costDelays: { day: string; count: number } | undefined;
+/** Test helper: forget the in-memory sent-day guard and cost-line state. / 테스트용: 메모리 가드 초기화. */
+export function resetDailySummaryGuard(): void { lastSentDay = undefined; costCache = undefined; costDelays = undefined; }
 
-/** At/after 09:00 KST, send yesterday's summary once. / 09:00(KST) 이후 어제 요약을 하루 한 번 보낸다. */
+/**
+ * At/after 09:00 KST, send yesterday's summary once. A timed-out cost line is not cached: the summary waits for
+ * the next tick (at most COST_LINE_MAX_DELAYS times), then goes out without the line.
+ * 09:00(KST) 이후 어제 요약을 하루 한 번 보낸다. 비용 줄 시간 초과는 캐시하지 않고 다음 틱에 다시 시도(최대 2번 지연).
+ */
 export async function maybeSendDailySummary(opts: {
   now?: Date; post?: (text: string) => Promise<boolean>; costLine?: () => Promise<string | null>;
 } = {}): Promise<void> {
@@ -161,10 +177,18 @@ export async function maybeSendDailySummary(opts: {
   const startUtc = new Date(Date.parse(`${yesterday}T00:00:00Z`) - KST_MS);
   const endUtc = new Date(startUtc.getTime() + DAY_MS - 1);
   const base = buildDailySummary(await readRecords(startUtc, endUtc), yesterday);
-  // Fetched once per day (after the sent-day guards); a failed post must not re-run explain every tick.
+  // Settled once per day (after the sent-day guards); a failed post must not re-run explain every tick.
   let cost: string | null = null;
   if (opts.costLine) {
-    if (costCache?.day !== yesterday) costCache = { day: yesterday, line: await safeCostLine(opts.costLine) };
+    if (costCache?.day !== yesterday) {
+      const r = await safeCostLine(opts.costLine);
+      if (r.timedOut) {
+        const count = (costDelays?.day === yesterday ? costDelays.count : 0) + 1;
+        costDelays = { day: yesterday, count };
+        if (count <= COST_LINE_MAX_DELAYS) return; // try again next tick / 다음 틱에 다시
+      }
+      costCache = { day: yesterday, line: r.line };
+    }
     cost = costCache.line;
   }
   const text = base && cost ? `${base}\n${cost}` : base ?? cost;

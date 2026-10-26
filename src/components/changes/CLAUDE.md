@@ -4,7 +4,7 @@
 `/changes` 페이지 UI. 연결된 계정에서 누가 언제 어떤 리소스를 **만들고 지웠는지** 토스 스타일 문장으로 보여 준다. 조회만 한다 — AWS를 바꾸는 버튼은 없다.
 
 ## 주요 파일
-- `ChangeTimelineView.tsx` — 페이지 본문 (클라이언트). `GET /api/changes?accountId=&range=&kind=&actor=&type=&q=` 조회, `useAccountContext().currentAccountId`를 따른다(계정이 바뀌면 사람·서비스 필터 초기화). 검색은 300ms 디바운스, 처음 90일 수집 중에는 30초마다 다시 조회. 상태 줄(수집 중 · 마지막 수집 · 실패한 계정 별칭), 빈 상태("아직 기록이 없어요" + 이유), 오류(다시 시도), 500건 넘으면 안내
+- `ChangeTimelineView.tsx` — 페이지 본문 (클라이언트). `GET /api/changes?accountId=&range=&kind=&actor=&type=&q=` 조회, `useAccountContext().currentAccountId`를 따른다(계정이 바뀌면 사람·서비스 필터 초기화). 검색은 300ms 디바운스, 처음 90일 수집 중에는 30초마다 다시 조회. 상태 줄(수집 중 · 마지막 수집 · 실패한 계정 별칭), 빈 상태("아직 기록이 없어요" + 이유), 오류(다시 시도), 상한(500/1000건)을 넘으면 받은 건수로 안내
 - `ChangeSummary.tsx` — 요약 문장(26px, "생기고" 뒤 줄바꿈) + 설명 + 숫자 카드 3개(생성 초록 · 삭제 빨강 · 작업한 사람)
 - `ChangeFilters.tsx` — 둥근 칩(기간 · 전체/생성/삭제 · 사람 · 서비스, 가로 스크롤, 선택값은 목록에서 빠져도 유지) + "리소스 이름으로 찾기"
 - `ChangeRow.tsx` — 한 줄: 42px 동그란 아이콘(생성 초록 · 삭제 빨강 · 자동/AWSops 회색 배경 + 서비스 이모지), 문장(이름 굵게), `[생성]/[삭제]/[끄기]/[켜기]/[변경] · 이름 · 도구 · 시각`, `›`. `KindTag`, `RoundIcon`도 내보낸다
@@ -26,7 +26,7 @@
 UI for `/changes`: who created and deleted which resource, and when, as Toss-style Korean sentences. Read-only — no button changes AWS.
 
 ## Files
-- `ChangeTimelineView.tsx` — page body (client). Fetches `GET /api/changes?accountId=&range=&kind=&actor=&type=&q=` for `useAccountContext().currentAccountId` (person/type filters reset on account change). 300 ms search debounce; refetches every 30 s while the first 90-day backfill runs. Status line (collecting · last collected · failed account aliases), empty state with a reason, error with retry, a note past 500 records
+- `ChangeTimelineView.tsx` — page body (client). Fetches `GET /api/changes?accountId=&range=&kind=&actor=&type=&q=` for `useAccountContext().currentAccountId` (person/type filters reset on account change). 300 ms search debounce; refetches every 30 s while the first 90-day backfill runs. Status line (collecting · last collected · failed account aliases), empty state with a reason, error with retry, a note with the returned count when the cap (500/1000 records) is hit
 - `ChangeSummary.tsx` — summary sentence (26px) + description + 3 stat cards (created green · deleted red · people)
 - `ChangeFilters.tsx` — pill chips (range · all/create/delete/start-stop/modify · people · types, horizontal scroll, the selected value stays visible) + search box
 - `ChangeRow.tsx` — one row: 42px round icon (green/red, grey for auto/AWSops, service emoji), sentence with the bold name, `[tag] · name · tool · time`, `›`. Also exports `KindTag`, `RoundIcon`

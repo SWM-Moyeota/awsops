@@ -15,7 +15,6 @@ import { groupByKstDay, kstDate, kstTime, summarySentence } from './format';
 
 const SEARCH_DEBOUNCE_MS = 300;
 const BACKFILL_POLL_MS = 30_000;
-const MAX_SHOWN = 500;
 
 function SkeletonRows() {
   return (
@@ -177,7 +176,7 @@ export default function ChangeTimelineView() {
               ))
             )}
             {data.truncated && (
-              <p className="mt-4 text-center text-[13px] text-[#6b7684]">{t('changes.truncated', { n: MAX_SHOWN })}</p>
+              <p className="mt-4 text-center text-[13px] text-[#6b7684]">{t('changes.truncated', { n: data.records.length })}</p>
             )}
           </div>
         )}
