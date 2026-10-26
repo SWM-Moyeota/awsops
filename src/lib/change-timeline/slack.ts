@@ -143,7 +143,8 @@ async function safeCostLine(fn: () => Promise<string | null>): Promise<string | 
 
 let lastSentDay: string | undefined;
 /** Test helper: forget the in-memory sent-day guard. / 테스트용: 메모리 가드 초기화. */
-export function resetDailySummaryGuard(): void { lastSentDay = undefined; }
+let costCache: { day: string; line: string | null } | undefined;
+export function resetDailySummaryGuard(): void { lastSentDay = undefined; costCache = undefined; }
 
 /** At/after 09:00 KST, send yesterday's summary once. / 09:00(KST) 이후 어제 요약을 하루 한 번 보낸다. */
 export async function maybeSendDailySummary(opts: {
@@ -160,7 +161,12 @@ export async function maybeSendDailySummary(opts: {
   const startUtc = new Date(Date.parse(`${yesterday}T00:00:00Z`) - KST_MS);
   const endUtc = new Date(startUtc.getTime() + DAY_MS - 1);
   const base = buildDailySummary(await readRecords(startUtc, endUtc), yesterday);
-  const cost = opts.costLine ? await safeCostLine(opts.costLine) : null;
+  // Fetched once per day (after the sent-day guards); a failed post must not re-run explain every tick.
+  let cost: string | null = null;
+  if (opts.costLine) {
+    if (costCache?.day !== yesterday) costCache = { day: yesterday, line: await safeCostLine(opts.costLine) };
+    cost = costCache.line;
+  }
   const text = base && cost ? `${base}\n${cost}` : base ?? cost;
   if (text) {
     let sent = false;

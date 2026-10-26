@@ -22,13 +22,17 @@ const topCauses = (r: ExplainResponse): ExplainCause[] =>
 
 export function detectCostQuestion(text: string): boolean {
   const t = text.replace(/<@[^>]+>/g, ' ');
-  return /비용|돈|요금|금액/.test(t) && /왜|늘|줄|변화|올랐|내렸/.test(t);
+  if (!/비용|돈|요금|금액/.test(t)) return false;
+  // "오늘" contains 늘 — strip it before looking for change phrasing. / "오늘"의 '늘' 제외
+  const u = t.replace(/오늘/g, ' ');
+  return /늘었|줄었|올랐|내렸|늘어|줄어|증가|감소|변화|바뀌|왜.*(늘|올|증가|많아졌|비싸졌)/.test(u);
 }
 
 function daysFromText(text: string): ExplainDays {
-  if (/한\s*달|30\s*일|이번\s*달|지난\s*달/.test(text)) return 30;
-  if (/일주일|7\s*일|이번\s*주|지난\s*주|한\s*주/.test(text)) return 7;
-  return 1;
+  if (/한\s*달|(?<!\d)30\s*일|이번\s*달|지난\s*달/.test(text)) return 30;
+  if (/일주일|(?<!\d)7\s*일|이번\s*주|지난\s*주|한\s*주/.test(text)) return 7;
+  if (/어제|하루|(?<!\d)1\s*일/.test(text)) return 1;
+  return 7; // default: "지난 7일 설명" (spec §3 item 7)
 }
 
 export function answerCostQuestion(r: ExplainResponse): string {
@@ -45,7 +49,8 @@ export function answerCostQuestion(r: ExplainResponse): string {
     lines.push('가장 큰 원인');
     for (const c of top) {
       const who = c.actor ? `${esc(actorLabel(c.actor))}${c.actor.kind === 'person' ? '이' : ''} ` : '누가 했는지 기록 없음 · ';
-      const act = c.action ? ` ${ACTION[c.action] ?? ''}` : '';
+      const a = c.action ? ACTION[c.action] : undefined;
+      const act = a ? ` ${a}` : '';
       lines.push(`• ${who}${CAT[c.category] ?? c.category} ${esc(c.name)}${act} (${c.impact === null ? '금액 미상' : signed(c.impact)})`);
     }
   }

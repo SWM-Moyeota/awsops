@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { detectWhoQuestion, answerWho, buildDailySummary, maybeSendDailySummary, maybeHandleChangeQuestion, resetDailySummaryGuard } from '../slack';
 import { appendRecords, readState } from '../store';
+import { costSummaryLine } from '@/lib/cost-radar/slack';
 
 const failWrite = vi.hoisted(() => ({ times: 0 }));
 vi.mock('../store', async (orig) => {
@@ -201,17 +202,33 @@ describe('state kinds and cost line', () => {
 
   const now = new Date('2026-10-26T00:10:00Z'); // KST 09:10
   it('summaryOmitsCostLineWhenSmallOrFailing', async () => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
     const post = vi.fn(async (_t: string) => true);
     await maybeSendDailySummary({ now, post, costLine: async () => { throw Object.assign(new Error('secret'), { name: 'Boom' }); } });
     expect(post).toHaveBeenCalledTimes(1);
     expect(post.mock.calls[0][0]).not.toContain('💸');
+    const logged = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(logged).toContain('Boom');
+    expect(logged).not.toContain('secret');
+    // small delta: the real provider chain yields null via costSummaryLine
     resetDailySummaryGuard();
     await appendRecords([rec('2', '2026-10-26T01:00:00Z')]);
     const post2 = vi.fn(async (_t: string) => true);
-    await maybeSendDailySummary({ now: new Date('2026-10-27T00:10:00Z'), post: post2, costLine: async () => null });
+    const small = { mode: 'snapshot', days: 1, fromDay: '2026-10-26', accountId: '__all__', baseMonthly: 100, currentMonthly: 100.4, delta: 0.4, causes: [], unexplained: 0.4 } as const;
+    await maybeSendDailySummary({ now: new Date('2026-10-27T00:10:00Z'), post: post2, costLine: async () => costSummaryLine({ ...small, causes: [], notes: [] }) });
+    expect(post2).toHaveBeenCalledTimes(1);
     expect(post2.mock.calls[0][0]).not.toContain('💸');
+  });
+  it('doesNotRecomputeCostLineAfterFailedPost', async () => {
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    const post = vi.fn(async (_t: string) => false);
+    const costLine = vi.fn(async () => '💸 x');
+    await maybeSendDailySummary({ now, post, costLine });
+    await maybeSendDailySummary({ now, post, costLine });
+    expect(post).toHaveBeenCalledTimes(2);
+    expect(costLine).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[1][0]).toContain('💸 x');
   });
   it('summaryAppendsCostLine', async () => {
     await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
