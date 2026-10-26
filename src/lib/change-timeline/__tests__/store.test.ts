@@ -33,4 +33,21 @@ describe('store', () => {
     await writeState(s);
     expect(await readState()).toEqual(s);
   });
+  it('corruptMonthFileIsPreservedNotReplaced', async () => {
+    const f = path.join(dir, 'records-2026-10.json');
+    fs.writeFileSync(f, '{"a": {"id":"a"');
+    expect(await appendRecords([rec('b', '2026-10-02T00:00:00Z')])).toBe(1);
+    const aside = fs.readdirSync(dir).filter((n) => n.startsWith('records-2026-10.json.corrupt-'));
+    expect(aside.length).toBe(1);
+    expect(fs.readFileSync(path.join(dir, aside[0]), 'utf8')).toBe('{"a": {"id":"a"');
+    expect(Object.keys(JSON.parse(fs.readFileSync(f, 'utf8')))).toEqual(['b']);
+  });
+  it('unreadableMonthFileThrowsAndIsUntouched', async () => {
+    const f = path.join(dir, 'records-2026-10.json');
+    fs.mkdirSync(f); // reading a directory -> EISDIR, not ENOENT
+    await expect(appendRecords([rec('b', '2026-10-02T00:00:00Z')])).rejects.toBeTruthy();
+    expect(fs.statSync(f).isDirectory()).toBe(true);
+    fs.rmdirSync(f);
+    expect(await appendRecords([rec('c', '2026-10-02T00:00:00Z')])).toBe(1); // chain still works
+  });
 });

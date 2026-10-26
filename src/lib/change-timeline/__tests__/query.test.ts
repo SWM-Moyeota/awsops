@@ -30,6 +30,7 @@ describe('queryChanges', () => {
       rec('6', '2026-10-20T05:00:00Z', { actor: { kind: 'auto', name: 'CloudFormation' } }),
     ]);
     const r = await queryChanges(q());
+    // Spec §4: auto rows count toward creates/deletes, but not toward the people count.
     expect(r.summary).toEqual({ creates: 5, deletes: 1, people: 3 });
   });
   it('filtersByKindActorTypeAndText', async () => {

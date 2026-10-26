@@ -34,6 +34,32 @@ async function writeJsonAtomic(name: string, value: unknown): Promise<void> {
   }
 }
 
+/**
+ * Read a month file for read-modify-write. Missing (ENOENT) -> {}. Unparseable (corrupt/truncated)
+ * -> renamed aside to `<file>.corrupt-<timestamp>` (history preserved), error name logged, start fresh.
+ * Any other I/O error (EACCES, EIO, ...) is thrown so the append is skipped and the file is never overwritten.
+ * 월 파일 읽기: 없으면 {}, 깨졌으면 .corrupt-* 로 옮겨 보존 후 새로 시작, 그 외 I/O 오류는 throw (덮어쓰기 금지).
+ */
+async function readMonthForWrite(name: string): Promise<Record<string, ChangeRecord>> {
+  const file = path.join(timelineDir(), name);
+  let text: string;
+  try {
+    text = await fs.promises.readFile(file, 'utf8');
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw e;
+  }
+  try {
+    const v = JSON.parse(text);
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, ChangeRecord>;
+    throw new SyntaxError('not an object');
+  } catch (e) {
+    console.error('[change-timeline] corrupt month file, moved aside:', e instanceof Error ? e.name : 'Error');
+    await fs.promises.rename(file, `${file}.corrupt-${Date.now()}`);
+    return {};
+  }
+}
+
 const monthName = (iso: string) => `records-${iso.slice(0, 7)}.json`;
 
 let chain: Promise<unknown> = Promise.resolve();
@@ -54,7 +80,7 @@ export function appendRecords(records: ChangeRecord[]): Promise<number> {
     }
     let added = 0;
     for (const [name, rs] of Array.from(byFile.entries())) {
-      const cur = await readJson<Record<string, ChangeRecord>>(name, {});
+      const cur = await readMonthForWrite(name);
       let changed = false;
       for (const r of rs) {
         if (cur[r.id]) continue;
