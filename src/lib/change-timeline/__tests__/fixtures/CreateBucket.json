@@ -1,0 +1,62 @@
+{
+ "eventVersion": "1.11",
+ "userIdentity": {
+  "type": "IAMUser",
+  "principalId": "AIDAEXAMPLE",
+  "arn": "arn:aws:iam::111122223333:user/tjdgns9954",
+  "accountId": "111122223333",
+  "accessKeyId": "AKIAEXAMPLE",
+  "userName": "tjdgns9954",
+  "sessionContext": {
+   "attributes": {
+    "creationDate": "2026-10-14T01:25:13Z",
+    "mfaAuthenticated": "false"
+   }
+  }
+ },
+ "eventTime": "2026-10-14T07:17:53Z",
+ "eventSource": "s3.amazonaws.com",
+ "eventName": "CreateBucket",
+ "awsRegion": "ap-northeast-2",
+ "sourceIPAddress": "203.0.113.10",
+ "userAgent": "[Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36]",
+ "requestParameters": {
+  "CreateBucketConfiguration": {
+   "LocationConstraint": "ap-northeast-2",
+   "xmlns": "http://s3.amazonaws.com/doc/2006-03-01/",
+   "Tags": {
+    "Tag": {
+     "Value": "moyeota",
+     "Key": "project"
+    }
+   }
+  },
+  "bucketName": "moyeota-media",
+  "Host": "moyeota-media.s3.ap-northeast-2.amazonaws.com"
+ },
+ "responseElements": null,
+ "additionalEventData": {
+  "SignatureVersion": "SigV4",
+  "referrer": "https://ap-northeast-2.console.aws.amazon.com/",
+  "CipherSuite": "TLS_AES_128_GCM_SHA256",
+  "bytesTransferredIn": 260,
+  "startTime": 1791962273017,
+  "AuthenticationMethod": "AuthHeader",
+  "endTime": 1791962273712,
+  "x-amz-id-2": "zFfTBv4tAhCQHQR+eqaI7MA+NOlY68GKuL+QxIfZn7BLRC5AHrvdpKLnsNdt8GBG5QL3hDL1tPFjpw09ikJDHBtp/rebkYwx",
+  "httpStatusCode": 200,
+  "bytesTransferredOut": 0
+ },
+ "requestID": "HKX66EW2HZ770M0M",
+ "eventID": "bf8546c3-7080-4dd4-ac72-c5454579f499",
+ "readOnly": false,
+ "eventType": "AwsApiCall",
+ "managementEvent": true,
+ "recipientAccountId": "111122223333",
+ "eventCategory": "Management",
+ "tlsDetails": {
+  "tlsVersion": "TLSv1.3",
+  "cipherSuite": "TLS_AES_128_GCM_SHA256",
+  "clientProvidedHostHeader": "moyeota-media.s3.ap-northeast-2.amazonaws.com"
+ }
+}

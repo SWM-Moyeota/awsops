@@ -1,0 +1,47 @@
+{
+ "eventVersion": "1.11",
+ "userIdentity": {
+  "type": "IAMUser",
+  "principalId": "AIDAEXAMPLE",
+  "arn": "arn:aws:iam::111122223333:user/sungyoon",
+  "accountId": "111122223333",
+  "accessKeyId": "AKIAEXAMPLE",
+  "userName": "sungyoon",
+  "sessionContext": {
+   "attributes": {
+    "creationDate": "2026-10-23T10:13:13Z",
+    "mfaAuthenticated": "false"
+   }
+  }
+ },
+ "eventTime": "2026-10-23T10:28:44Z",
+ "eventSource": "ec2.amazonaws.com",
+ "eventName": "CreateSecurityGroup",
+ "awsRegion": "ap-northeast-2",
+ "sourceIPAddress": "203.0.113.10",
+ "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+ "requestParameters": {
+  "groupName": "launch-wizard-1",
+  "groupDescription": "launch-wizard-1 created 2026-10-23T10:25:48.105Z",
+  "vpcId": "vpc-0058fbf64c6ff73ba"
+ },
+ "responseElements": {
+  "requestId": "7a90846e-9027-4c3c-b565-4637b0e217f7",
+  "_return": true,
+  "groupId": "sg-03781b1201aaa0069",
+  "securityGroupArn": "arn:aws:ec2:ap-northeast-2:111122223333:security-group/sg-03781b1201aaa0069"
+ },
+ "requestID": "7a90846e-9027-4c3c-b565-4637b0e217f7",
+ "eventID": "494609a4-af0a-4557-9f39-54ca5b109fab",
+ "readOnly": false,
+ "eventType": "AwsApiCall",
+ "managementEvent": true,
+ "recipientAccountId": "111122223333",
+ "eventCategory": "Management",
+ "tlsDetails": {
+  "tlsVersion": "TLSv1.3",
+  "cipherSuite": "TLS_AES_128_GCM_SHA256",
+  "clientProvidedHostHeader": "ec2.ap-northeast-2.amazonaws.com"
+ },
+ "sessionCredentialFromConsole": "true"
+}
