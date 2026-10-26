@@ -14,13 +14,13 @@ import { buildStatus } from './status';
 import { invokeText } from './bedrock';
 import { extractUsedTools } from './tools';
 import { classifyIntent } from './classify';
-import { generateSQL, queryAWS } from './sql';
 import { generateDatasourceQuery } from './datasource-query';
 import { invokeAgentCore } from './agentcore';
 import type { PipelineInput } from './pipeline-input';
 import type { StepCtx } from './steps/types';
 import { codeStep } from './steps/code';
 import { topologyStep } from './steps/topology';
+import { sqlStep } from './steps/sql';
 
 // ============================================================================
 // Single route handler / 단일 라우트 핸들러
@@ -44,36 +44,10 @@ export async function handleSingleRoute(
     return codeStep(ctx, { variant: 'json', modelId: resolveModelId(modelKey) });
   }
 
-  // SQL handler / SQL 핸들러
+  // SQL handler — on failure falls through to the gateway below / SQL 핸들러 — 실패하면 아래 gateway로
   if (config.handler === 'sql') {
-    const modelId = resolveModelId(modelKey);
-    let sql = await generateSQL(messages, accountId, accountAlias);
-    let queryResult: { data: string; rowCount: number; error?: string } | null = null;
-    for (let attempt = 0; attempt < 2 && sql; attempt++) {
-      queryResult = await queryAWS(sql, accountId);
-      if (!queryResult.error) break;
-      if (attempt === 0) {
-        const fixMessages = [...messages.slice(-4),
-          { role: 'assistant' as const, content: `I generated this SQL: ${sql}` },
-          { role: 'user' as const, content: `That SQL failed with error: ${queryResult.error}. Fix the SQL using only valid column names.` },
-        ];
-        sql = await generateSQL(fixMessages, accountId, accountAlias);
-      }
-    }
-    if (sql && queryResult && !queryResult.error) {
-      const contextData = `\n\n--- LIVE AWS RESOURCE DATA (${queryResult.rowCount} rows) ---\nSQL: ${sql}\n\`\`\`json\n${queryResult.data}\n\`\`\``;
-      const bedrockMessages = messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content }));
-      bedrockMessages[bedrockMessages.length - 1].content += contextData;
-      const body = JSON.stringify({
-        anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: SYSTEM_PROMPT, messages: bedrockMessages,
-      });
-      const response = await bedrockClient.send(new InvokeModelCommand({
-        modelId, contentType: 'application/json', accept: 'application/json',
-        body: new TextEncoder().encode(body),
-      }));
-      const result = JSON.parse(new TextDecoder().decode(response.body));
-      return { content: result.content?.[0]?.text || '', via: `${config.display} (${queryResult.rowCount} rows)`, queriedResources: ['steampipe'] };
-    }
+    const r = await sqlStep(ctx, { modelId: resolveModelId(modelKey), emptyContent: '', withSqlTools: false });
+    if (r) return r;
   }
 
   // Topology View handler (non-streaming, for multi-route participation)

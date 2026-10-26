@@ -15,7 +15,6 @@ import { sseEvent, simulateStreaming, streamBedrockToSSE } from './sse';
 import { streamText } from './bedrock';
 import { recordAndSave } from './stats';
 import { classifyIntent } from './classify';
-import { generateSQL, queryAWS } from './sql';
 import { generateDatasourceQuery } from './datasource-query';
 import { invokeAgentCore } from './agentcore';
 import { handleSingleRoute } from './json-pipeline';
@@ -23,6 +22,7 @@ import type { StreamPipelineInput } from './pipeline-input';
 import type { StepCtx, StepResult } from './steps/types';
 import { codeStep } from './steps/code';
 import { topologyStep } from './steps/topology';
+import { sqlStep } from './steps/sql';
 
 // Former POST-scope closure variables arrive through `input` under their old names.
 // 예전 POST 스코프의 클로저 변수는 `input`으로 받아 원래 이름 그대로 쓴다.
@@ -229,55 +229,17 @@ export function runStreaming(input: StreamPipelineInput): ReadableStream {
           }
         }
 
-        // Handler: SQL (aws-data) / SQL 핸들러
+        // Handler: SQL (aws-data) — on failure falls through to the gateway / SQL 핸들러 — 실패하면 gateway로
         if (config.handler === 'sql') {
-          send('status', { step: 'sql-generating', message: STATUS.sqlGenerating });
-          const modelId = resolveModelId(modelKey);
-          let sql = await generateSQL(messages, accountId, account?.alias);
-          let queryResult: { data: string; rowCount: number; error?: string } | null = null;
-
-          for (let attempt = 0; attempt < 2 && sql; attempt++) {
-            send('status', { step: 'sql-querying', message: STATUS.sqlQuerying(attempt > 0), sql });
-            queryResult = await queryAWS(sql, accountId);
-            if (!queryResult.error) break;
-            if (attempt === 0) {
-              send('status', { step: 'sql-retrying', message: STATUS.sqlRetrying });
-              const fixMessages = [
-                ...messages.slice(-4),
-                { role: 'assistant' as const, content: `I generated this SQL: ${sql}` },
-                { role: 'user' as const, content: `That SQL failed with error: ${queryResult.error}. Fix the SQL using only valid column names.` },
-              ];
-              sql = await generateSQL(fixMessages, accountId, account?.alias);
-            }
-          }
-
-          if (sql && queryResult && !queryResult.error) {
-            send('status', { step: 'analyzing', message: STATUS.analyzing(queryResult.rowCount) });
-            const contextData = `\n\n--- LIVE AWS RESOURCE DATA (${queryResult.rowCount} rows) ---\nSQL: ${sql}\n\`\`\`json\n${queryResult.data}\n\`\`\``;
-            const bedrockMessages = messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content }));
-            bedrockMessages[bedrockMessages.length - 1].content += contextData;
-            // Stream Bedrock analysis response / Bedrock 분석 응답 스트리밍
-            const streamResult = await streamBedrockToSSE(
-              { modelId, system: SYSTEM_PROMPT, messages: bedrockMessages },
-              send,
-            );
-            totalInputTokens += streamResult.inputTokens;
-            totalOutputTokens += streamResult.outputTokens;
-            const sqlContent = streamResult.content || 'No response';
-            const sqlTools = extractUsedTools(sqlContent);
-            if (sql) sqlTools.push(`steampipe: ${sql.match(/FROM\s+(\w+)/i)?.[1] || 'query'}`);
+          const r = await sqlStep(ctx, { modelId: resolveModelId(modelKey), emptyContent: 'No response', withSqlTools: true });
+          if (r) {
+            addTokens(r);
             const sqlTimeMs = Date.now() - callStartTime;
-            recordAndSave({ route, gateway: 'steampipe', responseTimeMs: sqlTimeMs, usedTools: sqlTools, success: true, via: `${config.display} (${queryResult.rowCount} rows)`, question: lastMessage, summary: sqlContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
-            send('done', {
-              content: sqlContent, model: getBedrockModelLabel(),
-              via: `${config.display} (${queryResult.rowCount} rows)`, queriedResources: ['steampipe'], route,
-              usedTools: sqlTools,
-              inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
-            });
+            recordAndSave({ route, gateway: 'steampipe', responseTimeMs: sqlTimeMs, usedTools: r.usedTools!, success: true, via: r.via, question: lastMessage, summary: r.content, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
+            sendDone(r);
             controller.close();
             return;
           }
-          send('status', { step: 'sql-fallback', message: STATUS.sqlFallback });
         }
 
         // Handler: AgentCore Gateway — single or multi / AgentCore 게이트웨이 — 단일 또는 멀티
