@@ -35,14 +35,15 @@ export function signedUsd(n: number): string {
 }
 
 /**
- * Which change-timeline kinds can explain each cause kind. A stopped EC2 leaves the estimate (removed) and a
- * started one enters it (added), so stop/start also explain removed/added.
- * 원인 종류별로 맞는 변경 기록 종류. 정지된 EC2는 추정에서 빠지고(removed) 시작되면 들어온다(added).
+ * Which change-timeline kinds explain each cause kind, in priority tiers (newest wins only inside a tier).
+ * A stopped EC2 leaves the estimate (removed) and a started one enters it (added), so stop/start also explain
+ * removed/added — but a create (or delete) in the window is the real cause and beats a later start/stop cycle.
+ * 원인 종류별 변경 기록 종류(우선순위 단계). 같은 단계 안에서만 최신 우선. 생성·삭제가 시작·정지보다 우선한다.
  */
-const MATCHING_KINDS: Record<ExplainCause['kind'], ChangeKind[]> = {
-  added: ['create', 'start'],
-  removed: ['delete', 'stop'],
-  changed: ['stop', 'start', 'modify'],
+const MATCHING_TIERS: Record<ExplainCause['kind'], ChangeKind[][]> = {
+  added: [['create'], ['start']],
+  removed: [['delete'], ['stop']],
+  changed: [['stop', 'start', 'modify']],
 };
 
 /** Cost category of a resource gone from the estimate in timeline mode; types without a fixed cost are skipped. / 비용 없는 종류는 제외. */
@@ -147,17 +148,20 @@ function snapshotCauses(
 
 const IPV4_SUFFIX = '-ipv4';
 
+type MatchTarget = { accountId: string; resourceId: string; name: string; category: CategoryId };
+
 /**
  * Does a change record refer to this estimate resource? Same account, then: S3 by bucket name; RDS ids
- * case-insensitively (records keep the request casing, Steampipe ids are lowercase, as in change-timeline query.ts);
- * a derived `${id}-ipv4` public-IP resource also matches its parent's record.
- * 변경 기록과 리소스 매칭: S3는 이름, RDS는 대소문자 무시, 파생 `-ipv4` 리소스는 부모 기록과도 매칭.
+ * case-insensitively (records keep the request casing, Steampipe ids are lowercase, as in change-timeline query.ts).
+ * With `derived`, a `public-ip` resource `${id}-ipv4` (from estimate.ts) also matches its parent's record; a real
+ * resource that happens to be named `db-ipv4` never matches records for `db`.
+ * 변경 기록과 리소스 매칭: S3는 이름, RDS는 대소문자 무시, `derived`면 public-ip 파생 `-ipv4`가 부모 기록과 매칭.
  */
-export function recordMatches(rec: ChangeRecord, r: { accountId: string; resourceId: string; name: string }): boolean {
+export function recordMatches(rec: ChangeRecord, r: MatchTarget, derived = true): boolean {
   if (rec.accountId !== r.accountId) return false;
   if (rec.resourceType === 's3-bucket') return rec.resourceName === r.name;
   const ids = [r.resourceId];
-  if (r.resourceId.endsWith(IPV4_SUFFIX) && r.resourceId.length > IPV4_SUFFIX.length) {
+  if (derived && r.category === 'public-ip' && r.resourceId.endsWith(IPV4_SUFFIX) && r.resourceId.length > IPV4_SUFFIX.length) {
     ids.push(r.resourceId.slice(0, -IPV4_SUFFIX.length));
   }
   if (/^rds-/.test(rec.resourceType)) {
@@ -168,9 +172,11 @@ export function recordMatches(rec: ChangeRecord, r: { accountId: string; resourc
 }
 
 function timelineCauses(records: ChangeRecord[], live: PricedResource[]): ExplainCause[] {
-  // Every live resource a record refers to (an instance and its derived -ipv4). / 기록이 가리키는 실시간 리소스 전부.
+  // Live resources a record refers to. A create also covers the derived -ipv4 resource it brings; other kinds
+  // look at the parent only, so a live derived IP never makes a stopped/deleted parent look live.
+  // 생성 기록은 파생 -ipv4까지, 그 외 기록은 부모 리소스만 본다.
   const findLive = (rec: ChangeRecord) =>
-    live.filter((r) => recordMatches(rec, { accountId: r.accountId, resourceId: r.id, name: r.name }));
+    live.filter((r) => recordMatches(rec, { accountId: r.accountId, resourceId: r.id, name: r.name, category: r.category }, rec.kind === 'create'));
 
   const added = new Map<string, ExplainCause>();
   const removed = new Map<string, ExplainCause>();
@@ -212,14 +218,21 @@ function timelineCauses(records: ChangeRecord[], live: PricedResource[]): Explai
   return out;
 }
 
-/** Newest non-failed matching record sets action/actor/time; no record means no actor. / 기록이 없으면 사람을 비운다. */
+/**
+ * The first priority tier with a matching non-failed record wins; inside a tier the newest record wins. It sets
+ * action/actor/time; no record means no actor.
+ * 우선순위 단계 중 처음 매칭되는 단계, 그 안에서 최신 기록으로 귀속. 기록이 없으면 사람을 비운다.
+ */
 function attribute(causes: ExplainCause[], records: ChangeRecord[]): void {
   for (const c of causes) {
-    const kinds = MATCHING_KINDS[c.kind];
+    const mine = records.filter((rec) => recordMatches(rec, c));
     let best: ChangeRecord | null = null;
-    for (const rec of records) {
-      if (!kinds.includes(rec.kind) || !recordMatches(rec, c)) continue;
-      if (!best || Date.parse(rec.time) > Date.parse(best.time)) best = rec;
+    for (const kinds of MATCHING_TIERS[c.kind]) {
+      for (const rec of mine) {
+        if (!kinds.includes(rec.kind)) continue;
+        if (!best || Date.parse(rec.time) > Date.parse(best.time)) best = rec;
+      }
+      if (best) break;
     }
     if (!best) continue;
     c.action = best.kind;

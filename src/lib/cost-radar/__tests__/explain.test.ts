@@ -253,6 +253,15 @@ describe('explainChange — timeline-only mode', () => {
     })]);
   });
 
+  it('a stop of a parent no longer live is removed even while its derived -ipv4 is still live', async () => {
+    const d = deps({
+      est: estimate([live('i-4-ipv4', 3.65, { category: 'public-ip' })]),
+      records: [rec('stop', 'i-4', '2026-10-24T01:00:00Z', { actor: { kind: 'auto', name: 'scheduler' } })],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => [c.kind, c.resourceId, c.impact, c.action])).toEqual([['removed', 'i-4', null, 'stop']]);
+  });
+
   it('timeline mode matches RDS ids case-insensitively and derived -ipv4 resources to the parent', async () => {
     const d = deps({
       est: estimate([
@@ -323,7 +332,7 @@ describe('explainChange — attribution', () => {
     expect(r.causes[0].time).toBe('2026-10-23T01:00:00Z');
   });
 
-  it('removed matches delete/stop records, added matches create/start records (newest wins)', async () => {
+  it('removed matches delete records, added matches create records (create beats a later start)', async () => {
     const d = deps({
       snapshots: { [FROM_DAY]: { [A]: [snap('vol-3', 5)] } },
       est: estimate([live('i-4', 40)]),
@@ -335,7 +344,7 @@ describe('explainChange — attribution', () => {
     });
     const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
     expect(r.causes.map((c) => [c.resourceId, c.action, c.actor?.name])).toEqual([
-      ['i-4', 'start', 'starter'],
+      ['i-4', 'create', 'root'],
       ['vol-3', 'delete', 'minsu'],
     ]);
   });
@@ -352,6 +361,61 @@ describe('explainChange — attribution', () => {
       kind: 'removed', resourceId: 'i-1', impact: -10, action: 'stop', actor: { kind: 'person', name: 'minsu' },
       time: '2026-10-24T01:00:00Z',
     });
+  });
+
+  it('a new instance created, then started and stopped by a scheduler, is attributed to its creator', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [] } },
+      est: estimate([live('i-4', 40)]),
+      records: [
+        rec('create', 'i-4', '2026-10-21T01:00:00Z', { actor: { kind: 'person', name: 'jiwoo' } }),
+        rec('start', 'i-4', '2026-10-25T00:00:00Z', { actor: { kind: 'auto', name: 'scheduler' } }),
+        rec('stop', 'i-4', '2026-10-25T12:00:00Z', { actor: { kind: 'auto', name: 'scheduler' } }),
+      ],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes[0]).toMatchObject({
+      kind: 'added', action: 'create', actor: { kind: 'person', name: 'jiwoo' }, time: '2026-10-21T01:00:00Z',
+    });
+  });
+
+  it('a removed resource with a stop and then a delete is attributed to the delete', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('i-1', 10)] } },
+      est: estimate([]),
+      records: [
+        rec('stop', 'i-1', '2026-10-22T01:00:00Z', { actor: { kind: 'person', name: 'stopper' } }),
+        rec('delete', 'i-1', '2026-10-23T01:00:00Z', { actor: { kind: 'person', name: 'deleter' } }),
+      ],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes[0]).toMatchObject({ kind: 'removed', action: 'delete', actor: { name: 'deleter' } });
+  });
+
+  it('delete beats stop for removed even when the stop record is newer', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('i-1', 10)] } },
+      est: estimate([]),
+      records: [
+        rec('delete', 'i-1', '2026-10-22T01:00:00Z', { actor: { kind: 'person', name: 'deleter' } }),
+        rec('stop', 'i-1', '2026-10-23T01:00:00Z', { actor: { kind: 'person', name: 'stopper' } }),
+      ],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes[0]).toMatchObject({ action: 'delete', actor: { name: 'deleter' } });
+  });
+
+  it('a real resource named like <id>-ipv4 does not match records for <id>', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [] } },
+      est: estimate([live('db-ipv4', 80, { category: 'rds' }), live('i-9-ipv4', 2, { category: 'ec2' })]),
+      records: [
+        rec('create', 'db', '2026-10-24T01:00:00Z', { resourceType: 'rds-instance' }),
+        rec('create', 'i-9', '2026-10-24T01:00:00Z'),
+      ],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => [c.resourceId, c.actor])).toEqual([['db-ipv4', undefined], ['i-9-ipv4', undefined]]);
   });
 
   it('a started instance (back in the estimate) is attributed to its start record', async () => {
