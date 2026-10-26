@@ -8,25 +8,27 @@ import { detectDatasourceTypes, DATASOURCE_TYPES } from '@/lib/datasource-regist
 import { resolveModelId } from './models';
 import { bedrockClient } from './clients';
 import { ROUTE_REGISTRY } from './registry';
-import { getSystemPrompt, CODE_PROMPT_SUFFIX, SYNTHESIS_PROMPT_SUFFIX } from './prompts';
+import { getSystemPrompt, SYNTHESIS_PROMPT_SUFFIX } from './prompts';
 import { pick } from './status';
 import { extractUsedTools } from './tools';
 import { sseEvent, simulateStreaming, streamBedrockToSSE } from './sse';
+import { streamText } from './bedrock';
 import { recordAndSave } from './stats';
 import { classifyIntent } from './classify';
 import { generateSQL, queryAWS } from './sql';
 import { generateTopologyParams, topologyContent } from './topology';
 import { generateDatasourceQuery } from './datasource-query';
-import { extractPythonCode, executeCodeInterpreter } from './code-interpreter';
 import { invokeAgentCore } from './agentcore';
 import { handleSingleRoute } from './json-pipeline';
 import type { StreamPipelineInput } from './pipeline-input';
+import type { StepCtx, StepResult } from './steps/types';
+import { codeStep } from './steps/code';
 
 // Former POST-scope closure variables arrive through `input` under their old names.
 // 예전 POST 스코프의 클로저 변수는 `input`으로 받아 원래 이름 그대로 쓴다.
 export function runStreaming(input: StreamPipelineInput): ReadableStream {
   const {
-    messages, modelKey, lang: clientLang, accountId, account, requestId,
+    messages, modelKey, lang: clientLang, accountId, accountAlias, account, requestId,
     user: currentUser, status: STATUS, systemPrompt: SYSTEM_PROMPT, isEn,
   } = input;
 
@@ -59,40 +61,32 @@ export function runStreaming(input: StreamPipelineInput): ReadableStream {
         }
 
         // Step 2: Route to handler / 2단계: 핸들러로 라우팅
+        // Stream variant of the shared steps: events go to the client, Bedrock answers stream as chunks.
+        // 공유 단계의 스트림 변형: 이벤트는 클라이언트로, Bedrock 답은 chunk로 스트리밍
+        const ctx: StepCtx = {
+          route, messages, lang: clientLang, accountId, accountAlias, requestId,
+          systemPrompt: SYSTEM_PROMPT, status: STATUS, emit: send, llm: req => streamText(req, send),
+        };
+        const addTokens = (r: StepResult) => {
+          totalInputTokens += r.inputTokens ?? 0;
+          totalOutputTokens += r.outputTokens ?? 0;
+        };
+        // done payload: key order and fields as before (undefined usedTools is dropped by JSON.stringify)
+        // done 페이로드: 키 순서·필드 그대로 (usedTools가 undefined면 JSON.stringify가 뺀다)
+        const sendDone = (r: StepResult, withRoutes = false) => send('done', {
+          content: r.content, model: getBedrockModelLabel(),
+          via: r.via, queriedResources: r.queriedResources, route,
+          ...(withRoutes ? { routes } : {}),
+          usedTools: r.usedTools,
+          inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
+        });
 
         // Handler: Code Interpreter / 핸들러: 코드 인터프리터
+        // Runs even in multi-route when the first route is code / 멀티 라우트여도 첫 라우트가 code면 code만 실행
         if (config.handler === 'code') {
-          send('status', { step: 'generating', message: STATUS.codeGenerating });
-          const modelId = resolveModelId(modelKey);
-          const codeSystemPrompt = SYSTEM_PROMPT + CODE_PROMPT_SUFFIX;
-          // Stream code generation / 코드 생성 스트리밍
-          const codeStreamResult = await streamBedrockToSSE(
-            { modelId, system: codeSystemPrompt, messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })) },
-            send,
-          );
-          const aiText = codeStreamResult.content || '';
-          totalInputTokens += codeStreamResult.inputTokens;
-          totalOutputTokens += codeStreamResult.outputTokens;
-          const pythonCode = extractPythonCode(aiText) || extractPythonCode(lastMessage);
-
-          if (pythonCode) {
-            send('status', { step: 'executing', message: STATUS.codeExecuting });
-            const codeResult = await executeCodeInterpreter(pythonCode);
-            const executionBlock = `\n\n---\n**Code Execution Result** (exit code: ${codeResult.exitCode}):\n\`\`\`\n${codeResult.output}\n\`\`\``;
-            // Send execution result as chunk / 실행 결과를 chunk로 전송
-            send('chunk', { delta: executionBlock });
-            send('done', {
-              content: aiText + executionBlock, model: getBedrockModelLabel(),
-              via: `Bedrock + ${config.display}`, queriedResources: ['code-interpreter'], route,
-              inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
-            });
-          } else {
-            send('done', {
-              content: aiText, model: getBedrockModelLabel(),
-              via: 'Bedrock (code request)', queriedResources: [], route,
-              inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
-            });
-          }
+          const r = await codeStep(ctx, { variant: 'stream', modelId: resolveModelId(modelKey) });
+          addTokens(r);
+          sendDone(r);
           controller.close();
           return;
         }
@@ -306,7 +300,7 @@ export function runStreaming(input: StreamPipelineInput): ReadableStream {
           }, 15000);
 
           const results = await Promise.allSettled(
-            routes.map(r => handleSingleRoute(r, messages, modelKey, clientLang, accountId, account?.alias, requestId))
+            routes.map(r => handleSingleRoute(r, input))
           );
           clearInterval(multiKeepInterval);
           const successful: { route: string; content: string; via: string }[] = [];

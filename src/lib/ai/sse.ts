@@ -33,7 +33,7 @@ export async function simulateStreaming(
 // Bedrock 스트리밍 헬퍼: 응답 청크를 SSE 이벤트로 전송
 // ============================================================================
 export async function streamBedrockToSSE(
-  params: { modelId: string; system: string; messages: Array<{role: string; content: string}>; maxTokens?: number },
+  params: { modelId: string | undefined; system: string; messages: Array<{role: string; content: string}>; maxTokens?: number },
   send: (event: string, data: any) => void,
 ): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
   const body = JSON.stringify({

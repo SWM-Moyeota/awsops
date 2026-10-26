@@ -9,47 +9,39 @@ import { detectDatasourceTypes, DATASOURCE_TYPES } from '@/lib/datasource-regist
 import { resolveModelId, rawModelId } from './models';
 import { bedrockClient } from './clients';
 import { ROUTE_REGISTRY, type RouteType } from './registry';
-import { getSystemPrompt, CODE_PROMPT_SUFFIX, SYNTHESIS_PROMPT_SUFFIX } from './prompts';
+import { getSystemPrompt, SYNTHESIS_PROMPT_SUFFIX } from './prompts';
+import { buildStatus } from './status';
+import { invokeText } from './bedrock';
 import { extractUsedTools } from './tools';
 import { classifyIntent } from './classify';
 import { generateSQL, queryAWS } from './sql';
 import { generateTopologyParams, topologyContent } from './topology';
 import { generateDatasourceQuery } from './datasource-query';
-import { extractPythonCode, executeCodeInterpreter } from './code-interpreter';
 import { invokeAgentCore } from './agentcore';
 import type { PipelineInput } from './pipeline-input';
+import type { StepCtx } from './steps/types';
+import { codeStep } from './steps/code';
 
 // ============================================================================
 // Single route handler / 단일 라우트 핸들러
 // ============================================================================
+// JSON variant of every step: no events (emit is a no-op), InvokeModel (invokeText).
+// JSON 변형: 이벤트 없음(emit 무동작), InvokeModel(invokeText). 스트림 멀티 라우트 참여자도 이것을 쓴다.
 export async function handleSingleRoute(
-  route: RouteType, messages: Array<{role: string; content: string}>, modelKey?: string, lang?: string,
-  accountId?: string, accountAlias?: string, requestId?: string
+  route: RouteType, input: PipelineInput,
 ): Promise<{ content: string; via: string; queriedResources: string[]; usedTools?: string[] } | null> {
+  const { messages, modelKey, lang, accountId, accountAlias, requestId } = input;
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   const config = ROUTE_REGISTRY[route];
   const lastMessage = messages[messages.length - 1]?.content || '';
+  const ctx: StepCtx = {
+    route, messages, lang, accountId, accountAlias, requestId,
+    systemPrompt: SYSTEM_PROMPT, status: buildStatus(lang), emit: () => {}, llm: invokeText,
+  };
 
   // Code handler / 코드 핸들러
   if (config.handler === 'code') {
-    const modelId = resolveModelId(modelKey);
-    const codeSystemPrompt = SYSTEM_PROMPT + CODE_PROMPT_SUFFIX;
-    const body = JSON.stringify({
-      anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: codeSystemPrompt,
-      messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })),
-    });
-    const aiResponse = await bedrockClient.send(new InvokeModelCommand({
-      modelId, contentType: 'application/json', accept: 'application/json',
-      body: new TextEncoder().encode(body),
-    }));
-    const aiText = JSON.parse(new TextDecoder().decode(aiResponse.body)).content?.[0]?.text || '';
-    const pythonCode = extractPythonCode(aiText) || extractPythonCode(lastMessage);
-    if (pythonCode) {
-      const codeResult = await executeCodeInterpreter(pythonCode);
-      const executionBlock = `\n\n---\n**Code Execution Result** (exit code: ${codeResult.exitCode}):\n\`\`\`\n${codeResult.output}\n\`\`\``;
-      return { content: aiText + executionBlock, via: `Bedrock + ${config.display}`, queriedResources: ['code-interpreter'] };
-    }
-    return { content: aiText, via: 'Bedrock (code)', queriedResources: [] };
+    return codeStep(ctx, { variant: 'json', modelId: resolveModelId(modelKey) });
   }
 
   // SQL handler / SQL 핸들러
@@ -227,7 +219,7 @@ export async function handleNonStreaming(input: PipelineInput) {
 
     // Single route (most common) / 단일 라우트 (일반적)
     if (routes.length === 1) {
-      const result = await handleSingleRoute(primaryRoute, messages, modelKey, lang, accountId, accountAlias, requestId);
+      const result = await handleSingleRoute(primaryRoute, input);
       if (result) {
         return NextResponse.json({
           content: result.content, model: getBedrockModelLabel(),
@@ -255,7 +247,7 @@ export async function handleNonStreaming(input: PipelineInput) {
     // Multi-route: parallel execution + synthesis / 멀티 라우트: 병렬 실행 + 합성
     console.log(`[Multi-Route] ${routes.join(' + ')}`);
     const results = await Promise.allSettled(
-      routes.map(r => handleSingleRoute(r, messages, modelKey, lang, accountId, accountAlias, requestId))
+      routes.map(r => handleSingleRoute(r, input))
     );
 
     const successful: { route: string; content: string; via: string }[] = [];
