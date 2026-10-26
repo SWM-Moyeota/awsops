@@ -107,6 +107,10 @@ async function postViaBot(text: string): Promise<boolean> {
   return true;
 }
 
+let lastSentDay: string | undefined;
+/** Test helper: forget the in-memory sent-day guard. / 테스트용: 메모리 가드 초기화. */
+export function resetDailySummaryGuard(): void { lastSentDay = undefined; }
+
 /** At/after 09:00 KST, send yesterday's summary once. / 09:00(KST) 이후 어제 요약을 하루 한 번 보낸다. */
 export async function maybeSendDailySummary(opts: { now?: Date; post?: (text: string) => Promise<boolean> } = {}): Promise<void> {
   const now = opts.now ?? new Date();
@@ -114,6 +118,7 @@ export async function maybeSendDailySummary(opts: { now?: Date; post?: (text: st
   if (kst.getUTCHours() < 9) return;
   const today = kst.toISOString().slice(0, 10);
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - DAY_MS).toISOString().slice(0, 10);
+  if (lastSentDay === yesterday) return;
   if ((await readState()).lastSummaryDay === yesterday) return;
 
   const startUtc = new Date(Date.parse(`${yesterday}T00:00:00Z`) - KST_MS);
@@ -128,7 +133,14 @@ export async function maybeSendDailySummary(opts: { now?: Date; post?: (text: st
     }
     if (!sent) return; // no bot / channel / failure — try again next tick
   }
-  await writeState({ ...(await readState()), lastSummaryDay: yesterday });
+  // Remember in memory first: if the state file can't be written, the summary must not repeat every tick.
+  // 상태 파일 쓰기가 실패해도 매 틱마다 다시 보내지 않도록 메모리에 먼저 기록한다.
+  lastSentDay = yesterday;
+  try {
+    await writeState({ ...(await readState()), lastSummaryDay: yesterday });
+  } catch (e) {
+    console.warn(`[change-timeline] summary state save failed (${e instanceof Error ? e.name : 'Error'})`);
+  }
 }
 
 /** Slack hook: answer "X 누가 만들었어?" from the records; true = handled, skip the AI. / true면 AI로 보내지 않는다. */
@@ -136,7 +148,11 @@ export async function maybeHandleChangeQuestion(event: MentionEvent, deps: { rep
   const q = detectWhoQuestion(event.text);
   if (!q) return false;
   try {
-    await deps.reply(answerWho(q, await searchByText(q.target)));
+    const found = await searchByText(q.target);
+    // Without a create/delete verb this may be an ordinary question ("누가 Grafana 쓰나요?") — let the AI have it.
+    // 만들/지우는 동사가 없으면 일반 질문일 수 있어 기록이 없을 때는 AI로 넘긴다.
+    if (q.kind === 'any' && found.length === 0) return false;
+    await deps.reply(answerWho(q, found));
   } catch (e) {
     console.warn(`[change-timeline] who-question failed (${e instanceof Error ? e.name : 'Error'})`);
     await deps.reply('변경 기록을 읽지 못했어요. 잠시 후 다시 물어봐 주세요.').catch(() => {});

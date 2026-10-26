@@ -2,12 +2,21 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { detectWhoQuestion, answerWho, buildDailySummary, maybeSendDailySummary, maybeHandleChangeQuestion } from '../slack';
+import { detectWhoQuestion, answerWho, buildDailySummary, maybeSendDailySummary, maybeHandleChangeQuestion, resetDailySummaryGuard } from '../slack';
 import { appendRecords, readState } from '../store';
+
+const failWrite = vi.hoisted(() => ({ times: 0 }));
+vi.mock('../store', async (orig) => {
+  const m = await orig<typeof import('../store')>();
+  return { ...m, writeState: (s: Parameters<typeof m.writeState>[0]) => {
+    if (failWrite.times > 0) { failWrite.times -= 1; return Promise.reject(Object.assign(new Error('x'), { name: 'EIO' })); }
+    return m.writeState(s);
+  } };
+});
 import { rec } from './helpers';
 
 let dir: string;
-beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-slack-')); process.env.CHANGE_TIMELINE_DATA_DIR = dir; });
+beforeEach(() => { resetDailySummaryGuard(); failWrite.times = 0; dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-slack-')); process.env.CHANGE_TIMELINE_DATA_DIR = dir; });
 afterEach(() => { delete process.env.CHANGE_TIMELINE_DATA_DIR; fs.rmSync(dir, { recursive: true, force: true }); });
 
 const bucket = (id: string, time: string, over = {}) =>
@@ -110,5 +119,34 @@ describe('maybeHandleChangeQuestion', () => {
     expect(reply.mock.calls[0][0]).toContain('sungyoon님이');
     expect(await maybeHandleChangeQuestion(ev('<@U1> EC2 뭐 있어?'), { reply })).toBe(false);
     expect(reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('fallsThroughWhenNothingFoundWithoutVerb', async () => {
+    const reply = vi.fn(async (_t: string) => {});
+    for (const text of [
+      '<@U1> 누가 Grafana 대시보드 쓰나요?',
+      '<@U1> Terraform 누가 설정했어?',
+      '<@U1> 누가 nginx 재시작했어?',
+      '<@U1> RDS prod-db 누구 팀 거야?',
+    ]) expect(await maybeHandleChangeQuestion(ev(text), { reply })).toBe(false);
+    expect(reply).not.toHaveBeenCalled();
+  });
+  it('answersWithVerbEvenWhenNotFoundAndWithoutVerbWhenFound', async () => {
+    const reply = vi.fn(async (_t: string) => {});
+    expect(await maybeHandleChangeQuestion(ev('<@U1> moyeota-media 누가 만들었어?'), { reply })).toBe(true);
+    expect(reply.mock.calls[0][0]).toContain('찾지 못했어요');
+    await appendRecords([bucket('a', '2026-10-26T05:02:00Z')]);
+    expect(await maybeHandleChangeQuestion(ev('<@U1> 누가 moyeota-media 건드렸어?'), { reply })).toBe(true);
+    expect(reply.mock.calls[1][0]).toContain('sungyoon님이');
+  });
+  it('doesNotResendWhenStateWriteFails', async () => {
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    const post = vi.fn(async (_t: string) => true);
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    failWrite.times = 1;
+    const now = new Date('2026-10-26T00:10:00Z');
+    await maybeSendDailySummary({ now, post });
+    await maybeSendDailySummary({ now, post });
+    expect(post).toHaveBeenCalledTimes(1);
   });
 });
