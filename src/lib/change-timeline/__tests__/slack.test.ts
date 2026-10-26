@@ -182,3 +182,57 @@ describe('slackEscaping', () => {
     expect(s).toContain('&lt;!here&gt;');
   });
 });
+
+describe('state kinds and cost line', () => {
+  it('whoAnswerIgnoresStateKinds', () => {
+    const recs = [
+      bucket('c', '2026-10-24T01:00:00Z', { kind: 'create' }),
+      bucket('s', '2026-10-25T01:00:00Z', { kind: 'stop' }),
+      bucket('m', '2026-10-26T01:00:00Z', { kind: 'modify' }),
+    ];
+    const t = answerWho({ kind: 'delete', target: 'moyeota-media' }, recs);
+    expect(t).toContain('아직 있어요');
+    expect(answerWho({ kind: 'any', target: 'x' }, [bucket('s', '2026-10-25T01:00:00Z', { kind: 'start' })])).toContain('찾지 못했어요');
+    const sum = buildDailySummary([bucket('c', '2026-10-25T01:00:00Z', { kind: 'create' }), bucket('s', '2026-10-25T02:00:00Z', { kind: 'stop' })], '2026-10-25');
+    expect(sum).toContain('1개가 생겼어요');
+    expect(sum).not.toContain('사라졌어요');
+    expect(buildDailySummary([bucket('s', '2026-10-25T02:00:00Z', { kind: 'start' })], '2026-10-25')).toBeNull();
+  });
+
+  const now = new Date('2026-10-26T00:10:00Z'); // KST 09:10
+  it('summaryOmitsCostLineWhenSmallOrFailing', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    const post = vi.fn(async (_t: string) => true);
+    await maybeSendDailySummary({ now, post, costLine: async () => { throw Object.assign(new Error('secret'), { name: 'Boom' }); } });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0][0]).not.toContain('💸');
+    resetDailySummaryGuard();
+    await appendRecords([rec('2', '2026-10-26T01:00:00Z')]);
+    const post2 = vi.fn(async (_t: string) => true);
+    await maybeSendDailySummary({ now: new Date('2026-10-27T00:10:00Z'), post: post2, costLine: async () => null });
+    expect(post2.mock.calls[0][0]).not.toContain('💸');
+  });
+  it('summaryAppendsCostLine', async () => {
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    const post = vi.fn(async (_t: string) => true);
+    await maybeSendDailySummary({ now, post, costLine: async () => '💸 어제보다 월 예상 비용 +$45.00' });
+    expect(post.mock.calls[0][0]).toMatch(/어제 1개가 생겼어요[\s\S]*\n💸 어제보다 월 예상 비용 \+\$45\.00$/);
+  });
+  it('summaryTimesOutSlowCostLine', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await appendRecords([rec('1', '2026-10-25T01:00:00Z')]);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const post = vi.fn(async (_t: string) => true);
+      let called!: () => void;
+      const started = new Promise<void>((r) => { called = r; });
+      const p = maybeSendDailySummary({ now, post, costLine: () => { called(); return new Promise<string | null>(() => {}); } });
+      await started;
+      await vi.advanceTimersByTimeAsync(20_001);
+      await p;
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(post.mock.calls[0][0]).not.toContain('💸');
+    } finally { vi.useRealTimers(); }
+  });
+});

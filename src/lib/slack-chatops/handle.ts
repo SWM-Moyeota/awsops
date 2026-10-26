@@ -38,6 +38,8 @@ export interface HandleDeps {
   tryControl?: (event: MentionEvent) => Promise<boolean>;
   /** Rule-based change-timeline answers ("누가 만들었어?"); true = handled, skip the AI. */
   tryChangeQuestion?: (event: MentionEvent) => Promise<boolean>;
+  /** Rule-based cost-change answers ("비용 왜 늘었어?"); true = handled, skip the AI. */
+  tryCostQuestion?: (event: MentionEvent) => Promise<boolean>;
 }
 
 export const CHANNEL_NOT_ALLOWED_TEXT = '이 채널에서는 AWSops에게 물어볼 수 없어요. 관리자에게 채널 추가를 요청해 주세요.';
@@ -80,6 +82,9 @@ export async function handleMention(event: MentionEvent, deps: HandleDeps): Prom
   // "누가 만들었어?" is answered from CloudTrail records, never by the AI.
   // 생성자 질문은 기록으로만 답한다 (AI 추측 금지).
   if (deps.tryChangeQuestion && await deps.tryChangeQuestion(event)) return;
+  // "비용 왜 늘었어?" is answered from snapshots + change records, never by the AI.
+  // 비용 변화 질문도 스냅샷·변경 기록으로만 답한다.
+  if (deps.tryCostQuestion && await deps.tryCostQuestion(event)) return;
 
   let messages: ChatMessage[] = [{ role: 'user', content: question }];
   if (event.thread_ts) {

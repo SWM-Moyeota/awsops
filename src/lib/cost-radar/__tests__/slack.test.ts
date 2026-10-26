@@ -1,0 +1,74 @@
+import { describe, it, expect, vi } from 'vitest';
+import { detectCostQuestion, answerCostQuestion, costSummaryLine, maybeHandleCostQuestion } from '../slack';
+import type { ExplainResponse, ExplainCause } from '../types';
+
+const cause = (over: Partial<ExplainCause> = {}): ExplainCause => ({
+  kind: 'added', accountId: '1', resourceId: 'r', name: 'moyeota-test-db', category: 'rds',
+  monthlyBefore: null, monthlyAfter: 38, impact: 38, action: 'create', actor: { kind: 'person', name: 'jiwoo' }, ...over,
+});
+const resp = (over: Partial<ExplainResponse> = {}): ExplainResponse => ({
+  mode: 'snapshot', days: 1, fromDay: '2026-10-26', accountId: '__all__', baseMonthly: 1000, currentMonthly: 1045,
+  delta: 45, causes: [cause()], unexplained: 7, notes: [], ...over,
+});
+
+describe('detectCostQuestion', () => {
+  it('detectsCostQuestions', () => {
+    for (const t of ['<@U1> 비용 왜 늘었어?', '요금 올랐어?', '<@U1> 이번 주 금액 변화 알려줘', '돈 왜 이렇게 나가', '비용 줄었어?']) expect(detectCostQuestion(t)).toBe(true);
+    for (const t of ['<@U1> 비용 레이더 링크 줘', '왜 느려?', '비용', 'EC2 뭐 있어?']) expect(detectCostQuestion(t)).toBe(false);
+  });
+});
+
+describe('answerCostQuestion', () => {
+  it('answerHasHeadlineTop3AndUnexplained', () => {
+    const causes = [1, 2, 3, 4].map((i) => cause({ name: `db-${i}<x>&`, impact: 10 * (5 - i) }));
+    const t = answerCostQuestion(resp({ causes }));
+    expect(t).toContain('+$45.00');
+    expect(t).toContain('db-1&lt;x&gt;&amp;');
+    expect(t).toContain('db-3');
+    expect(t).not.toContain('db-4');
+    expect(t).toContain('+$7.00');
+    expect(t).toContain('jiwoo님이');
+  });
+  it('handlesTimelineOnlyAndMissingActor', () => {
+    const t = answerCostQuestion(resp({ mode: 'timeline-only', delta: null, unexplained: null, baseMonthly: null, causes: [cause({ actor: undefined, impact: null })], notes: ['스냅샷이 아직 없어요'] }));
+    expect(t).toContain('스냅샷이 아직 없어요');
+    expect(t).toContain('기록 없음');
+  });
+});
+
+describe('costSummaryLine', () => {
+  it('costSummaryLineThresholdAndTimelineMode', () => {
+    expect(costSummaryLine(null)).toBeNull();
+    expect(costSummaryLine(resp({ mode: 'timeline-only' }))).toBeNull();
+    expect(costSummaryLine(resp({ delta: 0.4 }))).toBeNull();
+    expect(costSummaryLine(resp({ delta: -0.99 }))).toBeNull();
+    expect(costSummaryLine(resp())).toBe('💸 어제보다 월 예상 비용 +$45.00 — 가장 큰 원인: jiwoo님 RDS moyeota-test-db (+$38.00)');
+    expect(costSummaryLine(resp({ delta: -12.4, causes: [] }))).toBe('💸 어제보다 월 예상 비용 −$12.40');
+  });
+});
+
+describe('maybeHandleCostQuestion', () => {
+  const ev = (text: string) => ({ type: 'app_mention' as const, text, ts: '1.0', channel: 'C1' });
+  it('answersViaInjectedExplainAndIgnoresOthers', async () => {
+    const reply = vi.fn(async (_t: string) => {});
+    const explain = vi.fn(async () => resp());
+    expect(await maybeHandleCostQuestion(ev('<@U1> 비용 레이더 링크 줘'), { reply, explain })).toBe(false);
+    expect(explain).not.toHaveBeenCalled();
+    expect(await maybeHandleCostQuestion(ev('<@U1> 비용 왜 늘었어?'), { reply, explain })).toBe(true);
+    expect(explain).toHaveBeenCalledWith({ accountId: '__all__', days: 1 });
+    expect(reply.mock.calls[0][0]).toContain('+$45.00');
+  });
+  it('picksDaysFromText', async () => {
+    const reply = vi.fn(async (_t: string) => {});
+    const explain = vi.fn(async () => resp({ days: 7 }));
+    await maybeHandleCostQuestion(ev('이번 주 비용 왜 늘었어'), { reply, explain });
+    expect(explain).toHaveBeenCalledWith({ accountId: '__all__', days: 7 });
+  });
+  it('repliesWithoutDetailOnFailure', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reply = vi.fn(async (_t: string) => {});
+    const explain = vi.fn(async () => { throw Object.assign(new Error('secret'), { name: 'Boom' }); });
+    expect(await maybeHandleCostQuestion(ev('비용 왜 늘었어'), { reply, explain })).toBe(true);
+    expect(reply.mock.calls[0][0]).not.toContain('secret');
+  });
+});

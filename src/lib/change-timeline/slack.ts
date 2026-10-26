@@ -47,9 +47,12 @@ const when = (iso: string): string => `${kstDate(iso)} ${kstTime(iso)}`;
 
 interface Group { create?: ChangeRecord; del?: ChangeRecord; latest: string }
 
+const isCreateOrDelete = (r: ChangeRecord): boolean => r.kind === 'create' || r.kind === 'delete';
+
 function groupByResource(records: ChangeRecord[]): Group[] {
   const map = new Map<string, ChangeRecord[]>();
-  for (const r of records) {
+  // stop/start/modify records are not "who created/deleted" facts. / 상태 변경 기록은 생성자 답변에서 제외
+  for (const r of records.filter(isCreateOrDelete)) {
     const k = `${r.accountId}:${r.resourceType}:${r.resourceId}`;
     map.set(k, [...(map.get(k) ?? []), r]);
   }
@@ -93,7 +96,7 @@ export function answerWho(q: WhoQuestion, records: ChangeRecord[]): string {
 const kstDay = (d: Date): string => new Date(d.getTime() + KST_MS).toISOString().slice(0, 10);
 
 export function buildDailySummary(records: ChangeRecord[], dayKst: string): string | null {
-  const day = records.filter((r) => !r.failed && kstDay(new Date(r.time)) === dayKst);
+  const day = records.filter((r) => !r.failed && isCreateOrDelete(r) && kstDay(new Date(r.time)) === dayKst);
   if (day.length === 0) return null;
   const c = day.filter((r) => r.kind === 'create').length;
   const d = day.length - c;
@@ -121,12 +124,31 @@ async function postViaBot(text: string): Promise<boolean> {
   return true;
 }
 
+const COST_LINE_TIMEOUT_MS = 20_000;
+/** The cost line is optional: a failure or a slow provider must never block the summary. / 비용 줄은 선택 사항 */
+async function safeCostLine(fn: () => Promise<string | null>): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, rej) => { timer = setTimeout(() => rej(Object.assign(new Error('timeout'), { name: 'TimeoutError' })), COST_LINE_TIMEOUT_MS); }),
+    ]);
+  } catch (e) {
+    console.warn(`[change-timeline] cost line omitted (${e instanceof Error ? e.name : 'Error'})`);
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 let lastSentDay: string | undefined;
 /** Test helper: forget the in-memory sent-day guard. / 테스트용: 메모리 가드 초기화. */
 export function resetDailySummaryGuard(): void { lastSentDay = undefined; }
 
 /** At/after 09:00 KST, send yesterday's summary once. / 09:00(KST) 이후 어제 요약을 하루 한 번 보낸다. */
-export async function maybeSendDailySummary(opts: { now?: Date; post?: (text: string) => Promise<boolean> } = {}): Promise<void> {
+export async function maybeSendDailySummary(opts: {
+  now?: Date; post?: (text: string) => Promise<boolean>; costLine?: () => Promise<string | null>;
+} = {}): Promise<void> {
   const now = opts.now ?? new Date();
   const kst = new Date(now.getTime() + KST_MS);
   if (kst.getUTCHours() < 9) return;
@@ -137,7 +159,9 @@ export async function maybeSendDailySummary(opts: { now?: Date; post?: (text: st
 
   const startUtc = new Date(Date.parse(`${yesterday}T00:00:00Z`) - KST_MS);
   const endUtc = new Date(startUtc.getTime() + DAY_MS - 1);
-  const text = buildDailySummary(await readRecords(startUtc, endUtc), yesterday);
+  const base = buildDailySummary(await readRecords(startUtc, endUtc), yesterday);
+  const cost = opts.costLine ? await safeCostLine(opts.costLine) : null;
+  const text = base && cost ? `${base}\n${cost}` : base ?? cost;
   if (text) {
     let sent = false;
     try {

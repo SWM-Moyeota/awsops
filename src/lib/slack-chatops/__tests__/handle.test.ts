@@ -187,3 +187,20 @@ describe('handleMention change question', () => {
     expect(slack.calls.post).toHaveLength(0);
   });
 });
+
+describe('handleMention cost question', () => {
+  it('costQuestionSkipsAi', async () => {
+    const slack = fakeSlack();
+    const order: string[] = [];
+    const d = {
+      ...deps(slack),
+      tryControl: vi.fn(async () => { order.push('control'); return false; }),
+      tryChangeQuestion: vi.fn(async () => { order.push('change'); return false; }),
+      tryCostQuestion: vi.fn(async () => { order.push('cost'); return true; }),
+    };
+    await handleMention(ev({ text: '<@U0BOT> 비용 왜 늘었어?' }), d);
+    expect(order).toEqual(['control', 'change', 'cost']);
+    expect(d.ask).not.toHaveBeenCalled();
+    expect(slack.calls.post).toHaveLength(0);
+  });
+});

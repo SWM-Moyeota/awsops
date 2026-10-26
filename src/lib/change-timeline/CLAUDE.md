@@ -21,7 +21,7 @@
   - 모든 호출은 `src/lib/cloudtrail-access.ts`의 `cloudTrailSlot`(계정·리전당 초당 1회(1 request/s per account+region, 공유 limiter), 비용 레이더와 공유)을 거친다. 다른 계정은 `accountCredentials`로 AssumeRole한다.
   - 계정이나 리전 하나가 실패해도 나머지는 계속 돌고, 실패는 `lastError`에 남는다.
 - `loop.ts` — `ensureChangeTimelineStarted()`: `globalThis` 싱글턴으로 30초 뒤 첫 실행, 이후 10분마다 돈다. 실행이 겹치지 않고 프로덕션에서만 동작한다. `instrumentation.ts`와 `/api/changes*`가 기동한다. `setDailySummaryHook`으로 Slack 요약을 매 tick 호출한다.
-- `slack.ts` — `detectWhoQuestion`, `answerWho`, `maybeHandleChangeQuestion`(봇의 `tryChangeQuestion`, AI 앞에서 규칙으로 처리), `buildDailySummary`, `maybeSendDailySummary`(KST 09:00 이후 어제 요약을 하루 1번, 0건이면 보내지 않음, 실패하면 다음 tick에 재시도, 메모리 가드로 이중 발송 방지).
+- `slack.ts` — `detectWhoQuestion`, `answerWho`, `maybeHandleChangeQuestion`(봇의 `tryChangeQuestion`, AI 앞에서 규칙으로 처리), `buildDailySummary`, `maybeSendDailySummary`(KST 09:00 이후 어제 요약을 하루 1번, 0건이면 보내지 않음, 생성/삭제 기록만 집계(stop/start/modify 무시), 선택 `costLine`(20초 타임아웃, 실패 시 생략)을 덧붙임, 실패하면 다음 tick에 재시도, 메모리 가드로 이중 발송 방지).
 
 ## 규칙
 - AWS를 바꾸는 API를 호출하지 않는다. CloudTrail 내용·IP·자격 증명을 로그에 남기지 않고, 오류 이름만 남긴다.

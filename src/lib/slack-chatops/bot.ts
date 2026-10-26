@@ -16,7 +16,14 @@ import { appendAudit } from '@/lib/slack-control/audit';
 import { CTL_PREFIX } from '@/lib/slack-control/cards';
 import { maybeHandleChangeQuestion, maybeSendDailySummary } from '@/lib/change-timeline/slack';
 import { setDailySummaryHook } from '@/lib/change-timeline/loop';
+import { maybeHandleCostQuestion, costSummaryLine, type ExplainFn } from '@/lib/cost-radar/slack';
 import type { ThreadMessage } from './format';
+
+// INTEGRATION POINT (controller): Task 3's explainChange does not exist in this branch yet.
+// After merging Task 3, replace the body with:
+//   const { explainChange } = await import('@/lib/cost-radar/explain'); return explainChange(opts);
+// Until then the cost question replies with a generic failure and the morning cost line is omitted.
+const explainCost: ExplainFn = async () => { throw Object.assign(new Error('not wired'), { name: 'ExplainNotWired' }); };
 
 export const BOT_TOKEN_PARAM = '/ops/awsops/slack-bot-token';
 export const APP_TOKEN_PARAM = '/ops/awsops/slack-app-token';
@@ -110,6 +117,10 @@ async function connect(): Promise<void> {
     tryChangeQuestion: (event: MentionEvent) => maybeHandleChangeQuestion(event, {
       reply: async text => { await slackApi(web).postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text }); },
     }),
+    tryCostQuestion: (event: MentionEvent) => maybeHandleCostQuestion(event, {
+      reply: async text => { await slackApi(web).postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text }); },
+      explain: explainCost,
+    }),
     slack: slackApi(web),
     ask: askAwsops,
     botUserId,
@@ -170,7 +181,9 @@ async function connect(): Promise<void> {
     },
   });
   // Daily change summary rides the change-timeline ingest loop. / 일일 변경 요약은 수집 루프에 얹는다
-  setDailySummaryHook(() => maybeSendDailySummary());
+  setDailySummaryHook(() => maybeSendDailySummary({
+    costLine: async () => costSummaryLine(await explainCost({ accountId: '__all__', days: 1 })),
+  }));
   console.log(`[slack-chatops] connected as ${auth.user ?? botUserId} (Socket Mode)`);
 }
 
