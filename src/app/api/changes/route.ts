@@ -1,6 +1,7 @@
 // GET /api/changes — change timeline (who created / deleted which resource), read from the local JSON store.
 // 변경 기록 조회 — 누가 어떤 리소스를 만들고 지웠는지 (로컬 JSON 저장소에서 읽는다).
 import { NextRequest, NextResponse } from 'next/server';
+import { ensureChangeTimelineStarted } from '@/lib/change-timeline/loop';
 import { queryChanges } from '@/lib/change-timeline/query';
 import { TRACKED, eventNamesFor } from '@/lib/change-timeline/catalog';
 import type { ChangeKind, ChangesQuery, RangeId, ResourceType, TrackedRegion } from '@/lib/change-timeline/types';
@@ -17,6 +18,7 @@ const MAX_TEXT = 200;
 const bad = (error: string) => NextResponse.json({ error }, { status: 400, headers: HEADERS });
 
 export async function GET(request: NextRequest) {
+  ensureChangeTimelineStarted();
   const p = request.nextUrl.searchParams;
   const accountId = p.get('accountId') || '__all__';
   const range = (p.get('range') || '7d') as RangeId;

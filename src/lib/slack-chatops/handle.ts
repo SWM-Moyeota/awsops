@@ -36,6 +36,8 @@ export interface HandleDeps {
   allowedChannels?: () => string[] | undefined;
   /** Approval-gated control commands (src/lib/slack-control); true = handled, skip the AI. */
   tryControl?: (event: MentionEvent) => Promise<boolean>;
+  /** Rule-based change-timeline answers ("누가 만들었어?"); true = handled, skip the AI. */
+  tryChangeQuestion?: (event: MentionEvent) => Promise<boolean>;
 }
 
 export const CHANNEL_NOT_ALLOWED_TEXT = '이 채널에서는 AWSops에게 물어볼 수 없어요. 관리자에게 채널 추가를 요청해 주세요.';
@@ -75,6 +77,9 @@ export async function handleMention(event: MentionEvent, deps: HandleDeps): Prom
   // Control commands ("k8s-practice 꺼줘") never reach the AI — they go through the two-step approval.
   // 제어 명령은 AI로 보내지 않고 2단계 승인 흐름으로 처리한다.
   if (deps.tryControl && await deps.tryControl(event)) return;
+  // "누가 만들었어?" is answered from CloudTrail records, never by the AI.
+  // 생성자 질문은 기록으로만 답한다 (AI 추측 금지).
+  if (deps.tryChangeQuestion && await deps.tryChangeQuestion(event)) return;
 
   let messages: ChatMessage[] = [{ role: 'user', content: question }];
   if (event.thread_ts) {

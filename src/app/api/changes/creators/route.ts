@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ensureHealthMonitorStarted } from '@/lib/health/monitor';
+import { ensureChangeTimelineStarted } from '@/lib/change-timeline/loop';
 import { findCreators } from '@/lib/change-timeline/query';
 
 export const dynamic = 'force-dynamic';
@@ -24,6 +25,7 @@ function parseIds(raw: string | null): { key: string; createdAt?: string }[] {
 
 export async function GET(request: NextRequest) {
   ensureHealthMonitorStarted();
+  ensureChangeTimelineStarted();
   try {
     const items = parseIds(request.nextUrl.searchParams.get('ids'));
     return NextResponse.json(await findCreators(items), { headers: HEADERS });

@@ -1630,7 +1630,7 @@
   "changes.range.7d": "7일",
   "changes.range.30d": "30일",
   "changes.range.90d": "90일",
-  "changes.range.all": "전체",
+  "changes.range.all": "전체 기간",
   "changes.kindAll": "전체",
   "changes.kindCreate": "생성",
   "changes.kindDelete": "삭제",

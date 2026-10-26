@@ -14,6 +14,8 @@ import { maybeHandleControlMention, handleControlAction, getControlConfig, type 
 import { listControllableInstances, describeControllable, executeControl } from '@/lib/slack-control/ec2';
 import { appendAudit } from '@/lib/slack-control/audit';
 import { CTL_PREFIX } from '@/lib/slack-control/cards';
+import { maybeHandleChangeQuestion, maybeSendDailySummary } from '@/lib/change-timeline/slack';
+import { setDailySummaryHook } from '@/lib/change-timeline/loop';
 import type { ThreadMessage } from './format';
 
 export const BOT_TOKEN_PARAM = '/ops/awsops/slack-bot-token';
@@ -105,6 +107,9 @@ async function connect(): Promise<void> {
   };
   const deps = {
     tryControl: (event: MentionEvent) => maybeHandleControlMention(event, control),
+    tryChangeQuestion: (event: MentionEvent) => maybeHandleChangeQuestion(event, {
+      reply: async text => { await slackApi(web).postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text }); },
+    }),
     slack: slackApi(web),
     ask: askAwsops,
     botUserId,
@@ -164,6 +169,8 @@ async function connect(): Promise<void> {
       return { ts: r.ts };
     },
   });
+  // Daily change summary rides the change-timeline ingest loop. / 일일 변경 요약은 수집 루프에 얹는다
+  setDailySummaryHook(() => maybeSendDailySummary());
   console.log(`[slack-chatops] connected as ${auth.user ?? botUserId} (Socket Mode)`);
 }
 

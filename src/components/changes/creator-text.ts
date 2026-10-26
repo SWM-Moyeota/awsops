@@ -1,16 +1,6 @@
 // "만든 사람" 문구 — 배지와 테스트가 함께 쓰는 순수 함수.
-import type { CreatorLookup, ToolId } from '@/lib/change-timeline/types';
-
-// TODO(integration): replace with toolLabel from ./format
-export function toolLabel(tool: ToolId, via?: string): string {
-  const names: Record<ToolId, string> = {
-    console: '콘솔', cli: 'CLI', terraform: 'Terraform', sdk: 'SDK',
-    cloudformation: 'CloudFormation', autoscaling: 'Auto Scaling', other: '기타',
-  };
-  const base = names[tool];
-  if (via && via.replace(/\s/g, '').toLowerCase() !== base.replace(/\s/g, '').toLowerCase()) return `${via} 통해`;
-  return base;
-}
+import type { CreatorLookup } from '@/lib/change-timeline/types';
+import { toolLabel } from './format';
 
 export function monthDay(iso?: string): string {
   if (!iso) return '';

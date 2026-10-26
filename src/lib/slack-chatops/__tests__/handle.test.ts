@@ -176,3 +176,14 @@ describe('handleAnalyzeClick', () => {
     expect(d.ask).not.toHaveBeenCalled();
   });
 });
+
+describe('handleMention change question', () => {
+  it('changeQuestionSkipsAi', async () => {
+    const slack = fakeSlack();
+    const d = { ...deps(slack), tryChangeQuestion: vi.fn(async () => true) };
+    await handleMention(ev({ text: '<@U0BOT> moyeota-media 누가 만들었어?' }), d);
+    expect(d.tryChangeQuestion).toHaveBeenCalledTimes(1);
+    expect(d.ask).not.toHaveBeenCalled();
+    expect(slack.calls.post).toHaveLength(0);
+  });
+});

@@ -1538,7 +1538,7 @@
   "changes.range.7d": "7天",
   "changes.range.30d": "30天",
   "changes.range.90d": "90天",
-  "changes.range.all": "全部",
+  "changes.range.all": "全部时间",
   "changes.kindAll": "全部",
   "changes.kindCreate": "创建",
   "changes.kindDelete": "删除",
