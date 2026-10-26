@@ -1,88 +1,20 @@
-// JSON (non-streaming) pipeline — moved verbatim from route.ts
-// JSON(비스트리밍) 파이프라인 — route.ts에서 그대로 옮김
+// JSON (non-streaming) pipeline / JSON(비스트리밍) 파이프라인
+// Handler bodies live in steps/ (handleSingleRoute = their JSON variant). This file keeps only the JSON
+// fall-through: single route → Bedrock fallback; multi-route → 0 / 1 / many successes.
+// 처리기 본문은 steps/에 있다. 여기에는 JSON 경로의 폴백 순서만 남긴다.
 import { NextResponse } from 'next/server';
-import { InvokeModelCommand } from '@aws-sdk/client-bedrock-runtime';
 import { getBedrockModelLabel } from '@/lib/app-config';
-import { resolveModelId, rawModelId } from './models';
-import { bedrockClient } from './clients';
-import { ROUTE_REGISTRY, type RouteType } from './registry';
+import { resolveModelId } from './models';
 import { getSystemPrompt, SYNTHESIS_PROMPT_SUFFIX } from './prompts';
-import { buildStatus } from './status';
 import { invokeText } from './bedrock';
-import { extractUsedTools } from './tools';
 import { classifyIntent } from './classify';
-import { invokeAgentCore } from './agentcore';
 import type { PipelineInput } from './pipeline-input';
-import type { StepCtx } from './steps/types';
-import { codeStep } from './steps/code';
-import { topologyStep } from './steps/topology';
-import { sqlStep } from './steps/sql';
-import { datasourceStep } from './steps/datasource';
-import { autoCollectStep } from './steps/auto-collect';
-
-// ============================================================================
-// Single route handler / 단일 라우트 핸들러
-// ============================================================================
-// JSON variant of every step: no events (emit is a no-op), InvokeModel (invokeText).
-// JSON 변형: 이벤트 없음(emit 무동작), InvokeModel(invokeText). 스트림 멀티 라우트 참여자도 이것을 쓴다.
-export async function handleSingleRoute(
-  route: RouteType, input: PipelineInput,
-): Promise<{ content: string; via: string; queriedResources: string[]; usedTools?: string[] } | null> {
-  const { messages, modelKey, lang, accountId, accountAlias, requestId } = input;
-  const SYSTEM_PROMPT = getSystemPrompt(lang);
-  const config = ROUTE_REGISTRY[route];
-  const ctx: StepCtx = {
-    route, messages, lang, accountId, accountAlias, requestId,
-    systemPrompt: SYSTEM_PROMPT, status: buildStatus(lang), emit: () => {}, llm: invokeText,
-  };
-
-  // Code handler / 코드 핸들러
-  if (config.handler === 'code') {
-    return codeStep(ctx, { variant: 'json', modelId: resolveModelId(modelKey) });
-  }
-
-  // SQL handler — on failure falls through to the gateway below / SQL 핸들러 — 실패하면 아래 gateway로
-  if (config.handler === 'sql') {
-    const r = await sqlStep(ctx, { modelId: resolveModelId(modelKey), emptyContent: '', withSqlTools: false });
-    if (r) return r;
-  }
-
-  // Topology View handler (non-streaming, for multi-route participation)
-  // 토폴로지뷰 핸들러 (비스트리밍, 멀티 라우트 참여용)
-  if (config.handler === 'topology') {
-    return topologyStep(ctx, { isEn: lang === 'en' });
-  }
-
-  // Datasource handler (non-streaming, for multi-route participation)
-  // 데이터소스 핸들러 (비스트리밍, 멀티 라우트 참여용) — 실패하면 null → 단일 라우트는 Bedrock 폴백
-  if (config.handler === 'datasource') {
-    return datasourceStep(ctx, { variant: 'json', modelId: rawModelId(modelKey), emptyContent: '' });
-  }
-
-  // Auto-collect handler (non-streaming, for multi-route participation) — any error → null
-  // 자동 수집 핸들러 (비스트리밍, 멀티 라우트 참여용) — 오류면 null
-  if (config.handler === 'auto-collect') {
-    try {
-      return await autoCollectStep(ctx, { isEn: true, modelId: rawModelId(modelKey) });
-    } catch {
-      return null;
-    }
-  }
-
-  // AgentCore Gateway / AgentCore 게이트웨이
-  const gateway = config.gateway || 'ops';
-  const agentResponse = await invokeAgentCore(messages, gateway, accountId, accountAlias, config.skill, requestId);
-  if (agentResponse) {
-    const usedTools = extractUsedTools(agentResponse);
-    const cleaned = agentResponse.replace(/<tool_call>[\s\S]*?<\/tool_call>\s*/g, '').replace(/<tool_response>[\s\S]*?<\/tool_response>\s*/g, '').trim();
-    return { content: cleaned || agentResponse, via: `AgentCore → ${config.display}`, queriedResources: [`${gateway}-gateway`], usedTools };
-  }
-  return null;
-}
+import { recentMessages } from './steps/types';
+import { handleSingleRoute } from './steps/single-route';
 
 // ============================================================================
 // Synthesize multi-route responses / 멀티 라우트 응답 합성
-// Non-streaming version for handleNonStreaming / 비스트리밍용
+// Non-streaming version for handleNonStreaming / 비스트리밍용 (InvokeModel)
 // ============================================================================
 async function synthesizeResponses(
   question: string, responses: { route: string; content: string; via: string }[], modelKey?: string, lang?: string
@@ -90,20 +22,14 @@ async function synthesizeResponses(
   const SYSTEM_PROMPT = getSystemPrompt(lang);
   const modelId = resolveModelId(modelKey);
   const parts = responses.map(r => `--- ${r.via} ---\n${r.content}`).join('\n\n');
-  const body = JSON.stringify({
-    anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: 4096,
+  const result = await invokeText({
+    modelId,
     system: SYSTEM_PROMPT + SYNTHESIS_PROMPT_SUFFIX,
     messages: [
       { role: 'user', content: `Question: ${question}\n\nMultiple agents responded:\n\n${parts}\n\nPlease synthesize into one comprehensive answer.` },
     ],
   });
-  const response = await bedrockClient.send(new InvokeModelCommand({
-    modelId, contentType: 'application/json', accept: 'application/json',
-    body: new TextEncoder().encode(body),
-  }));
-  const result = JSON.parse(new TextDecoder().decode(response.body));
-  return result.content?.[0]?.text || responses.map(r => r.content).join('\n\n---\n\n');
+  return result.content || responses.map(r => r.content).join('\n\n---\n\n');
 }
 
 // ============================================================================
@@ -116,7 +42,6 @@ export async function handleNonStreaming(input: PipelineInput) {
     const classifyResult = await classifyIntent(messages);
     const routes = classifyResult.routes;
     const primaryRoute = routes[0];
-    const _primaryConfig = ROUTE_REGISTRY[primaryRoute];
 
     // Single route (most common) / 단일 라우트 (일반적)
     if (routes.length === 1) {
@@ -129,18 +54,11 @@ export async function handleNonStreaming(input: PipelineInput) {
         });
       }
       // Fallback / 폴백
-      const modelId = resolveModelId(modelKey);
-      const body = JSON.stringify({
-        anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: SYSTEM_PROMPT,
-        messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })),
+      const fallbackResult = await invokeText({
+        modelId: resolveModelId(modelKey), system: SYSTEM_PROMPT, messages: recentMessages(messages),
       });
-      const response = await bedrockClient.send(new InvokeModelCommand({
-        modelId, contentType: 'application/json', accept: 'application/json',
-        body: new TextEncoder().encode(body),
-      }));
-      const fallbackResult = JSON.parse(new TextDecoder().decode(response.body));
       return NextResponse.json({
-        content: fallbackResult.content?.[0]?.text || 'No response', model: getBedrockModelLabel(),
+        content: fallbackResult.content || 'No response', model: getBedrockModelLabel(),
         via: `Bedrock Direct (fallback)`, queriedResources: [], route: primaryRoute, routes,
       });
     }

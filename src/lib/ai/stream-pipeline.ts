@@ -1,5 +1,8 @@
-// SSE streaming pipeline — moved verbatim from route.ts (the ReadableStream body of POST)
-// SSE 스트리밍 파이프라인 — route.ts POST의 ReadableStream 본문을 그대로 옮김
+// SSE streaming pipeline — the ReadableStream body of POST
+// SSE 스트리밍 파이프라인 — route.ts POST의 ReadableStream 본문
+// Handler bodies live in steps/ (stream variant: real emit, streamText). This file keeps the stream-only parts:
+// fall-through order, 15 s keepalives, recordAndSave, token totals in `done`, status timing, multi-route + fallbacks.
+// 처리기 본문은 steps/에 있다. 여기에는 스트림 경로의 폴백 순서·keepalive·recordAndSave·토큰 합계만 남긴다.
 import { ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
 import { getBedrockModelLabel } from '@/lib/app-config';
 import { resolveModelId } from './models';
@@ -11,8 +14,6 @@ import { sseEvent, simulateStreaming, streamBedrockToSSE } from './sse';
 import { streamText } from './bedrock';
 import { recordAndSave } from './stats';
 import { classifyIntent } from './classify';
-import { invokeAgentCore } from './agentcore';
-import { handleSingleRoute } from './json-pipeline';
 import type { StreamPipelineInput } from './pipeline-input';
 import type { StepCtx, StepResult } from './steps/types';
 import { codeStep } from './steps/code';
@@ -20,12 +21,14 @@ import { topologyStep } from './steps/topology';
 import { sqlStep } from './steps/sql';
 import { datasourceStep } from './steps/datasource';
 import { autoCollectStep } from './steps/auto-collect';
+import { gatewayStep } from './steps/gateway';
+import { handleSingleRoute } from './steps/single-route';
 
 // Former POST-scope closure variables arrive through `input` under their old names.
 // 예전 POST 스코프의 클로저 변수는 `input`으로 받아 원래 이름 그대로 쓴다.
 export function runStreaming(input: StreamPipelineInput): ReadableStream {
   const {
-    messages, modelKey, lang: clientLang, accountId, accountAlias, account, requestId,
+    messages, modelKey, lang: clientLang, accountId, accountAlias, requestId,
     user: currentUser, status: STATUS, systemPrompt: SYSTEM_PROMPT, isEn,
   } = input;
 
@@ -233,26 +236,15 @@ export function runStreaming(input: StreamPipelineInput): ReadableStream {
           send('status', { step: 'agentcore', message: STATUS.agentcoreProgress(config.display, keepaliveCount * 15) });
         }, 15000);
 
-        const agentResponse = await invokeAgentCore(messages, gateway, accountId, account?.alias, config.skill, requestId);
+        const r = await gatewayStep(ctx);
         clearInterval(keepaliveInterval);
 
-        if (agentResponse) {
-          const usedTools = extractUsedTools(agentResponse);
-          const cleanedResponse = agentResponse
-            .replace(/<tool_call>[\s\S]*?<\/tool_call>\s*/g, '')
-            .replace(/<tool_response>[\s\S]*?<\/tool_response>\s*/g, '')
-            .trim();
+        if (r) {
           const responseTimeMs = Date.now() - callStartTime;
-          const finalContent = cleanedResponse || agentResponse;
           // Simulate streaming for AgentCore responses / AgentCore 응답 타이핑 시뮬레이션
-          await simulateStreaming(finalContent, send);
-          recordAndSave({ route, gateway, responseTimeMs, usedTools, success: true, via: `AgentCore → ${config.display}`, question: lastMessage, summary: finalContent, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
-          send('done', {
-            content: finalContent, model: getBedrockModelLabel(),
-            via: `AgentCore → ${config.display}`, queriedResources: [`${gateway}-gateway`], route, routes,
-            usedTools,
-            inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
-          });
+          await simulateStreaming(r.content, send);
+          recordAndSave({ route, gateway, responseTimeMs, usedTools: r.usedTools, success: true, via: r.via, question: lastMessage, summary: r.content, userId: currentUser.email, inputTokens: totalInputTokens, outputTokens: totalOutputTokens, model: getBedrockModelLabel() });
+          sendDone(r, true);
           controller.close();
           return;
         }

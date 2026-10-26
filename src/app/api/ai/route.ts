@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Streaming mode: SSE events / 스트리밍 모드: SSE 이벤트
-  const readable = runStreaming({ ...input, account, status: STATUS, systemPrompt: SYSTEM_PROMPT, isEn });
+  const readable = runStreaming({ ...input, status: STATUS, systemPrompt: SYSTEM_PROMPT, isEn });
 
   return new Response(readable, {
     headers: {
