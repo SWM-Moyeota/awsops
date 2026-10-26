@@ -94,3 +94,6 @@ data/health-status.json
 # cost radar runtime data
 data/cost-radar/
 data/slack-control/
+
+data/change-timeline/
+.superpowers/

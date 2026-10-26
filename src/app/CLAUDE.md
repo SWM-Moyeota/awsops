@@ -3,7 +3,7 @@
 ## 역할
 Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 라우트 세그먼트.
 
-## 페이지 (43개)
+## 페이지 (44개)
 
 ### Overview (5)
 - `page.tsx` — 대시보드 홈 (20 StatsCards, Cost 가용성 감지, 인벤토리 스냅샷, 캐시 워머 상태 바)
@@ -64,7 +64,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `security/page.tsx` — Public S3, Open SG, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 벤치마크
 
-## API 라우트 (24개)
+## API 라우트 (26개)
 
 | API | 설명 |
 |-----|------|
@@ -88,6 +88,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 | `api/health/route.ts` | 헬스 모니터 상태 조회(GET, 모니터 기동) + 테스트 알림/즉시 점검(POST, admin 전용) |
 | `api/cost-radar/route.ts` | 비용 레이더 — 월 비용 추정 + 정리 추천 + 7일 추세 (`?accountId=<12자리\|__all__>`, 5분 캐시, 잘못된 ID 400) |
 | `api/cost-radar/creators/route.ts` | 리소스 생성자 조회 (`?ids=계정:리전:리소스ID,...` 최대 50개, CloudTrail) |
+| `api/changes/creators/route.ts` | 리소스별 만든 사람 (`?ids=계정:리소스ID[|생성시각ISO],...` 최대 200개, 잘못된 형식 400) — S3·EC2·RDS 목록 배지용 |
 | `api/changes/route.ts` | 변경 기록 조회 (`?accountId=<12자리\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`, 잘못된 계정·기간·종류·서비스 400, 500은 오류 이름만, `no-store`) |
 | `api/inventory/export/route.ts` | 인벤토리 XLSX 내보내기 (리소스별 시트 + Summary) |
 | `api/diagram/route.ts` | 2D 다이어그램 PNG 생성 (라이브 쿼리 → Python 렌더러) |
@@ -108,7 +109,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 ## Role
 Next.js 14 App Router pages and API routes. Each subdirectory is a route segment.
 
-## Pages (43)
+## Pages (44)
 
 ### Overview (5)
 - `page.tsx` — Dashboard home (20 StatsCards, Cost availability detection, inventory snapshot, cache warmer status)
@@ -169,7 +170,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `security/page.tsx` — Public S3, Open SGs, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 benchmarks (431 controls)
 
-## API Routes (24)
+## API Routes (26)
 
 | API | Description |
 |-----|------------|
@@ -193,6 +194,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 | `api/health/route.ts` | Health monitor status (GET, starts the monitor) + test alert / run-now (POST, admin-only) |
 | `api/cost-radar/route.ts` | Cost Radar — monthly cost estimate + cleanup recommendations + 7-day trend (`?accountId=<12-digit\|__all__>`, 5-min cache, 400 on invalid id) |
 | `api/cost-radar/creators/route.ts` | Resource creator lookup (`?ids=account:region:resourceId,...`, max 50, CloudTrail) |
+| `api/changes/creators/route.ts` | Creator per resource (`?ids=account:resourceId[|createdAtISO],...`, max 200, 400 on bad format) — badges on S3/EC2/RDS lists |
 | `api/changes/route.ts` | Change timeline (`?accountId=<12-digit\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`; 400 on bad account/range/kind/type, 500 carries the error name only, `no-store`) |
 | `api/inventory/export/route.ts` | Inventory XLSX export (one sheet per resource type + Summary) |
 | `api/diagram/route.ts` | 2D diagram PNG generation (live queries -> Python renderer) |

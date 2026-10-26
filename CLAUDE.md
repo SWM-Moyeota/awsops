@@ -21,11 +21,11 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 ## 현황 (v1.8.0)
 | 항목 | 수치 |
 |------|------|
-| 페이지 | 43 (/cost-radar 추가) |
-| 라우트 | 67 (페이지 43 + API 24) |
+| 페이지 | 44 (/changes 추가) |
+| 라우트 | 70 (페이지 44 + API 26) |
 | SQL 쿼리 파일 | 25 |
-| API 라우트 | 24 (cost-radar, cost-radar/creators 추가) |
-| 컴포넌트 | 25 (cost-radar 4종 + CostRadarSummaryCard 추가) |
+| API 라우트 | 26 (changes, changes/creators 추가) |
+| 컴포넌트 | 31 (changes 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 11 (datasource 라우트 추가) |
 | ADR | 10 (001-010) |
@@ -111,8 +111,10 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `cost-radar/` — 비용 레이더 (내장 서울 가격표로 월 비용 추정 + 정리 추천, 안내만) — `src/lib/cost-radar/CLAUDE.md`
 - `slack-chatops/` — Slack에서 `@AWSops`로 AI에게 묻기 (Socket Mode, 공개 URL 불필요) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Slack 2단계 승인으로 EC2 켜기/끄기/재부팅 (AI 미경유, 태그 조건 IAM) — `src/lib/slack-control/CLAUDE.md`
+- `change-timeline/` — 변경 기록: 누가 어떤 리소스를 만들고 지웠는지 (CloudTrail 90일 백필 + 10분 증분, `/changes`·만든 사람 배지·Slack) — `src/lib/change-timeline/CLAUDE.md`
+- `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 600ms) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
-### API 라우트 (`src/app/api/`, 24개 — 전체 목록은 `src/app/CLAUDE.md`)
+### API 라우트 (`src/app/api/`, 26개 — 전체 목록은 `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI 라우팅 (11 routes, 멀티 라우트, SSE 스트리밍, 도구 추론, datasource 라우트)
 - `steampipe/route.ts` — Steampipe 쿼리 + Cost 가용성 + 인벤토리 (POST/GET/PUT)
 - `auth/route.ts` — 로그아웃 (HttpOnly 쿠키 서버 사이드 삭제)
@@ -132,6 +134,8 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `notification/route.ts` — SNS 이메일 알림 (토픽/구독 관리, 진단 완료 알림)
 - `cost-radar/route.ts` — 비용 레이더 (월 비용 추정 + 정리 추천 + 7일 추세, 5분 캐시)
 - `cost-radar/creators/route.ts` — 리소스 생성자 조회 (CloudTrail, 최대 50개)
+- `changes/route.ts` — 변경 기록 조회 (기간·종류·사람·서비스·검색 필터, 요약 문장용 숫자, 수집 상태)
+- `changes/creators/route.ts` — 리소스별 만든 사람 (`?ids=계정:리소스ID[|생성시각]`, 최대 200개)
 
 ### 인프라
 - `infra-cdk/lib/awsops-stack.ts` — CDK 인프라 (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
@@ -231,11 +235,11 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 ## Stats (v1.8.0)
 | Item | Count |
 |------|-------|
-| Pages | 43 (incl. /cost-radar) |
-| Routes | 67 (43 pages + 24 APIs) |
+| Pages | 44 (incl. /changes) |
+| Routes | 70 (44 pages + 26 APIs) |
 | SQL Query Files | 25 |
-| API Routes | 24 (incl. cost-radar, cost-radar/creators) |
-| Components | 25 (incl. 4 cost-radar components + CostRadarSummaryCard) |
+| API Routes | 26 (incl. changes, changes/creators) |
+| Components | 31 (incl. 6 changes components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 11 (incl. datasource route) |
 | ADRs | 10 (001-010) |
@@ -319,8 +323,10 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 - `cost-radar/` — Cost Radar (monthly estimate from a bundled Seoul price table + cleanup recommendations, guidance only) — `src/lib/cost-radar/CLAUDE.md`
 - `slack-chatops/` — Ask the AI from Slack via `@AWSops` (Socket Mode, no public URL) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Two-step-approved EC2 start/stop/reboot from Slack (no AI, tag-conditioned IAM) — `src/lib/slack-control/CLAUDE.md`
+- `change-timeline/` — Change timeline: who created/deleted which resource (CloudTrail 90-day backfill + 10-min incremental; `/changes`, creator badges, Slack) — `src/lib/change-timeline/CLAUDE.md`
+- `cloudtrail-access.ts` — Shared CloudTrail pacing (600 ms per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
-### API Routes (`src/app/api/`, 24 routes — full list in `src/app/CLAUDE.md`)
+### API Routes (`src/app/api/`, 26 routes — full list in `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI routing (11 routes, multi-route, SSE streaming, tool inference, datasource route)
 - `steampipe/route.ts` — Steampipe queries + Cost availability + Inventory (POST/GET/PUT)
 - `auth/route.ts` — Logout (server-side HttpOnly cookie deletion)
@@ -340,6 +346,8 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 - `notification/route.ts` — SNS email notifications (topic/subscription management, diagnosis completion alerts)
 - `cost-radar/route.ts` — Cost Radar (monthly cost estimate + cleanup recommendations + 7-day trend, 5-min cache)
 - `cost-radar/creators/route.ts` — Resource creator lookup (CloudTrail, max 50)
+- `changes/route.ts` — Change timeline (range/kind/actor/type/search filters, summary numbers, ingest status)
+- `changes/creators/route.ts` — Creator per resource (`?ids=account:resourceId[|createdAt]`, max 200)
 
 ### Infrastructure
 - `infra-cdk/lib/awsops-stack.ts` — CDK infra (VPC, EC2, ALB, ACM, Route 53, nginx user-data)

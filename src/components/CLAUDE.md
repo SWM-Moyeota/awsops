@@ -32,6 +32,7 @@
 - `changes/ChangeTimelineView.tsx` — `/changes` 본문 (요약 문장, 칩 필터, 검색, 날짜별 목록, 상태 줄, 빈·오류·로딩 상태)
 - `changes/ChangeSummary.tsx` · `ChangeFilters.tsx` · `ChangeRow.tsx` · `ChangeDetailPanel.tsx` — 숫자 카드, 칩·검색칸, 한 줄 문장, 상세 패널 (같은 리소스 기록 지연 조회, 콘솔 링크)
 - `changes/format.ts` — 문장(받침에 맞춘 을/를·이/가), KST 시각, 날짜 묶음, 도구 이름 `toolLabel(tool, via?)`, 콘솔 링크 — 다른 화면·Slack이 재사용
+- `changes/CreatorBadge.tsx` + `useCreators.ts` + `creator-text.ts`/`creator-batch.ts` — S3·EC2·RDS 목록의 "○○님이 만들었어요" 배지 (50개씩 묶어 `/api/changes/creators` 조회, 깨진 시각은 날짜 없이 조회)
 
 ### charts/ — Recharts 차트 래퍼 (3)
 - `charts/BarChartCard.tsx` — 바 차트
