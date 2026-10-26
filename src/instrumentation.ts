@@ -10,7 +10,11 @@ export async function register() {
     void startSlackChatops();
     // Change timeline: CloudTrail ingest loop (production only, never throws).
     // 변경 기록: CloudTrail 수집 루프 (프로덕션 전용).
-    const { ensureChangeTimelineStarted } = await import('./lib/change-timeline/loop');
-    ensureChangeTimelineStarted();
+    try {
+      const { ensureChangeTimelineStarted } = await import('./lib/change-timeline/loop');
+      ensureChangeTimelineStarted();
+    } catch (e) {
+      console.error('[change-timeline] start failed:', e instanceof Error ? e.name : 'Error');
+    }
   }
 }

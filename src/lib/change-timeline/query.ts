@@ -13,7 +13,7 @@ const HOURS: Record<Exclude<RangeId, 'all'>, number> = { '24h': 24, '7d': 168, '
 export interface QueryDeps {
   read?: typeof readRecords;
   state?: typeof readState;
-  /** Tracked event names for a region; wired to the catalog later. / 리전별 추적 이벤트 이름 (나중에 catalog 연결). */
+  /** Tracked event names for a region; defaults to the catalog. / 리전별 추적 이벤트 이름 (기본값은 catalog). */
   namesFor?: (region: string) => string[];
 }
 

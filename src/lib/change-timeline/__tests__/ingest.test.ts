@@ -21,7 +21,7 @@ function fake(over?: (c: Call) => ReturnType<LookupFn> | undefined) {
     calls.push(c);
     const o = over?.(c);
     if (o) return o;
-    if (c[1] === 'ap-northeast-2' && (c[2].eventName === 'CreateBucket' || c[2].readOnlyFalse)) {
+    if (c[1] === 'ap-northeast-2' && c[2].eventName === 'CreateBucket') {
       return { events: [{ CloudTrailEvent: fx('CreateBucket') }] };
     }
     return { events: [] };
@@ -35,14 +35,14 @@ describe('ingestOnce', () => {
     const r = await ingestOnce({ lookup: fn, now: NOW, accounts: [A] });
     const ap = calls.filter((c) => c[1] === 'ap-northeast-2');
     const us = calls.filter((c) => c[1] === 'us-east-1');
-    expect(ap.filter((c) => c[2].eventName).map((c) => c[2].eventName)).toEqual(eventNamesFor('ap-northeast-2'));
-    expect(us.filter((c) => c[2].eventName).map((c) => c[2].eventName)).toEqual(eventNamesFor('us-east-1'));
-    expect(ap[ap.length - 1][2].readOnlyFalse).toBe(true);
-    expect(calls.findIndex((c) => c[1] === 'us-east-1')).toBeGreaterThan(calls.findIndex((c) => c[2].readOnlyFalse && c[1] === 'ap-northeast-2'));
+    expect(ap.map((c) => c[2].eventName)).toEqual(eventNamesFor('ap-northeast-2'));
+    expect(us.map((c) => c[2].eventName)).toEqual(eventNamesFor('us-east-1'));
+    expect(calls.findIndex((c) => c[1] === 'us-east-1')).toBeGreaterThan(calls.findIndex((c) => c[1] === 'ap-northeast-2'));
+    expect(ap.every((c) => c[2].start.getTime() === NOW.getTime() - 90 * 86_400_000)).toBe(true);
     expect(r.added).toBe(1);
     const st = (await readState()).accounts[`${A}:ap-northeast-2`];
     expect(st.backfillDone).toEqual(eventNamesFor('ap-northeast-2'));
-    expect(new Date(st.backfillFrom).getTime()).toBe(NOW.getTime() - 90 * 86_400_000);
+    expect(st.lastTo).toBe(NOW.toISOString());
   });
 
   it('backfillResumesFromState', async () => {
@@ -58,7 +58,10 @@ describe('ingestOnce', () => {
     const second = fake();
     await ingestOnce({ lookup: second.fn, now: NOW, accounts: [A] });
     const asked = second.calls.filter((c) => c[1] === 'ap-northeast-2' && c[2].eventName).map((c) => c[2].eventName);
-    expect(asked).toEqual(names.slice(2));
+    // unfinished names are backfilled; the two finished ones only get the short incremental window
+    expect(asked).toEqual([...names.slice(2), ...names.slice(0, 2)]);
+    const inc = second.calls.filter((c) => c[1] === 'ap-northeast-2').slice(-2);
+    expect(inc.every((c) => c[2].start.getTime() === NOW.getTime() - 20 * 60_000)).toBe(true);
   });
 
   it('incrementalUsesOverlapAndDedupes', async () => {
@@ -67,10 +70,9 @@ describe('ingestOnce', () => {
     const later = new Date(NOW.getTime() + 600_000);
     const g = fake();
     expect((await ingestOnce({ lookup: g.fn, now: later, accounts: [A] })).added).toBe(0);
-    const inc = g.calls.find((c) => c[1] === 'ap-northeast-2' && c[2].readOnlyFalse)!;
-    expect(inc[2].start.getTime()).toBe(NOW.getTime() - 20 * 60_000);
-    expect(inc[2].end.getTime()).toBe(later.getTime());
-    expect(g.calls.some((c) => c[2].eventName)).toBe(false);
+    const ap = g.calls.filter((c) => c[1] === 'ap-northeast-2');
+    expect(ap.map((c) => c[2].eventName)).toEqual(eventNamesFor('ap-northeast-2'));
+    expect(ap.every((c) => c[2].start.getTime() === NOW.getTime() - 20 * 60_000 && c[2].end.getTime() === later.getTime())).toBe(true);
   });
 
   it('oneAccountFailureDoesNotStopOthers', async () => {
@@ -98,10 +100,45 @@ describe('ingestOnce', () => {
     expect(cb.map((c) => c[2].nextToken)).toEqual([undefined, 't1']);
   });
 
-  it('incrementalHonoursMaxPages', async () => {
-    const f = fake((c) => (c[2].readOnlyFalse ? Promise.resolve({ events: [], nextToken: 'more' }) : undefined));
-    await ingestOnce({ lookup: f.fn, now: NOW, accounts: [A], maxPagesPerCall: 3 });
-    expect(f.calls.filter((c) => c[1] === 'ap-northeast-2' && c[2].readOnlyFalse).length).toBe(3);
+  it('incrementalPagesEveryNameFullyWithoutTruncation', async () => {
+    await ingestOnce({ lookup: fake().fn, now: NOW, accounts: [A] });
+    const later = new Date(NOW.getTime() + 600_000);
+    let pages = 0;
+    const f = fake((c) => {
+      if (c[1] === 'ap-northeast-2' && c[2].eventName === 'CreateBucket') {
+        pages++;
+        return Promise.resolve({ events: [], nextToken: pages < 60 ? `t${pages}` : undefined });
+      }
+      return undefined;
+    });
+    await ingestOnce({ lookup: f.fn, now: later, accounts: [A] });
+    expect(pages).toBe(60);
+    expect((await readState()).accounts[`${A}:ap-northeast-2`].lastTo).toBe(later.toISOString());
+  });
+
+  it('usEastIncrementalAsksOnlyIamNamesAndIgnoresOtherEvents', async () => {
+    const f = fake((c) => (c[1] === 'us-east-1' ? Promise.resolve({ events: [{ CloudTrailEvent: fx('CreateBucket') }, { CloudTrailEvent: '{bad' }] }) : undefined));
+    await ingestOnce({ lookup: f.fn, now: NOW, accounts: [A] });
+    const later = new Date(NOW.getTime() + 600_000);
+    const g = fake((c) => (c[1] === 'us-east-1' ? Promise.resolve({ events: [{ CloudTrailEvent: fx('CreateBucket') }] }) : undefined));
+    const r = await ingestOnce({ lookup: g.fn, now: later, accounts: [A] });
+    const us = g.calls.filter((c) => c[1] === 'us-east-1').map((c) => c[2].eventName);
+    expect(us).toEqual(['CreateUser', 'DeleteUser', 'CreateRole', 'DeleteRole']);
+    expect(r.added).toBe(0);
+  });
+
+  it('regionFailureDoesNotSkipOtherRegion', async () => {
+    const f = fake((c) => { if (c[1] === 'ap-northeast-2') throw Object.assign(new Error('x'), { name: 'Boom' }); return undefined; });
+    const r = await ingestOnce({ lookup: f.fn, now: NOW, accounts: [A] });
+    expect(r.failed).toEqual([A]);
+    expect(f.calls.some((c) => c[1] === 'us-east-1')).toBe(true);
+  });
+
+  it('resumeAnchorsLastToSoFinishedNamesAreCovered', async () => {
+    let n = 0;
+    const f = fake((c) => { if (c[1] === 'ap-northeast-2' && ++n === 3) throw Object.assign(new Error('x'), { name: 'Boom' }); return undefined; });
+    await ingestOnce({ lookup: f.fn, now: NOW, accounts: [A] });
+    expect((await readState()).accounts[`${A}:ap-northeast-2`].lastTo).toBe(NOW.toISOString());
   });
 
   it('stateRecordsLastRunAndClearsError', async () => {
