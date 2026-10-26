@@ -9,6 +9,7 @@ import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import DataTable from '@/components/table/DataTable';
 import CreatorBadge from '@/components/changes/CreatorBadge';
+import { creatorKey } from '@/components/changes/creator-text';
 import { useCreators } from '@/components/changes/useCreators';
 import { Database, X, HardDrive, Network, Shield, Tag, Activity, Search } from 'lucide-react';
 import { LineChart, Line, Tooltip, XAxis } from 'recharts';
@@ -153,7 +154,7 @@ export default function RDSPage() {
   };
 
   const creatorKeys = useMemo(
-    () => filteredList.filter((r: any) => r.account_id && r.db_instance_identifier).map((r: any) => `${r.account_id}:${r.db_instance_identifier}${r.create_time ? `|${new Date(r.create_time).toISOString()}` : ''}`),
+    () => filteredList.map((r: any) => creatorKey(r.account_id, r.db_instance_identifier, r.create_time)).filter((k): k is string => !!k),
     [filteredList],
   );
   const creators = useCreators(creatorKeys);

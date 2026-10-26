@@ -8,6 +8,7 @@ import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import DataTable from '@/components/table/DataTable';
 import CreatorBadge from '@/components/changes/CreatorBadge';
+import { creatorKey } from '@/components/changes/creator-text';
 import { useCreators } from '@/components/changes/useCreators';
 import { Server, X, Cpu, HardDrive, Network, Shield, Tag, Search } from 'lucide-react';
 import { queries as ec2Q } from '@/lib/queries/ec2';
@@ -143,7 +144,7 @@ export default function EC2Page() {
   };
 
   const creatorKeys = useMemo(
-    () => filteredList.filter((r: any) => r.account_id && r.instance_id).map((r: any) => `${r.account_id}:${r.instance_id}${r.launch_time ? `|${new Date(r.launch_time).toISOString()}` : ''}`),
+    () => filteredList.map((r: any) => creatorKey(r.account_id, r.instance_id, r.launch_time)).filter((k): k is string => !!k),
     [filteredList],
   );
   const creators = useCreators(creatorKeys);

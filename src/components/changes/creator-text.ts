@@ -38,3 +38,17 @@ export function creatorText(l?: CreatorLookup): string {
   const detail = creatorDetail(l);
   return `${creatorSubject(l)} 만들었어요${detail ? ` · ${detail}` : ''}`;
 }
+
+// Safe ISO conversion for list timestamps; undefined when unparseable.
+export function toIsoOrUndefined(v: unknown): string | undefined {
+  if (v === null || v === undefined || v === '') return undefined;
+  const d = new Date(v as string);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+// `${accountId}:${resourceId}` plus optional `|iso`; null when id parts are missing.
+export function creatorKey(accountId: unknown, resourceId: unknown, createdAt?: unknown): string | null {
+  if (!accountId || !resourceId) return null;
+  const iso = toIsoOrUndefined(createdAt);
+  return `${accountId}:${resourceId}${iso ? `|${iso}` : ''}`;
+}

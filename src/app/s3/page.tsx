@@ -9,6 +9,7 @@ import PieChartCard from '@/components/charts/PieChartCard';
 import BarChartCard from '@/components/charts/BarChartCard';
 import DataTable from '@/components/table/DataTable';
 import CreatorBadge from '@/components/changes/CreatorBadge';
+import { creatorKey } from '@/components/changes/creator-text';
 import { useCreators } from '@/components/changes/useCreators';
 import { Database, X, Shield, Settings, Tag, Search, Users } from 'lucide-react';
 import { queries as s3Q } from '@/lib/queries/s3';
@@ -131,7 +132,7 @@ export default function S3Page() {
   };
 
   const creatorKeys = useMemo(
-    () => filteredList.filter((r: any) => r.account_id && r.name).map((r: any) => `${r.account_id}:${r.name}${r.creation_date ? `|${new Date(r.creation_date).toISOString()}` : ''}`),
+    () => filteredList.map((r: any) => creatorKey(r.account_id, r.name, r.creation_date)).filter((k): k is string => !!k),
     [filteredList],
   );
   const creators = useCreators(creatorKeys);
