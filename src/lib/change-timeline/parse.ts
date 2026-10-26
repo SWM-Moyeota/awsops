@@ -1,7 +1,7 @@
 // Change timeline — CloudTrail event → ChangeRecord rows. Never throws on odd payloads.
 // CloudTrail 이벤트를 변경 기록으로 바꾼다. 이상한 입력이 와도 예외를 던지지 않는다.
 import { findTracked } from './catalog';
-import type { Actor, ChangeRecord, ResourceType, ToolId, TrackedEvent } from './types';
+import type { Actor, ChangeKind, ChangeRecord, ResourceType, ToolId, TrackedEvent } from './types';
 
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -114,7 +114,7 @@ function elbName(arn: string): string {
 }
 const fnName = (s: string): string => (s.includes(':function:') ? s.split(':function:')[1].split(':')[0] : s);
 
-type Extractor = (req: unknown, resp: unknown, kind: 'create' | 'delete') => Res[];
+type Extractor = (req: unknown, resp: unknown, kind: ChangeKind) => Res[];
 
 const one = (id: string | undefined, name?: string): Res[] => (id ? [{ id, name: name ?? id }] : []);
 

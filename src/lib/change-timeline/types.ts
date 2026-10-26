@@ -1,6 +1,6 @@
 // Change timeline — contract types shared by ingest, store, query, API, UI and Slack.
 // 변경 기록 공용 타입 (수집·저장·조회·API·화면·Slack이 함께 쓴다).
-export type ChangeKind = 'create' | 'delete';
+export type ChangeKind = 'create' | 'delete' | 'stop' | 'start' | 'modify';
 export type ActorKind = 'person' | 'auto' | 'awsops' | 'root';
 export type ToolId = 'console' | 'cli' | 'terraform' | 'sdk' | 'cloudformation' | 'autoscaling' | 'other';
 export type TrackedRegion = 'ap-northeast-2' | 'us-east-1';

@@ -87,3 +87,23 @@ export interface RawInventory {
   /** Per-category query failure messages. / 카테고리별 조회 실패 메시지. */
   errors: Partial<Record<CategoryId | 'target-groups', string>>;
 }
+
+// ── Cost Detective (explain why the monthly estimate changed) / 돈 탐정 ──
+export interface SnapshotResource { id: string; name: string; category: CategoryId; monthly: number; detail: string }
+/** One KST day: accountId → priced resources (monthly > 0 only). */
+export type DailySnapshot = { day: string; accounts: Record<string, SnapshotResource[]> };
+export type ExplainDays = 1 | 7 | 30;
+export type CauseKind = 'added' | 'removed' | 'changed';
+export interface ExplainCause {
+  kind: CauseKind; accountId: string; resourceId: string; name: string; category: CategoryId;
+  monthlyBefore: number | null; monthlyAfter: number | null; impact: number | null;   // null = price unknown (timeline mode deletions)
+  action?: 'create' | 'delete' | 'stop' | 'start' | 'modify';                         // matched change-timeline kind
+  actor?: { kind: 'person' | 'auto' | 'awsops' | 'root'; name: string };
+  time?: string;                                                                         // ISO of the matched record
+  detailBefore?: string; detailAfter?: string;
+}
+export interface ExplainResponse {
+  mode: 'snapshot' | 'timeline-only'; days: ExplainDays; fromDay: string; accountId: string;
+  baseMonthly: number | null; currentMonthly: number; delta: number | null;
+  causes: ExplainCause[]; unexplained: number | null; notes: string[];
+}
