@@ -1,6 +1,7 @@
 'use client';
 
-// Cost Radar page body — monthly estimate donut + category breakdown (left), cleanup savings cards (right).
+// Cost Radar page body — monthly estimate donut + category breakdown (left), cleanup savings cards (right),
+// then the Cost Detective panel (why the estimate changed) below both columns.
 // Fetches GET /api/cost-radar; creators are fetched lazily when a recommendation panel opens.
 // 비용 레이더 본문 — 왼쪽: 월 예상 도넛 + 항목별 금액, 오른쪽: 정리 추천 절약 카드.
 // GET /api/cost-radar 조회, 만든 사람은 추천 상세를 열 때만 따로 조회한다.
@@ -16,6 +17,7 @@ import { useAccountContext, ALL_ACCOUNTS } from '@/contexts/AccountContext';
 import CostDonut from './CostDonut';
 import SavingsCard from './SavingsCard';
 import RecommendationPanel, { type CreatorState } from './RecommendationPanel';
+import CostExplainPanel from './CostExplainPanel';
 import {
   CATEGORY_COLORS, DISPLAY_FONT, HAND_FONT, PALETTE, creatorKey, formatMoney, formatShort, hasSnapshots, minutesSince,
   splitTemplate, visibleRecommendations,
@@ -374,6 +376,11 @@ export default function CostRadarView() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Cost Detective: why the estimate changed / 돈 탐정: 비용이 왜 바뀌었는지 */}
+      {!loading && !error && (
+        <CostExplainPanel accountId={scope} accountLabel={scope === ALL_ACCOUNTS && multi ? aliasOf : undefined} />
       )}
 
       {/* Unpriced (collapsed) / 가격 정보 없음 (접힘) */}

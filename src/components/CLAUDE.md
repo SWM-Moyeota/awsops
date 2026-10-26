@@ -22,11 +22,12 @@
 - `dashboard/SystemHealthCard.tsx` — 시스템 상태 카드 (/api/health 60초 폴링, 항목별 상태 패널, admin 테스트 알림 버튼)
 - `dashboard/CostRadarSummaryCard.tsx` — 홈 비용 레이더 요약 카드 (`/api/cost-radar` 월 예상 + 절약 가능액, 일부 조회 실패 시 `≥` 금액 + 흐린 안내, 실패 시 흐린 한 줄, 네이비 스타일)
 
-### cost-radar/ — 비용 레이더 (4 + 헬퍼) — 자세한 내용은 `cost-radar/CLAUDE.md`
+### cost-radar/ — 비용 레이더 (5 + 헬퍼) — 자세한 내용은 `cost-radar/CLAUDE.md`
 - `cost-radar/CostRadarView.tsx` — `/cost-radar` 본문 (도넛·항목, 절약 카드, 계정 알약, 경고·빈·오류·로딩 상태, 고정 추정 안내)
 - `cost-radar/CostDonut.tsx` — CSS conic-gradient 도넛 + 총액 + 지난주 대비 배지
 - `cost-radar/SavingsCard.tsx` — 추천 1건 알약 카드 (클릭 시 상세)
 - `cost-radar/RecommendationPanel.tsx` — 추천 상세 모달 (만든 사람 지연 조회, CLI 복사, 콘솔 링크, **실행 버튼 없음**)
+- `cost-radar/CostExplainPanel.tsx` — 돈 탐정 패널 (`/api/cost-radar/explain`, 어제/7일/30일 칩, 원인 순위·누가·언제, 설명되지 않은 변화)
 
 ### changes/ — 변경 기록 (5 + 헬퍼) — 자세한 내용은 `changes/CLAUDE.md`
 - `changes/ChangeTimelineView.tsx` — `/changes` 본문 (요약 문장, 칩 필터, 검색, 날짜별 목록, 상태 줄, 빈·오류·로딩 상태)
@@ -80,11 +81,12 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 - `dashboard/SystemHealthCard.tsx` — System health card (polls /api/health every 60s, per-item status panel, admin test-alert button)
 - `dashboard/CostRadarSummaryCard.tsx` — Home Cost Radar summary card (`/api/cost-radar` monthly estimate + possible saving, `≥` amount + muted note when partial, muted line on error, navy style)
 
-### cost-radar/ — Cost Radar (4 + helpers) — see `cost-radar/CLAUDE.md`
+### cost-radar/ — Cost Radar (5 + helpers) — see `cost-radar/CLAUDE.md`
 - `cost-radar/CostRadarView.tsx` — `/cost-radar` body (donut + categories, savings cards, account pills, warning/empty/error/loading states, fixed estimate disclaimer)
 - `cost-radar/CostDonut.tsx` — CSS conic-gradient donut + total + week-over-week pill
 - `cost-radar/SavingsCard.tsx` — pill card per recommendation (click opens detail)
 - `cost-radar/RecommendationPanel.tsx` — recommendation detail modal (lazy creator lookup, CLI copy, console link, **no action buttons**)
+- `cost-radar/CostExplainPanel.tsx` — Cost Detective panel (`/api/cost-radar/explain`, yesterday/7/30-day chips, ranked causes with who/when, unexplained remainder)
 
 ### changes/ — Change timeline (5 + helpers) — see `changes/CLAUDE.md`
 - `changes/ChangeTimelineView.tsx` — `/changes` body (summary sentence, pill filters, search, day-grouped rows, status line, empty/error/loading states)
