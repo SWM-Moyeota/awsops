@@ -3,7 +3,7 @@
 ## 역할
 `src/app/api/ai/route.ts`(1,808줄)를 동작 변경 없이 쪼개는 리팩터링의 결과물을 둔다. `route.ts`는 `GET`/`POST`만 export한다.
 
-## 파일 (잎 모듈, 현재까지)
+## 파일 (잎 모듈 + 서비스)
 - `models.ts` — `MODELS`, `resolveModelId`(키가 없으면 기본 모델로 폴백, 스트림 경로), `rawModelId`(폴백 없음, JSON datasource/auto-collect 경로).
 - `clients.ts` — `bedrockClient`, `agentCoreClient`(모듈 싱글턴), `getAgentRuntimeArn`, `getCodeInterpreterName`.
 - `registry.ts` — `ROUTE_REGISTRY`, `RouteConfig`, `RouteType`, `VALID_ROUTES`. `prompts.ts`를 import하지 않는다(순환 방지).
@@ -12,6 +12,12 @@
 - `tools.ts` — `KNOWN_TOOLS`, `TOOL_KEYWORD_MAP`, `extractUsedTools`.
 - `sse.ts` — `sseEvent`, `simulateStreaming`(50자 청크), `streamBedrockToSSE`.
 - `stats.ts` — `recordAndSave`.
+- `classify.ts` — `parseClassification`(순수 파싱), `classifyIntent`.
+- `sql.ts` — `generateSQL`, `queryAWS`.
+- `topology.ts` — `TopologyParams`, `generateTopologyParams`, `topologyContent`.
+- `datasource-query.ts` — `generateDatasourceQuery`.
+- `code-interpreter.ts` — `extractPythonCode`, `executeCodeInterpreter`.
+- `agentcore.ts` — `AGENTCORE_TIMEOUT_MS`(90초), `invokeAgentCore`(90초 race, 요청당 하나의 `requestId`), `streamToString`.
 
 ## 규칙
 - `__tests__/characterization/*.test.ts`는 동결이다. 수정하지 않는다 — 실패하면 동작이 바뀐 것이니 코드를 고친다.
@@ -24,7 +30,7 @@
 ## Role
 Holds the pieces of the behaviour-preserving split of `src/app/api/ai/route.ts` (1,808 lines). `route.ts` exports only `GET`/`POST`.
 
-## Files (leaf modules so far)
+## Files (leaf modules + services)
 - `models.ts` — `MODELS`, `resolveModelId` (falls back to the default model; stream path), `rawModelId` (no fallback; JSON datasource/auto-collect path).
 - `clients.ts` — `bedrockClient`, `agentCoreClient` (module singletons), `getAgentRuntimeArn`, `getCodeInterpreterName`.
 - `registry.ts` — `ROUTE_REGISTRY`, `RouteConfig`, `RouteType`, `VALID_ROUTES`. Must not import `prompts.ts` (avoids a cycle).
@@ -33,6 +39,12 @@ Holds the pieces of the behaviour-preserving split of `src/app/api/ai/route.ts` 
 - `tools.ts` — `KNOWN_TOOLS`, `TOOL_KEYWORD_MAP`, `extractUsedTools`.
 - `sse.ts` — `sseEvent`, `simulateStreaming` (50-char chunks), `streamBedrockToSSE`.
 - `stats.ts` — `recordAndSave`.
+- `classify.ts` — `parseClassification` (pure parsing), `classifyIntent`.
+- `sql.ts` — `generateSQL`, `queryAWS`.
+- `topology.ts` — `TopologyParams`, `generateTopologyParams`, `topologyContent`.
+- `datasource-query.ts` — `generateDatasourceQuery`.
+- `code-interpreter.ts` — `extractPythonCode`, `executeCodeInterpreter`.
+- `agentcore.ts` — `AGENTCORE_TIMEOUT_MS` (90 s), `invokeAgentCore` (90 s race, one `requestId` per request), `streamToString`.
 
 ## Rules
 - `__tests__/characterization/*.test.ts` are FROZEN. Never edit them; if one fails, behaviour changed, so fix the code.
