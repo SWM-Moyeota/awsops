@@ -3,9 +3,11 @@
 // Reads snapshots, change-timeline records and the cached radar estimate only (no CloudTrail / Steampipe calls).
 // 스냅샷·변경 기록·캐시된 레이더 추정치만 읽는다 (CloudTrail·Steampipe 추가 호출 없음).
 import { kstDay } from './snapshots';
-import { ALL_SCOPE } from './estimate';
+import { ALL_CATEGORIES, ALL_SCOPE } from './estimate';
+import { categoryLabel } from '@/components/cost-radar/explain-format';
 import type {
-  CategoryId, DailySnapshot, Estimate, ExplainCause, ExplainDays, ExplainResponse, PricedResource, SnapshotResource,
+  CategoryId, DailySnapshot, Estimate, ExplainCause, ExplainDays, ExplainExclusion, ExplainResponse, PricedResource,
+  SnapshotResource,
 } from './types';
 import type { ChangeKind, ChangeRecord, ResourceType } from '@/lib/change-timeline/types';
 
@@ -24,6 +26,9 @@ const DAY_MS = 86_400_000;
 export const NOTE_TIMELINE_ONLY = '아직 비교할 과거 스냅샷이 없어서 기록 기반으로 추정했어요';
 export const noteBaseDay = (day: string) => `기준일을 ${day}로 맞췄어요`;
 export const noteMissingAccount = (id: string) => `기준일에 없던 계정: ${id}`;
+export const noteExcludedAccount = (id: string) => `이번 조회에서 계정 ${id} 정보를 못 가져와 비교에서 뺐어요`;
+export const noteExcludedCategory = (category: CategoryId, accountId?: string) =>
+  `이번 조회에서 ${accountId ? `계정 ${accountId}의 ` : ''}${categoryLabel(category, '')} 정보를 못 가져와 비교에서 뺐어요`;
 export const noteCapped = (total: number, hiddenSum: number) =>
   `원인이 ${total}개라 금액 영향이 큰 ${MAX_CAUSES}개만 보여줘요 · 나머지 ${total - MAX_CAUSES}개 합계 ${signedUsd(hiddenSum)}`;
 
@@ -89,34 +94,105 @@ function scopeAccounts(accountId: string, e: Estimate, base: DailySnapshot | nul
   return Array.from(ids).sort();
 }
 
-/** Base snapshot: the fromDay one, else the nearest day ≥ fromDay before today. / 기준 스냅샷 선택. */
-async function pickBase(fromDay: string, today: string, deps: ExplainDeps): Promise<{ snap: DailySnapshot; adjusted: boolean } | null> {
+/**
+ * Base snapshot: the fromDay one, else the nearest day ≥ fromDay before today — only snapshots `usable` accepts
+ * (a single account must be in it). / 기준 스냅샷 선택 (단일 계정이면 그 계정이 들어 있는 스냅샷만).
+ */
+async function pickBase(
+  fromDay: string, today: string, deps: ExplainDeps, usable: (s: DailySnapshot) => boolean,
+): Promise<{ snap: DailySnapshot; adjusted: boolean } | null> {
   const exact = await deps.readSnapshot(fromDay);
-  if (exact) return { snap: exact, adjusted: false };
+  if (exact && usable(exact)) return { snap: exact, adjusted: false };
   const days = [...(await deps.listSnapshotDays())].sort();
   for (const day of days) {
     if (day <= fromDay || day >= today) continue;
     const snap = await deps.readSnapshot(day);
-    if (snap) return { snap, adjusted: true };
+    if (snap && usable(snap)) return { snap, adjusted: true };
   }
   return null;
 }
 
+/**
+ * Public IPs include IPv4 derived from EC2 instances and load balancers, and the EIP list decides which instance
+ * IPs are counted, so an EC2 / load balancer failure also makes public-ip incomparable.
+ * 퍼블릭 IP는 EC2·LB에서 파생되므로 EC2·LB 조회 실패 시 public-ip도 비교에서 뺀다.
+ */
+function withDerived(cats: CategoryId[]): CategoryId[] {
+  const s = new Set(cats);
+  if (s.has('ec2') || s.has('loadbalancer')) s.add('public-ip');
+  return ALL_CATEGORIES.filter((c) => s.has(c));
+}
+
+/** What is left out of both sides of the diff. / 비교 양쪽에서 뺄 범위. */
+interface Exclusions {
+  accounts: Set<string>;
+  /** accountId → categories; '*' applies to every account (warnings without per-account detail). */
+  cats: Map<string, Set<CategoryId>>;
+  list: ExplainExclusion[];
+}
+
+const isExcluded = (x: Exclusions, accountId: string, category: CategoryId): boolean =>
+  x.accounts.has(accountId) || !!x.cats.get(accountId)?.has(category) || !!x.cats.get('*')?.has(category);
+
+/**
+ * Exclusions: accounts missing from the base snapshot (scope "all"), then what the live estimate could not read
+ * this time — a whole account, or single categories (per account when known, else every warned category).
+ * Never counted as base 0 / removed; each gets a note instead.
+ * 기준일에 없던 계정, 이번 조회에서 못 가져온 계정·카테고리를 양쪽에서 빼고 안내 문구를 남긴다.
+ */
+function exclusionsFor(e: Estimate, base: DailySnapshot, accounts: string[], single: boolean, notes: string[]): Exclusions {
+  const x: Exclusions = { accounts: new Set(), cats: new Map(), list: [] };
+  for (const id of accounts) {
+    if (Array.isArray(base.accounts[id])) continue;
+    x.accounts.add(id);
+    x.list.push({ accountId: id, reason: 'not-in-base' });
+    notes.push(noteMissingAccount(id));
+  }
+  if (e.accountErrors) {
+    for (const id of accounts) {
+      const failed = e.accountErrors[id] ?? [];
+      if (failed.length === 0 || x.accounts.has(id)) continue;
+      if (ALL_CATEGORIES.every((c) => failed.includes(c))) {
+        x.accounts.add(id);
+        x.list.push({ accountId: id, reason: 'query-failed' });
+        notes.push(noteExcludedAccount(id));
+        continue;
+      }
+      const cats = withDerived(failed);
+      x.cats.set(id, new Set(cats));
+      for (const c of cats) {
+        x.list.push({ accountId: id, category: c, reason: 'query-failed' });
+        notes.push(noteExcludedCategory(c, single ? undefined : id));
+      }
+    }
+  } else if (e.warnings.length > 0) {
+    const cats = withDerived(Array.from(new Set(e.warnings.map((w) => w.category))));
+    x.cats.set('*', new Set(cats));
+    for (const c of cats) {
+      x.list.push({ category: c, reason: 'query-failed' });
+      notes.push(noteExcludedCategory(c));
+    }
+  }
+  return x;
+}
+
 function snapshotCauses(
-  base: DailySnapshot, live: PricedResource[], accounts: string[], notes: string[],
-): { causes: ExplainCause[]; baseMonthly: number } {
+  base: DailySnapshot, live: PricedResource[], accounts: string[], x: Exclusions,
+): { causes: ExplainCause[]; baseMonthly: number; excludedLive: number } {
   const baseIdx = new Map<string, { accountId: string; r: SnapshotResource }>();
   for (const id of accounts) {
     const rs = base.accounts[id];
-    if (!Array.isArray(rs)) {
-      notes.push(noteMissingAccount(id));
-      continue;
-    }
-    for (const r of rs) if (r.monthly > 0) baseIdx.set(key(id, r.id), { accountId: id, r });
+    if (!Array.isArray(rs)) continue;
+    for (const r of rs) if (r.monthly > 0 && !isExcluded(x, id, r.category)) baseIdx.set(key(id, r.id), { accountId: id, r });
   }
   const inScope = new Set(accounts);
   const liveIdx = new Map<string, PricedResource>();
-  for (const r of live) if (inScope.has(r.accountId)) liveIdx.set(key(r.accountId, r.id), r);
+  let excludedLive = 0;
+  for (const r of live) {
+    if (!inScope.has(r.accountId)) continue;
+    if (isExcluded(x, r.accountId, r.category)) excludedLive += r.monthly as number;
+    else liveIdx.set(key(r.accountId, r.id), r);
+  }
 
   const causes: ExplainCause[] = [];
   for (const [k, after] of Array.from(liveIdx.entries())) {
@@ -143,7 +219,7 @@ function snapshotCauses(
       monthlyBefore: r.monthly, monthlyAfter: null, impact: round2(-r.monthly), detailBefore: r.detail,
     });
   }
-  return { causes, baseMonthly: round2(baseMonthly) };
+  return { causes, baseMonthly: round2(baseMonthly), excludedLive };
 }
 
 const IPV4_SUFFIX = '-ipv4';
@@ -261,7 +337,9 @@ export async function explainChange(q: ExplainQuery, deps?: Partial<ExplainDeps>
   const now = q.now ?? new Date();
   const fromDay = kstDay(new Date(now.getTime() - q.days * DAY_MS));
   const today = kstDay(now);
-  const [estimate, base] = await Promise.all([d.liveEstimate(q.accountId), pickBase(fromDay, today, d)]);
+  // A single account compares only against a snapshot that has it. / 단일 계정은 그 계정이 있는 스냅샷과만 비교.
+  const usable = (s: DailySnapshot) => q.accountId === ALL_SCOPE || Array.isArray(s.accounts[q.accountId]);
+  const [estimate, base] = await Promise.all([d.liveEstimate(q.accountId), pickBase(fromDay, today, d, usable)]);
   // Attribution window starts at the base day actually compared (a later one when adjusted). / 실제 기준일부터.
   const windowStart = kstDayStart(base ? base.snap.day : fromDay);
   const rawRecords = await d.readRecords(windowStart, now);
@@ -274,8 +352,9 @@ export async function explainChange(q: ExplainQuery, deps?: Partial<ExplainDeps>
     return !r.failed && t >= lo && t <= hi && (q.accountId === ALL_SCOPE || inScope.has(r.accountId));
   });
   const live = livePriced(estimate);
-  const currentMonthly = round2(estimate.monthly);
+  let currentMonthly = round2(estimate.monthly);
   const notes: string[] = [];
+  let excluded: ExplainExclusion[] = [];
 
   let causes: ExplainCause[];
   let baseMonthly: number | null = null;
@@ -283,9 +362,12 @@ export async function explainChange(q: ExplainQuery, deps?: Partial<ExplainDeps>
   let unexplained: number | null = null;
   if (base) {
     if (base.adjusted) notes.push(noteBaseDay(base.snap.day));
-    const r = snapshotCauses(base.snap, live, accounts, notes);
+    const x = exclusionsFor(estimate, base.snap, accounts, q.accountId !== ALL_SCOPE, notes);
+    excluded = x.list;
+    const r = snapshotCauses(base.snap, live, accounts, x);
     causes = r.causes;
     baseMonthly = r.baseMonthly;
+    currentMonthly = round2(estimate.monthly - r.excludedLive);
     delta = round2(currentMonthly - baseMonthly);
     const explained = causes.reduce((s, c) => s + (c.impact ?? 0), 0);
     unexplained = round2(delta - explained);
@@ -305,5 +387,7 @@ export async function explainChange(q: ExplainQuery, deps?: Partial<ExplainDeps>
     mode: base ? 'snapshot' : 'timeline-only',
     days: q.days, fromDay, accountId: q.accountId,
     baseMonthly, currentMonthly, delta, causes, unexplained, notes,
+    ...(base ? { baseDay: base.snap.day } : {}),
+    ...(excluded.length > 0 ? { excluded } : {}),
   };
 }

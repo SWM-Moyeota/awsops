@@ -155,27 +155,45 @@ describe('explainChange — snapshot mode', () => {
     const r = await explainChange({ accountId: '__all__', days: 7, now: NOW }, d);
     expect(r.mode).toBe('snapshot');
     expect(r.notes).toContain(`기준일에 없던 계정: ${B}`);
+    // B is missing from the base: excluded from both sides (never "base 0 → everything added").
     // C has no live resources left; it is still in scope (base ∪ live), so its removals show.
     expect(r.baseMonthly).toBe(510);
-    expect(r.currentMonthly).toBe(17);
-    expect(r.delta).toBe(-493);
+    expect(r.currentMonthly).toBe(10);
+    expect(r.delta).toBe(-500);
     expect(r.causes.map((c) => [c.kind, c.accountId, c.resourceId, c.impact])).toEqual([
       ['removed', C, 'i-c', -500],
-      ['added', B, 'i-b', 7],
     ]);
     expect(r.unexplained).toBe(0);
+    expect(r.excluded).toEqual([{ accountId: B, reason: 'not-in-base' }]);
     expect(r.notes.some((n) => n.includes(C))).toBe(false);
   });
 
-  it('single account missing in the base counts as base 0 and is noted', async () => {
+  it('a single account missing in the base falls back to timeline mode', async () => {
     const d = deps({
       snapshots: { [FROM_DAY]: { [A]: [snap('i-1', 10)] } },
       est: estimate([live('i-b', 7, { accountId: B })], undefined, B),
+      records: [rec('create', 'i-b', '2026-10-22T01:00:00Z', { accountId: B })],
     });
     const r = await explainChange({ accountId: B, days: 7, now: NOW }, d);
-    expect(r.baseMonthly).toBe(0);
-    expect(r.delta).toBe(7);
-    expect(r.notes).toContain(`기준일에 없던 계정: ${B}`);
+    expect(r.mode).toBe('timeline-only');
+    expect(r.baseMonthly).toBeNull();
+    expect(r.delta).toBeNull();
+    expect(r.notes).toContain('아직 비교할 과거 스냅샷이 없어서 기록 기반으로 추정했어요');
+    expect(r.causes.map((c) => [c.kind, c.resourceId])).toEqual([['added', 'i-b']]);
+  });
+
+  it('a single account uses the nearest later snapshot that has it', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('i-1', 10)] }, '2026-10-23': { [A]: [], [B]: [snap('i-b', 7)] } },
+      est: estimate([live('i-b', 9, { accountId: B })], undefined, B),
+    });
+    const r = await explainChange({ accountId: B, days: 7, now: NOW }, d);
+    expect(r.mode).toBe('snapshot');
+    expect(r.baseDay).toBe('2026-10-23');
+    expect(r.baseMonthly).toBe(7);
+    expect(r.delta).toBe(2);
+    expect(r.notes).toContain('기준일을 2026-10-23로 맞췄어요');
+    expect(r.excluded).toBeUndefined();
   });
 
   it('same id in two accounts is two different resources', async () => {
@@ -207,6 +225,95 @@ describe('explainChange — snapshot mode', () => {
     expect(r.unexplained).toBe(0);
     // hidden causes are impacts 1..10 → 55
     expect(r.notes).toContain('원인이 60개라 금액 영향이 큰 50개만 보여줘요 · 나머지 10개 합계 +$55.00');
+  });
+});
+
+describe('explainChange — partial live estimate', () => {
+  const ALL_CATS: CategoryId[] = ['ec2', 'loadbalancer', 'nat', 'vpc-endpoint', 'public-ip', 'storage', 'rds', 'elasticache'];
+
+  it('a warned category is excluded on both sides', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('i-1', 10), snap('vol-1', 5, { category: 'storage' })] } },
+      est: {
+        ...estimate([live('i-1', 10), live('i-3', 7), live('vol-9', 3, { category: 'storage' })]),
+        warnings: [{ category: 'storage', message: 'timeout' }],
+      },
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.mode).toBe('snapshot');
+    // vol-1 is not "removed" and vol-9 is not "added": storage was not read this time.
+    expect(r.causes.map((c) => [c.kind, c.resourceId, c.impact])).toEqual([['added', 'i-3', 7]]);
+    expect(r.baseMonthly).toBe(10);
+    expect(r.currentMonthly).toBe(17);
+    expect(r.delta).toBe(7);
+    expect(r.unexplained).toBe(0);
+    expect(r.notes).toContain('이번 조회에서 EBS 정보를 못 가져와 비교에서 뺐어요');
+    expect(r.excluded).toEqual([{ category: 'storage', reason: 'query-failed' }]);
+  });
+
+  it('a failed category of one account is excluded only for that account', async () => {
+    const d = deps({
+      snapshots: {
+        [FROM_DAY]: {
+          [A]: [snap('i-1', 10), snap('db-a', 30, { category: 'rds' })],
+          [B]: [snap('i-b', 5), snap('db-b', 50, { category: 'rds' })],
+        },
+      },
+      est: { ...estimate([live('i-1', 10), live('i-b', 5, { accountId: B })], undefined, '__all__'), accountErrors: { [B]: ['rds'] } },
+    });
+    const r = await explainChange({ accountId: '__all__', days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => [c.kind, c.accountId, c.resourceId, c.impact])).toEqual([['removed', A, 'db-a', -30]]);
+    expect(r.baseMonthly).toBe(45);
+    expect(r.currentMonthly).toBe(15);
+    expect(r.delta).toBe(-30);
+    expect(r.unexplained).toBe(0);
+    expect(r.notes).toContain(`이번 조회에서 계정 ${B}의 RDS 정보를 못 가져와 비교에서 뺐어요`);
+    expect(r.excluded).toEqual([{ accountId: B, category: 'rds', reason: 'query-failed' }]);
+  });
+
+  it('an account whose collection failed is excluded and noted', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('i-1', 10)], [B]: [snap('i-b', 5), snap('db-b', 50, { category: 'rds' })] } },
+      est: { ...estimate([live('i-1', 12)], undefined, '__all__'), accountErrors: { [B]: ALL_CATS } },
+    });
+    const r = await explainChange({ accountId: '__all__', days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => [c.kind, c.accountId, c.resourceId])).toEqual([['changed', A, 'i-1']]);
+    expect(r.baseMonthly).toBe(10);
+    expect(r.currentMonthly).toBe(12);
+    expect(r.delta).toBe(2);
+    expect(r.notes).toContain(`이번 조회에서 계정 ${B} 정보를 못 가져와 비교에서 뺐어요`);
+    expect(r.excluded).toEqual([{ accountId: B, reason: 'query-failed' }]);
+  });
+
+  it('an EC2 or load balancer failure also excludes public IPs (derived from them)', async () => {
+    const d = deps({
+      snapshots: {
+        [FROM_DAY]: { [A]: [snap('i-1', 10), snap('i-1-ipv4', 3.65, { category: 'public-ip' }), snap('eipalloc-1', 3.65, { category: 'public-ip' })] },
+      },
+      est: { ...estimate([live('eipalloc-1', 3.65, { category: 'public-ip' }), live('i-9-ipv4', 3.65, { category: 'public-ip' })]), accountErrors: { [A]: ['ec2'] } },
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes).toEqual([]);
+    expect(r.delta).toBe(0);
+    expect(r.notes).toContain('이번 조회에서 EC2 서버 정보를 못 가져와 비교에서 뺐어요');
+    expect(r.notes).toContain('이번 조회에서 탄력적 IP 정보를 못 가져와 비교에서 뺐어요');
+  });
+
+  it('target groups failing alone excludes nothing (they have no price)', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('lb-1', 20, { category: 'loadbalancer' })] } },
+      est: { ...estimate([], undefined, A), warnings: [{ category: 'loadbalancer', message: 'target groups: x' }], accountErrors: {} },
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => [c.kind, c.resourceId])).toEqual([['removed', 'lb-1']]);
+    expect(r.excluded).toBeUndefined();
+  });
+
+  it('baseDay is the day actually compared', async () => {
+    const exact = await explainChange({ accountId: A, days: 7, now: NOW }, deps({ snapshots: { [FROM_DAY]: { [A]: [] } } }));
+    expect(exact.baseDay).toBe(FROM_DAY);
+    const none = await explainChange({ accountId: A, days: 7, now: NOW }, deps({}));
+    expect(none.baseDay).toBeUndefined();
   });
 });
 

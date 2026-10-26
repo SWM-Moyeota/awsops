@@ -71,6 +71,16 @@ describe('buildEstimate', () => {
     expect(e.warnings).toEqual([expect.objectContaining({ category: 'elasticache' })]);
   });
 
+  it('accountErrorsListFailedPricedCategoriesPerAccount', () => {
+    const a = empty('111111111111'); a.errors = { rds: 'timeout', 'target-groups': 'AccessDenied' };
+    const b = empty('222222222222'); b.errors = { 'target-groups': 'AccessDenied' };
+    const c = empty('333333333333');
+    const e = buildEstimate([a, b, c], '__all__');
+    // target groups have no price, so they never exclude a category from the cost diff
+    expect(e.accountErrors).toEqual({ '111111111111': ['rds'] });
+    expect(buildEstimate([c], '333333333333').accountErrors).toEqual({});
+  });
+
   it('allScopeMergesAccountsAndKeepsAccountIds', () => {
     const a = empty('111111111111'); a.instances = [ec2('i-1', 'running', { account_id: '111111111111' })];
     const b = empty('222222222222'); b.instances = [ec2('i-2', 'running', { account_id: '222222222222' })];

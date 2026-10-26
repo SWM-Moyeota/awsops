@@ -7,7 +7,7 @@ import {
 import type { CategoryId, CategoryTotal, Estimate, PricedResource, RawInventory, Row } from './types';
 
 export const ALL_SCOPE = '__all__';
-const ALL_CATEGORIES: CategoryId[] = ['ec2', 'loadbalancer', 'nat', 'vpc-endpoint', 'public-ip', 'storage', 'rds', 'elasticache'];
+export const ALL_CATEGORIES: CategoryId[] = ['ec2', 'loadbalancer', 'nat', 'vpc-endpoint', 'public-ip', 'storage', 'rds', 'elasticache'];
 
 /** Every priced category of this account failed (nothing usable). / 이 계정의 모든 카테고리 조회 실패. */
 export const collectionFailed = (inv: RawInventory): boolean => ALL_CATEGORIES.every((c) => !!inv.errors[c]);
@@ -148,5 +148,15 @@ export function buildEstimate(inv: RawInventory[], scopeAccountId: string): Esti
     }
   }
 
-  return { accountId: scopeAccountId, monthly, hourly: monthly / HOURS_PER_MONTH, categories, resources, unpriced, warnings, priceAsOf: priceAsOf() };
+  // Per-account failed priced categories, so the explain engine can leave exactly those out. / 계정별 실패 카테고리
+  const accountErrors: Record<string, CategoryId[]> = {};
+  for (const i of inv) {
+    const failed = ALL_CATEGORIES.filter((c) => !!i.errors[c]);
+    if (failed.length > 0) accountErrors[i.accountId] = Array.from(new Set([...(accountErrors[i.accountId] ?? []), ...failed]));
+  }
+
+  return {
+    accountId: scopeAccountId, monthly, hourly: monthly / HOURS_PER_MONTH, categories, resources, unpriced, warnings,
+    accountErrors, priceAsOf: priceAsOf(),
+  };
 }

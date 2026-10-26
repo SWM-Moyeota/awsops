@@ -10,7 +10,7 @@ import type { ExplainDays, ExplainResponse } from '@/lib/cost-radar/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useAccountContext } from '@/contexts/AccountContext';
 import { DISPLAY_FONT, HAND_FONT, PALETTE } from './format';
-import { causeDate, causeSentence, headline, money } from './explain-format';
+import { causeDate, causeSentence, comparedDay, headline, money } from './explain-format';
 
 const PERIODS: ExplainDays[] = [1, 7, 30];
 
@@ -132,9 +132,10 @@ export default function CostExplainPanel({ accountId, accountLabel }: CostExplai
         <>
           {/* Headline / 제목 문장 */}
           <p className="mt-5 text-[clamp(20px,3.6vw,26px)] leading-snug" style={DISPLAY_FONT}>{headline(data)}</p>
+          {/* The day actually compared (later than fromDay when adjusted). / 실제 비교한 기준일 */}
           {data.mode === 'snapshot' && data.baseMonthly !== null && (
             <p className="mt-1.5 text-xs" style={{ color: PALETTE.muted }}>
-              {t('costRadar.explain.range', { from: data.fromDay, base: money(data.baseMonthly, false), current: money(data.currentMonthly, false) })}
+              {t('costRadar.explain.range', { from: comparedDay(data), base: money(data.baseMonthly, false), current: money(data.currentMonthly, false) })}
             </p>
           )}
 

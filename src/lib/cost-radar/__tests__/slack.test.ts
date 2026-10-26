@@ -13,8 +13,27 @@ const resp = (over: Partial<ExplainResponse> = {}): ExplainResponse => ({
 
 describe('detectCostQuestion', () => {
   it('detectsCostQuestions', () => {
-    for (const t of ['<@U1> 비용 왜 늘었어?', '비용 왜 늘었어?', '돈 왜 이렇게 늘었지', '요금 변화 알려줘', '이번 주 비용 왜 올랐어', '요금 올랐어?', '<@U1> 이번 주 금액 변화 알려줘', '비용 줄었어?']) expect(detectCostQuestion(t)).toBe(true);
-    for (const t of ['<@U1> 비용 레이더 링크 줘', '왜 느려?', '비용', 'EC2 뭐 있어?', '오늘 EC2 비용 알려줘', '오늘 비용 얼마야?', 'RDS 비용 줄이는 방법', '비용 줄여줘', '인스턴스 늘리면 요금 어때?', '돈 왜 이렇게 나가']) expect(detectCostQuestion(t)).toBe(false);
+    for (const t of [
+      '<@U1> 비용 왜 늘었어?', '비용 왜 늘었어?', '돈 왜 이렇게 늘었지', '이번 주 비용 왜 올랐어', '요금 변화 원인 알려줘',
+      '요금 변화 알려줘', '요금 올랐어?', '<@U1> 이번 주 금액 변화 알려줘', '비용 줄었어?', '어제 비용이 증가했어?', '비용 왜 이렇게 비싸졌어',
+    ]) expect(detectCostQuestion(t), t).toBe(true);
+    for (const t of [
+      '<@U1> 비용 레이더 링크 줘', '왜 느려?', '비용', 'EC2 뭐 있어?', '오늘 EC2 비용 알려줘', '오늘 비용 얼마야?',
+      'RDS 비용 줄이는 방법', '비용 줄여줘', '인스턴스 늘리면 요금 어때?', '돈 왜 이렇게 나가',
+    ]) expect(detectCostQuestion(t), t).toBe(false);
+  });
+  it('doesNotHijackHypotheticalOrHowToQuestions', () => {
+    for (const t of [
+      'RDS 비용 감소 방안 알려줘',
+      't3.large로 바뀌면 비용 얼마야?',
+      'Savings Plan 사면 요금 얼마나 줄어들어?',
+      'EKS 노드 늘어나면 비용은?',
+      'NAT 비용 왜 올라가?',
+      '비용 절감 방법 알려줘',
+      '요금 변화 추세 보여줘',
+      '비용이 늘었으면 어떻게 줄여?',
+      '<@U1> 인스턴스 바꾸려면 비용 증가했던 거 알려줘',
+    ]) expect(detectCostQuestion(t), t).toBe(false);
   });
 });
 
@@ -28,6 +47,13 @@ describe('answerCostQuestion', () => {
     expect(t).not.toContain('db-4');
     expect(t).toContain('+$7.00');
     expect(t).toContain('jiwoo님이');
+  });
+  it('hidesRoundingNoiseUnexplained', () => {
+    expect(answerCostQuestion(resp({ unexplained: 0.004 }))).not.toContain('설명되지 않는 금액');
+    expect(answerCostQuestion(resp({ unexplained: -0.004 }))).not.toContain('설명되지 않는 금액');
+    expect(answerCostQuestion(resp({ unexplained: 0 }))).not.toContain('설명되지 않는 금액');
+    expect(answerCostQuestion(resp({ unexplained: 0.01 }))).toContain('설명되지 않는 금액: +$0.01');
+    expect(answerCostQuestion(resp({ unexplained: -2.5 }))).toContain('설명되지 않는 금액: −$2.50');
   });
   it('handlesTimelineOnlyAndMissingActor', () => {
     const t = answerCostQuestion(resp({ mode: 'timeline-only', delta: null, unexplained: null, baseMonthly: null, causes: [cause({ actor: undefined, impact: null })], notes: ['스냅샷이 아직 없어요'] }));
@@ -44,6 +70,12 @@ describe('costSummaryLine', () => {
     expect(costSummaryLine(resp({ delta: -0.99 }))).toBeNull();
     expect(costSummaryLine(resp())).toBe('💸 어제보다 월 예상 비용이 $45.00 늘었어요 — 가장 큰 원인: jiwoo님이 RDS moyeota-test-db를 만들었어요 (+$38.00)');
     expect(costSummaryLine(resp({ delta: -12.4, causes: [] }))).toBe('💸 어제보다 월 예상 비용이 $12.40 줄었어요');
+  });
+  it('costSummaryLineStaysSilentOnPartialData', () => {
+    const partial = { notes: ['이번 조회에서 EBS 정보를 못 가져와 비교에서 뺐어요'] };
+    expect(costSummaryLine(resp({ ...partial, excluded: [{ category: 'storage', reason: 'query-failed' }] }))).toBeNull();
+    expect(costSummaryLine(resp({ notes: ['기준일에 없던 계정: 2'], excluded: [{ accountId: '2', reason: 'not-in-base' }] }))).toBeNull();
+    expect(costSummaryLine(resp({ excluded: [] }))).not.toBeNull();
   });
 });
 

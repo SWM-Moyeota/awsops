@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { headline, causeSentence, money, causeDate, categoryLabel } from '../explain-format';
+import { headline, causeSentence, money, causeDate, categoryLabel, comparedDay } from '../explain-format';
 import type { ExplainCause, ExplainResponse } from '@/lib/cost-radar/types';
 
 const resp = (over: Partial<ExplainResponse>): ExplainResponse => ({
@@ -102,5 +102,12 @@ describe('money', () => {
     expect(money(null, true)).toBe('금액 알 수 없음');
     expect(money(null, false)).toBe('금액 알 수 없음');
     expect(money(NaN, true)).toBe('금액 알 수 없음');
+  });
+});
+
+describe('comparedDay', () => {
+  it('rangeLineShowsTheAdjustedBaseDay', () => {
+    expect(comparedDay(resp({ baseDay: '2026-10-22' }))).toBe('2026-10-22');
+    expect(comparedDay(resp({}))).toBe('2026-10-20');
   });
 });

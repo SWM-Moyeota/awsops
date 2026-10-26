@@ -27,6 +27,11 @@ export interface Estimate {
   resources: PricedResource[];
   unpriced: PricedResource[];
   warnings: { category: CategoryId; message: string }[];
+  /**
+   * Priced categories whose query failed, per account (accounts with no failure are left out). Target groups have
+   * no price and are never listed. / 계정별 조회 실패한 가격 카테고리 (타겟 그룹은 가격이 없어 제외).
+   */
+  accountErrors?: Record<string, CategoryId[]>;
   priceAsOf: string;
 }
 
@@ -102,8 +107,18 @@ export interface ExplainCause {
   time?: string;                                                                         // ISO of the matched record
   detailBefore?: string; detailAfter?: string;
 }
+/**
+ * Part of the scope left out of both sides of the diff: a category/account the live estimate could not read this
+ * time, or an account missing from the base snapshot. / 비교 양쪽에서 뺀 범위 (이번 조회 실패, 기준일에 없던 계정).
+ */
+export interface ExplainExclusion { accountId?: string; category?: CategoryId; reason: 'query-failed' | 'not-in-base' }
 export interface ExplainResponse {
   mode: 'snapshot' | 'timeline-only'; days: ExplainDays; fromDay: string; accountId: string;
+  /** In snapshot mode, base and current cover the compared scope only (exclusions left out of both). */
   baseMonthly: number | null; currentMonthly: number; delta: number | null;
   causes: ExplainCause[]; unexplained: number | null; notes: string[];
+  /** Snapshot day actually compared (later than fromDay when adjusted); snapshot mode only. / 실제 비교한 기준일. */
+  baseDay?: string;
+  /** Present (non-empty) only when part of the scope was left out — partial data. / 일부를 뺐을 때만 있음. */
+  excluded?: ExplainExclusion[];
 }

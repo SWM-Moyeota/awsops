@@ -13,12 +13,26 @@ const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;'
 const topCauses = (r: ExplainResponse): ExplainCause[] =>
   [...r.causes].sort((a, b) => Math.abs(b.impact ?? 0) - Math.abs(a.impact ?? 0));
 
+// A change that already happened (past tense). / 이미 일어난 변화(과거형)
+const PAST_CHANGE = /늘었|늘어났|줄었|줄어들었|올랐|내렸|바뀌었|변했|증가했|감소했|많아졌|비싸졌|싸졌/;
+// "비용 변화" as a noun, or a change asked about with 원인/이유/왜. / 명사 "변화" 또는 원인을 묻는 "변화"
+const CHANGE_NOUN = /(비용|요금|금액|돈)\s*(의\s*)?(변화|변동)|(변화|변동).*(원인|이유)|(원인|이유|왜).*(변화|변동)/;
+// Hypothetical / how-to / forecast forms belong to the AI: "바뀌면", "줄이려면", "방안", "추세"…
+// 가정·방법·전망 질문은 AI에 맡긴다.
+const NOT_EXPLAIN = /면(?=[\s?!.,~]|$)|려면|방법|방안|어떻게|추세|예측|전망|절감|줄이|줄여/;
+
+/**
+ * "Why did the cost change?" — a cost word plus a past-tense change ("비용 왜 늘었어", "요금 올랐어?") or a
+ * change noun ("요금 변화 (원인) 알려줘"); hypothetical and how-to questions are never taken from the AI.
+ * 비용 단어 + 과거형 변화 또는 "변화" 명사. 가정·방법 질문("바뀌면 얼마", "줄이는 방법")은 가로채지 않는다.
+ */
 export function detectCostQuestion(text: string): boolean {
   const t = text.replace(/<@[^>]+>/g, ' ');
   if (!/비용|돈|요금|금액/.test(t)) return false;
+  if (NOT_EXPLAIN.test(t)) return false;
   // "오늘" contains 늘 — strip it before looking for change phrasing. / "오늘"의 '늘' 제외
   const u = t.replace(/오늘/g, ' ');
-  return /늘었|줄었|올랐|내렸|늘어|줄어|증가|감소|변화|바뀌|왜.*(늘|올|증가|많아졌|비싸졌)/.test(u);
+  return PAST_CHANGE.test(u) || CHANGE_NOUN.test(u);
 }
 
 function daysFromText(text: string): ExplainDays {
@@ -37,13 +51,18 @@ export function answerCostQuestion(r: ExplainResponse): string {
     lines.push('가장 큰 원인');
     for (const c of top) lines.push(`• ${esc(causeSentence(c))} (${money(c.impact, true)})`);
   }
-  if (r.unexplained !== null) lines.push(`설명되지 않는 금액: ${money(r.unexplained, true)}`);
+  // Under one cent is rounding noise and is hidden, the same rule as the panel. / 1센트 미만은 숨김 (패널과 동일)
+  if (r.unexplained !== null && Number.isFinite(r.unexplained) && Math.abs(r.unexplained) >= 0.01) {
+    lines.push(`설명되지 않는 금액: ${money(r.unexplained, true)}`);
+  }
   for (const n of r.notes) lines.push(`※ ${esc(n)}`);
   return lines.join('\n');
 }
 
+/** Morning line; silent on partial data (anything excluded from the diff) rather than wrong. / 일부 누락이면 생략. */
 export function costSummaryLine(r: ExplainResponse | null): string | null {
   if (!r || r.mode === 'timeline-only' || r.delta === null || Math.abs(r.delta) < 1) return null;
+  if (r.excluded && r.excluded.length > 0) return null;
   let line = `💸 ${esc(headline(r))}`;
   const c = topCauses(r).find((x) => x.impact !== null);
   if (c) line += ` — 가장 큰 원인: ${esc(causeSentence(c))} (${money(c.impact, true)})`;

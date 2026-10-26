@@ -49,6 +49,11 @@ export function headline(r: ExplainResponse): string {
   return `${since} 월 예상 비용이 ${money(Math.abs(r.delta), false)} ${r.delta > 0 ? '늘었어요' : '줄었어요'}`;
 }
 
+/** Day shown on the range line: the snapshot day actually compared, else fromDay. / 범위 줄의 기준일. */
+export function comparedDay(r: Pick<ExplainResponse, 'fromDay' | 'baseDay'>): string {
+  return r.baseDay ?? r.fromDay;
+}
+
 const KIND_ACTION: Record<CauseKind, Action> = { added: 'create', removed: 'delete', changed: 'modify' };
 
 /** "jiwoo님이 RDS moyeota-test-db를 만들었어요" / "RDS x가 새로 생겼어요 · 누가 했는지 기록 없음". */
