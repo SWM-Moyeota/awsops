@@ -27,7 +27,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 | API 라우트 | 26 (changes, changes/creators 추가) |
 | 컴포넌트 | 31 (changes 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
-| AI 라우트 | 11 (datasource 라우트 추가) |
+| AI 라우트 | 19 (등록표 `src/lib/ai/registry.ts`의 라우트 수 — 아래 우선순위 표는 그중 대표 11개) |
 | ADR | 10 (001-010) |
 
 ## 필수 규칙
@@ -60,8 +60,8 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - 목록 쿼리에서 사용 금지: `mfa_enabled`, `attached_policy_arns`, Lambda `tags` (SCP 차단)
 - SQL에서 `$` 사용 금지 — `conditions::text LIKE '%..%'` 사용
 
-### AI 라우팅 (`src/app/api/ai/route.ts`)
-11단계 우선순위 — 목록/현황 질문은 `aws-data` (Steampipe SQL), 트러블슈팅/진단은 전문 Gateway, 외부 메트릭은 `datasource`로 분류:
+### AI 라우팅 (`src/app/api/ai/route.ts` → `src/lib/ai/`)
+등록표(`src/lib/ai/registry.ts`)에는 라우트 19개가 있다 — 아래 표의 11개 + topology, datasource-diag, auto-collect 6종(eks/db/msk-optimize, idle-scan, trace-analyze, incident). 대표 11단계 우선순위 — 목록/현황 질문은 `aws-data` (Steampipe SQL), 트러블슈팅/진단은 전문 Gateway, 외부 메트릭은 `datasource`로 분류:
 
 | 우선순위 | 라우트 | 대상 |
 |----------|--------|------|
@@ -109,13 +109,14 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `sns-notification.ts` — SNS 이메일 알림 (토픽 생성, 구독 동기화, 진단 완료 발행)
 - `collectors/` — auto-collect 에이전트 6종 (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
 - `cost-radar/` — 비용 레이더 (내장 서울 가격표로 월 비용 추정 + 정리 추천, 안내만) — `src/lib/cost-radar/CLAUDE.md`
+- `ai/` — `/api/ai` 본체: 등록표(19 라우트), 의도 분류, 공유 처리기 단계(`steps/`), JSON·SSE 파이프라인, Bedrock/AgentCore 호출 — `src/lib/ai/CLAUDE.md`
 - `slack-chatops/` — Slack에서 `@AWSops`로 AI에게 묻기 (Socket Mode, 공개 URL 불필요) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Slack 2단계 승인으로 EC2 켜기/끄기/재부팅 (AI 미경유, 태그 조건 IAM) — `src/lib/slack-control/CLAUDE.md`
 - `change-timeline/` — 변경 기록: 누가 어떤 리소스를 만들고 지웠는지 (CloudTrail 90일 백필 + 10분 증분, `/changes`·만든 사람 배지·Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 600ms) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
 ### API 라우트 (`src/app/api/`, 26개 — 전체 목록은 `src/app/CLAUDE.md`)
-- `ai/route.ts` — AI 라우팅 (11 routes, 멀티 라우트, SSE 스트리밍, 도구 추론, datasource 라우트)
+- `ai/route.ts` — AI 라우팅 진입점 (얇은 파일: `GET`/`POST`만, 검증 후 `src/lib/ai/`의 JSON·SSE 파이프라인으로 넘김. 등록표 19 라우트, 멀티 라우트, SSE 스트리밍, 도구 추론)
 - `steampipe/route.ts` — Steampipe 쿼리 + Cost 가용성 + 인벤토리 (POST/GET/PUT)
 - `auth/route.ts` — 로그아웃 (HttpOnly 쿠키 서버 사이드 삭제)
 - `msk/route.ts` — MSK 브로커 노드 + CloudWatch 메트릭
@@ -241,7 +242,7 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 | API Routes | 26 (incl. changes, changes/creators) |
 | Components | 31 (incl. 6 changes components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
-| AI Routes | 11 (incl. datasource route) |
+| AI Routes | 19 (routes in the registry, `src/lib/ai/registry.ts` — the priority table below shows the main 11) |
 | ADRs | 10 (001-010) |
 
 ## Critical Rules
@@ -272,8 +273,8 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 - Avoid SCP-blocked columns in list queries: `mfa_enabled`, `attached_policy_arns`, Lambda `tags`
 - No `$` in SQL — use `conditions::text LIKE '%..%'`
 
-### AI Routing (`src/app/api/ai/route.ts`)
-11-route priority. Listing/status → `aws-data` (Steampipe SQL). Troubleshooting → specialized Gateway. External metrics → `datasource`.
+### AI Routing (`src/app/api/ai/route.ts` → `src/lib/ai/`)
+The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology, datasource-diag and the 6 auto-collect routes (eks/db/msk-optimize, idle-scan, trace-analyze, incident). Main 11-route priority. Listing/status → `aws-data` (Steampipe SQL). Troubleshooting → specialized Gateway. External metrics → `datasource`.
 
 | Priority | Route | Target |
 |----------|-------|--------|
@@ -321,13 +322,14 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 - `sns-notification.ts` — SNS email notifications (topic creation, subscription sync, diagnosis completion publish)
 - `collectors/` — 6 auto-collect agents (db/eks/msk-optimize, idle-scan, incident, trace-analyze)
 - `cost-radar/` — Cost Radar (monthly estimate from a bundled Seoul price table + cleanup recommendations, guidance only) — `src/lib/cost-radar/CLAUDE.md`
+- `ai/` — the `/api/ai` engine: route registry (19 routes), intent classification, shared handler steps (`steps/`), JSON and SSE pipelines, Bedrock/AgentCore calls — `src/lib/ai/CLAUDE.md`
 - `slack-chatops/` — Ask the AI from Slack via `@AWSops` (Socket Mode, no public URL) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Two-step-approved EC2 start/stop/reboot from Slack (no AI, tag-conditioned IAM) — `src/lib/slack-control/CLAUDE.md`
 - `change-timeline/` — Change timeline: who created/deleted which resource (CloudTrail 90-day backfill + 10-min incremental; `/changes`, creator badges, Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `cloudtrail-access.ts` — Shared CloudTrail pacing (600 ms per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
 ### API Routes (`src/app/api/`, 26 routes — full list in `src/app/CLAUDE.md`)
-- `ai/route.ts` — AI routing (11 routes, multi-route, SSE streaming, tool inference, datasource route)
+- `ai/route.ts` — AI routing entry point (thin: only `GET`/`POST`; validates, then hands off to the JSON/SSE pipelines in `src/lib/ai/`. 19 routes in the registry, multi-route, SSE streaming, tool inference)
 - `steampipe/route.ts` — Steampipe queries + Cost availability + Inventory (POST/GET/PUT)
 - `auth/route.ts` — Logout (server-side HttpOnly cookie deletion)
 - `msk/route.ts` — MSK broker nodes + CloudWatch metrics

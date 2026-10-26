@@ -68,7 +68,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 
 | API | 설명 |
 |-----|------|
-| `api/ai/route.ts` | AI 라우팅 (11 routes incl. eks-optimize, 멀티 라우트, SSE, 도구 추론, 토큰 추적) |
+| `api/ai/route.ts` | AI 라우팅 진입점 — 얇은 파일: `GET`/`POST`만 두고, POST는 검증 후 `src/lib/ai/`의 `handleNonStreaming`(JSON) 또는 `runStreaming`(SSE)에 넘긴다. 분류·처리기·멀티 라우트·SSE·도구 추론·토큰 추적은 모두 `src/lib/ai/` (등록표 19 라우트, `src/lib/ai/CLAUDE.md`) |
 | `api/steampipe/route.ts` | Steampipe 쿼리 + Cost 가용성 + 인벤토리 |
 | `api/auth/route.ts` | 로그아웃 — HttpOnly 쿠키 서버 사이드 삭제 |
 | `api/msk/route.ts` | MSK 브로커 노드 + CloudWatch 메트릭 |
@@ -174,7 +174,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 
 | API | Description |
 |-----|------------|
-| `api/ai/route.ts` | AI routing (11 routes incl. eks-optimize, multi-route, SSE, tool inference, token tracking) |
+| `api/ai/route.ts` | AI routing entry point — thin: only `GET`/`POST`; POST validates, then hands off to `handleNonStreaming` (JSON) or `runStreaming` (SSE) in `src/lib/ai/`. Classification, handlers, multi-route, SSE, tool inference and token tracking all live in `src/lib/ai/` (19 routes in the registry, `src/lib/ai/CLAUDE.md`) |
 | `api/steampipe/route.ts` | Steampipe queries + Cost availability + Inventory |
 | `api/auth/route.ts` | Logout — server-side HttpOnly cookie deletion |
 | `api/msk/route.ts` | MSK broker nodes + CloudWatch metrics |
