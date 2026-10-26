@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>변경 기록 — 토스 스타일</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<style>
+  :root[data-theme="light"] {
+    --bg: #f2f4f6; --surface: #ffffff; --surface-2: #f9fafb; --line: #e5e8eb;
+    --text: #191f28; --text-2: #4e5968; --text-3: #8b95a1;
+    --blue: #3182f6; --blue-soft: #e8f3ff;
+    --green: #03b26c; --green-soft: #e5f8ef; --red: #f04452; --red-soft: #ffeeee;
+    --grey-soft: #f2f4f6; --chip-on-bg: #191f28; --chip-on-text: #ffffff;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0a0e1a; --surface: #0f1629; --surface-2: #151d30; --line: #1a2540;
+    --text: #f2f4f6; --text-2: #b0b8c1; --text-3: #6b7684;
+    --blue: #4593fc; --blue-soft: rgba(69,147,252,.14);
+    --green: #00d68f; --green-soft: rgba(0,214,143,.14); --red: #ff5f6d; --red-soft: rgba(255,95,109,.14);
+    --grey-soft: #1a2540; --chip-on-bg: #f2f4f6; --chip-on-text: #0a0e1a;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+         -webkit-font-smoothing: antialiased; letter-spacing: -0.02em; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 20px 64px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; gap: 12px; flex-wrap: wrap; }
+  .topbar h1 { font-size: 15px; font-weight: 600; color: var(--text-3); margin: 0; }
+  .toggle { display: flex; background: var(--surface); border-radius: 12px; padding: 4px; }
+  .toggle button { border: 0; background: transparent; color: var(--text-2); font: inherit; font-size: 14px; font-weight: 600;
+                   padding: 8px 14px; border-radius: 9px; cursor: pointer; }
+  .toggle button.on { background: var(--blue); color: #fff; }
+  .grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--surface); border-radius: 24px; padding: 28px 24px; }
+  .eyebrow { font-size: 13px; font-weight: 700; color: var(--blue); margin-bottom: 8px; }
+  .title { font-size: 26px; font-weight: 700; line-height: 1.35; margin: 0 0 6px; }
+  .desc { font-size: 15px; color: var(--text-2); margin: 0 0 22px; line-height: 1.55; }
+  .summary { display: flex; gap: 10px; margin-bottom: 22px; }
+  .stat { flex: 1; background: var(--surface-2); border-radius: 16px; padding: 16px; }
+  .stat .n { font-size: 24px; font-weight: 700; }
+  .stat .l { font-size: 13px; color: var(--text-3); margin-top: 2px; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 18px; padding-bottom: 2px; }
+  .chip { flex: none; border-radius: 999px; padding: 9px 14px; font-size: 14px; font-weight: 600; background: var(--grey-soft); color: var(--text-2); }
+  .chip.on { background: var(--chip-on-bg); color: var(--chip-on-text); }
+  .search { background: var(--grey-soft); border-radius: 14px; padding: 13px 16px; font-size: 15px; color: var(--text-3); margin-bottom: 22px; }
+  .day { font-size: 13px; font-weight: 600; color: var(--text-3); margin: 18px 0 4px; }
+  .row { display: flex; align-items: center; gap: 14px; padding: 13px 0; }
+  .ico { flex: none; width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center; font-size: 19px; }
+  .ico.add { background: var(--green-soft); }
+  .ico.del { background: var(--red-soft); }
+  .ico.bot { background: var(--grey-soft); }
+  .row .main { flex: 1; min-width: 0; }
+  .row .t { font-size: 16px; font-weight: 600; line-height: 1.4; }
+  .row .t b { font-weight: 700; }
+  .row .s { font-size: 13px; color: var(--text-3); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 7px; border-radius: 6px; margin-right: 4px; }
+  .tag.add { color: var(--green); background: var(--green-soft); }
+  .tag.del { color: var(--red); background: var(--red-soft); }
+  .chev { color: var(--text-3); font-size: 18px; }
+  .stack { display: flex; flex-direction: column; gap: 20px; }
+  .bucket { display: flex; align-items: center; gap: 14px; padding: 14px 0; }
+  .bucket + .bucket { border-top: 1px solid var(--line); }
+  .bucket .name { font-size: 16px; font-weight: 700; }
+  .bucket .who { font-size: 14px; color: var(--text-2); margin-top: 3px; }
+  .bucket .who.none { color: var(--text-3); }
+  .avatar { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; font-size: 14px; font-weight: 700; color: #fff; }
+  .slack { background: #1a1d21; border-radius: 18px; padding: 18px; color: #d1d2d3; font-size: 14px; line-height: 1.6; }
+  .slack .who { font-weight: 800; color: #fff; }
+  .slack .app { font-size: 11px; color: #9a9b9e; background: #2c2d30; padding: 1px 5px; border-radius: 4px; margin-left: 4px; }
+  .slack .msg { margin: 2px 0 14px; }
+  .slack .answer { background: #222529; border-radius: 12px; padding: 14px 16px; margin-top: 6px; }
+  .slack .answer .big { font-size: 15px; color: #fff; font-weight: 700; margin-bottom: 4px; }
+  .slack .muted { color: #9a9b9e; font-size: 13px; }
+  .note { font-size: 13px; color: var(--text-3); margin-top: 14px; line-height: 1.55; }
+  .pick { margin-top: 22px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .pick .option { flex: 1; min-width: 200px; cursor: pointer; background: var(--surface); border-radius: 18px; padding: 16px 18px; border: 2px solid transparent; }
+  .pick .option.selected { border-color: var(--blue); }
+  .pick h3 { margin: 0 0 4px; font-size: 16px; }
+  .pick p { margin: 0; font-size: 14px; color: var(--text-2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>AWSops › 변경 기록 · 토스 스타일 시안</h1>
+    <div class="toggle">
+      <button id="b-dark" class="on" onclick="setTheme('dark')">다크 (AWSops)</button>
+      <button id="b-light" onclick="setTheme('light')">라이트 (토스 원본)</button>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- A. Timeline page -->
+    <section class="card">
+      <div class="eyebrow">A · 변경 기록 페이지</div>
+      <h2 class="title">이번 주에 4개가 생기고<br>1개가 사라졌어요</h2>
+      <p class="desc">누가 언제 무엇을 만들고 지웠는지 한눈에 볼 수 있어요.</p>
+
+      <div class="summary">
+        <div class="stat"><div class="n" style="color:var(--green)">4</div><div class="l">생성</div></div>
+        <div class="stat"><div class="n" style="color:var(--red)">1</div><div class="l">삭제</div></div>
+        <div class="stat"><div class="n">3명</div><div class="l">작업한 사람</div></div>
+      </div>
+
+      <div class="chips">
+        <span class="chip on">전체</span><span class="chip">생성</span><span class="chip">삭제</span>
+        <span class="chip">sungyoon</span><span class="chip">jiwoo</span><span class="chip">minsu</span>
+        <span class="chip">S3</span><span class="chip">EC2</span><span class="chip">RDS</span>
+      </div>
+      <div class="search">🔍 리소스 이름으로 찾기</div>
+
+      <div class="day">오늘 · 10월 26일</div>
+      <div class="row">
+        <div class="ico add">🪣</div>
+        <div class="main">
+          <div class="t"><b>sungyoon</b>님이 S3 버킷을 만들었어요</div>
+          <div class="s"><span class="tag add">생성</span>moyeota-logs-2026 · 콘솔 · 오후 2:02</div>
+        </div>
+        <div class="chev">›</div>
+      </div>
+      <div class="row">
+        <div class="ico del">🖥️</div>
+        <div class="main">
+          <div class="t"><b>minsu</b>님이 EC2 서버를 지웠어요</div>
+          <div class="s"><span class="tag del">삭제</span>k6-ec2-old · CLI · 오전 11:40</div>
+        </div>
+        <div class="chev">›</div>
+      </div>
+
+      <div class="day">어제 · 10월 25일</div>
+      <div class="row">
+        <div class="ico add">🗄️</div>
+        <div class="main">
+          <div class="t"><b>jiwoo</b>님이 RDS 데이터베이스를 만들었어요</div>
+          <div class="s"><span class="tag add">생성</span>moyeota-test-db · Terraform · 오후 10:15</div>
+        </div>
+        <div class="chev">›</div>
+      </div>
+      <div class="row">
+        <div class="ico bot">⚙️</div>
+        <div class="main">
+          <div class="t">CloudFormation이 보안그룹을 만들었어요</div>
+          <div class="s"><span class="tag add">생성</span>sg-0f2a… · 스택 AwsopsStack · 오전 9:03</div>
+        </div>
+        <div class="chev">›</div>
+      </div>
+    </section>
+
+    <div class="stack">
+      <!-- B. Creator on resource lists -->
+      <section class="card">
+        <div class="eyebrow">B · 리소스 목록의 "만든 사람"</div>
+        <h2 class="title" style="font-size:22px">S3 버킷</h2>
+        <p class="desc" style="margin-bottom:10px">버킷을 보던 그 화면에서 누가 만들었는지 바로 보여요.</p>
+        <div class="bucket">
+          <div class="avatar" style="background:#3182f6">성</div>
+          <div class="main">
+            <div class="name">moyeota-logs-2026</div>
+            <div class="who">sungyoon님이 만들었어요 · 10월 26일 · 콘솔</div>
+          </div>
+        </div>
+        <div class="bucket">
+          <div class="avatar" style="background:#8b5cf6">지</div>
+          <div class="main">
+            <div class="name">coupon-exp-artifacts</div>
+            <div class="who">jiwoo님이 만들었어요 · 9월 2일 · Terraform</div>
+          </div>
+        </div>
+        <div class="bucket">
+          <div class="avatar" style="background:var(--grey-soft);color:var(--text-3)">?</div>
+          <div class="main">
+            <div class="name">old-backup-2025</div>
+            <div class="who none">90일보다 오래돼서 기록이 없어요</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- C. Slack -->
+      <section class="card">
+        <div class="eyebrow">C · Slack에서 묻기</div>
+        <h2 class="title" style="font-size:22px">대시보드를 안 열어도 돼요</h2>
+        <p class="desc" style="margin-bottom:14px">물어보면 답하고, 매일 아침 어제의 변경을 알려 줘요.</p>
+        <div class="slack">
+          <div><span class="who">성윤</span></div>
+          <div class="msg">@AWSops moyeota-logs-2026 누가 만들었어?</div>
+          <div><span class="who">AWSops</span><span class="app">앱</span></div>
+          <div class="answer">
+            <div class="big">🪣 sungyoon님이 만들었어요</div>
+            <div>moyeota-logs-2026 · S3 버킷</div>
+            <div class="muted">10월 26일 오후 2:02 · 콘솔 · 이후 변경 없음</div>
+          </div>
+          <div class="answer" style="margin-top:10px">
+            <div class="big">☀️ 어제 3개가 생기고 1개가 사라졌어요</div>
+            <div class="muted">jiwoo 생성 2 · sungyoon 생성 1 · minsu 삭제 1</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <p class="note">AWS 기록(CloudTrail)은 최근 90일만 조회돼요. AWSops가 오늘부터 모아 두면 그 뒤로는 90일이 지나도 남아요.</p>
+
+  <div class="pick">
+    <div class="option" data-choice="dark" onclick="toggleSelect(this)">
+      <h3>다크로 갈게요</h3><p>대시보드 전체 테마(네이비)에 맞춰요</p>
+    </div>
+    <div class="option" data-choice="light" onclick="toggleSelect(this)">
+      <h3>라이트로 갈게요</h3><p>토스처럼 밝게 — 대시보드 전체를 바꿔야 어울려요</p>
+    </div>
+  </div>
+</div>
+<script>
+  function setTheme(t) {
+    document.documentElement.dataset.theme = t;
+    document.getElementById('b-dark').classList.toggle('on', t === 'dark');
+    document.getElementById('b-light').classList.toggle('on', t === 'light');
+  }
+</script>
+</body>
+</html>
