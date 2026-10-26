@@ -3,9 +3,8 @@
 // Flow: classify intent (from registry) → route to handler → fallback
 // 흐름: 의도 분류 (레지스트리 기반) → 핸들러 라우팅 → 폴백
 import { NextRequest, NextResponse } from 'next/server';
-import { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
+import { InvokeModelCommand, ConverseStreamCommand } from '@aws-sdk/client-bedrock-runtime';
 import {
-  BedrockAgentCoreClient,
   InvokeAgentRuntimeCommand,
   StopRuntimeSessionCommand,
   StartCodeInterpreterSessionCommand,
@@ -13,9 +12,7 @@ import {
   StopCodeInterpreterSessionCommand,
 } from '@aws-sdk/client-bedrock-agentcore';
 import { runQuery } from '@/lib/steampipe';
-import { getConfig, validateAccountId, getAccountById, getBedrockModelId, getBedrockModelLabel } from '@/lib/app-config';
-import { recordCall } from '@/lib/agentcore-stats';
-import { saveConversation } from '@/lib/agentcore-memory';
+import { validateAccountId, getAccountById, getBedrockModelLabel } from '@/lib/app-config';
 import { getUserFromRequest } from '@/lib/auth-utils';
 import { getDefaultDatasource } from '@/lib/app-config';
 import type { DatasourceType } from '@/lib/app-config';
@@ -24,392 +21,14 @@ import { detectDatasourceTypes, DATASOURCE_TYPES } from '@/lib/datasource-regist
 import { DATASOURCE_QUERY_PROMPTS } from '@/lib/datasource-prompts';
 import { reportAgentcoreInvoke } from '@/lib/health/monitor';
 import { randomUUID } from 'crypto';
-
-// Service configuration — config 파일에서 읽거나 자동 감지
-// Service config — read from data/config.json or auto-detect
-const BEDROCK_REGION = 'ap-northeast-2';
-const AGENTCORE_REGION = 'ap-northeast-2';
-
-// 런타임에 config에서 AgentCore 설정 로드 / Load AgentCore config at runtime
-function getAgentRuntimeArn(): string {
-  const config = getConfig();
-  return config.agentRuntimeArn || '';
-}
-function getCodeInterpreterName(): string {
-  const config = getConfig();
-  return config.codeInterpreterName || '';
-}
-
-// Available Bedrock models / 사용 가능한 Bedrock 모델
-// Seoul region uses global.* prefix for cross-region inference / 서울 리전은 global.* 접두사 사용
-// Opus 4.8 단일 모델 (레거시 키는 과거 요청 호환용) / single model; legacy keys kept for compatibility
-// getter로 매 요청마다 config(bedrockModelId)를 반영 / getters pick up config.bedrockModelId per request
-const MODELS: Record<string, string> = {
-  get 'opus-4.8'() { return getBedrockModelId(); },
-  get 'sonnet-4.6'() { return getBedrockModelId(); },
-  get 'opus-4.6'() { return getBedrockModelId(); },
-};
-
-// AWS SDK clients / AWS SDK 클라이언트
-const bedrockClient = new BedrockRuntimeClient({ region: BEDROCK_REGION });
-const agentCoreClient = new BedrockAgentCoreClient({ region: AGENTCORE_REGION });
-
-// ============================================================================
-// Route Registry: Single source of truth for all routing decisions
-// 라우트 레지스트리: 모든 라우팅 결정의 단일 소스
-// Adding a tool here automatically updates classification, display, and gateway mapping
-// 여기에 도구를 추가하면 분류, 표시, 게이트웨이 매핑이 자동 업데이트됨
-// ============================================================================
-interface RouteConfig {
-  gateway: string;             // AgentCore gateway role / AgentCore 게이트웨이 역할
-  skill?: string;              // SKILL_BASE override (when different from gateway) / 게이트웨이와 다른 스킬 프롬프트 사용 시
-  display: string;             // UI display name / UI 표시 이름
-  description: string;         // What this route handles / 이 라우트가 처리하는 것
-  tools: string[];             // Available tool capabilities / 사용 가능한 도구 기능
-  examples?: string[];         // Classification examples / 분류 예시
-  handler?: 'code' | 'sql' | 'datasource' | 'auto-collect' | 'topology';   // Special handler type / 특수 핸들러 타입 (code: Code Interpreter, sql: pg Pool 직접, datasource: 외부 데이터소스, auto-collect: 자동 데이터 수집 분석, topology: 토폴로지뷰 링크)
-}
-
-const ROUTE_REGISTRY: Record<string, RouteConfig> = {
-  code: {
-    gateway: '',
-    display: 'Code Interpreter',
-    description: 'Python code execution and calculations',
-    tools: ['Python 코드 실행', '계산/분석/시각화', '스크립트 생성'],
-    examples: ['"코드 실행해줘" → code', '"이 데이터를 파이썬으로 분석" → code'],
-    handler: 'code',
-  },
-  network: {
-    gateway: 'network',
-    display: 'Network Gateway (17 tools)',
-    description: 'AWS VPC networking, Transit Gateway, VPN, and traffic analysis',
-    tools: [
-      'VPC/Subnet/ENI/Security Group 조회 및 분석',
-      'Transit Gateway(TGW) 목록/상세/라우트/피어링',
-      'VPN 연결 상태, Network Firewall 규칙',
-      'NAT Gateway, Internet Gateway, Route Table',
-      'Reachability Analyzer (네트워크 경로 분석, 연결 확인)',
-      'VPC Flow Logs 조회 및 트래픽 분석',
-    ],
-    examples: [
-      '"TGW 라우트 분석" → network', '"VPN 연결 상태 진단" → network',
-      '"EC2 간 통신 가능한지 확인" → network', '"네트워크 경로 분석" → network',
-      '"플로우 로그 조회" → network', '"VPC 피어링 트러블슈팅" → network',
-      '"Reachability Analyzer 실행" → network', '"방화벽 규칙 확인" → network',
-    ],
-  },
-  container: {
-    gateway: 'container',
-    display: 'Container Gateway (24 tools)',
-    description: 'EKS, ECS, and Istio service mesh',
-    tools: [
-      'EKS 클러스터/노드/Pod/로그/메트릭/IAM/트러블슈팅',
-      'ECS 클러스터/서비스/태스크/ECR/Fargate 트러블슈팅',
-      'Istio VirtualService/DestinationRule/Gateway/mTLS/EnvoyFilter',
-    ],
-    examples: [
-      '"EKS 클러스터 상태" → container', '"ECS 서비스 현황" → container',
-      '"Istio 현황" → container', '"Pod 상태 확인" → container',
-      '"컨테이너 로그" → container', '"EKS 노드 메트릭" → container',
-    ],
-  },
-  iac: {
-    gateway: 'iac',
-    display: 'IaC Gateway (12 tools)',
-    description: 'Infrastructure as Code tools',
-    tools: [
-      'CloudFormation 템플릿 검증/컴플라이언스/배포 트러블슈팅',
-      'CDK 문서/샘플/모범사례 검색',
-      'Terraform AWS/AWSCC 프로바이더 문서, 모듈 검색',
-    ],
-    examples: ['"CDK 모범사례" → iac', '"CloudFormation 스택 오류" → iac', '"Terraform 모듈 검색" → iac'],
-  },
-  data: {
-    gateway: 'data',
-    display: 'Data Gateway (24 tools)',
-    description: 'AWS databases and streaming services',
-    tools: [
-      'DynamoDB 테이블 목록/상세/쿼리/스캔/데이터 모델링/비용 추정',
-      'RDS/Aurora 인스턴스/클러스터 목록/상세/SQL 실행(Data API)',
-      'ElastiCache/Valkey 클러스터/복제 그룹/서버리스/모범사례',
-      'MSK Kafka 클러스터/브로커/설정/엔드포인트/모범사례',
-    ],
-    examples: ['"DynamoDB 테이블 조회" → data', '"RDS 인스턴스 상태" → data', '"Kafka 클러스터 정보" → data'],
-  },
-  security: {
-    gateway: 'security',
-    display: 'Security Gateway (14 tools)',
-    description: 'AWS IAM and security posture',
-    tools: [
-      'IAM 사용자/역할/그룹/정책 목록 및 상세',
-      'Access Key 목록/상태, MFA 상태',
-      'Policy Simulation (권한 테스트)',
-      'Account Security Summary (계정 보안 요약)',
-      'Trust Policy 분석, 인라인 정책 조회',
-    ],
-    examples: ['"IAM 사용자 목록" → security', '"권한 시뮬레이션" → security', '"보안 요약" → security'],
-  },
-  monitoring: {
-    gateway: 'monitoring',
-    display: 'Monitoring Gateway (16 tools)',
-    description: 'AWS observability and audit',
-    tools: [
-      'CloudWatch 메트릭 데이터/메타데이터/추세 분석',
-      'CloudWatch 알람 목록/이력/추천',
-      'CloudWatch 로그 그룹/분석/Log Insights 쿼리',
-      'CloudTrail API 이벤트 조회/Lake SQL 분석',
-    ],
-    examples: ['"CPU 사용량 확인" → monitoring', '"CloudTrail 이벤트 조회" → monitoring', '"알람 목록" → monitoring'],
-  },
-  cost: {
-    gateway: 'cost',
-    display: 'Cost Gateway (9 tools)',
-    description: 'AWS billing, cost forecasting, budgets, and FinOps. NOT for EKS resource rightsizing (use eks-optimize instead)',
-    tools: [
-      'Cost Explorer (비용/사용량 분석, 기간 비교, 비용 동인 분석)',
-      'Cost Forecast (비용 예측)',
-      'Pricing (AWS 서비스 가격 조회)',
-      'Budgets (예산 상태 확인)',
-    ],
-    examples: ['"이번 달 비용" → cost', '"EC2 비용 분석" → cost', '"비용 예측" → cost', '"서비스별 비용 추이" → cost', '"AWS 전체 비용" → cost'],
-  },
-  'aws-data': {
-    gateway: 'ops',
-    display: 'Bedrock + Steampipe SQL',
-    description: 'General AWS resource inventory and status queries via SQL',
-    tools: [
-      'Steampipe SQL (580+ AWS 테이블 직접 쿼리)',
-      'EC2/S3/VPC/Lambda/RDS/IAM 등 리소스 목록/현황 조회',
-    ],
-    examples: [
-      '"EC2 인스턴스 목록" → aws-data', '"S3 버킷 현황" → aws-data',
-      '"Lambda 함수 목록" → aws-data', '"전체 리소스 요약" → aws-data',
-      '"VPC 목록" → aws-data', '"VPC 현황" → aws-data',
-      '"VPC 네트워크 구성 분석" → aws-data', '"VPC 구성을 분석해줘" → aws-data',
-      '"서브넷 리스트" → aws-data', '"보안그룹 목록" → aws-data',
-      '"RDS 인스턴스 몇개" → aws-data', '"EKS 노드 목록" → aws-data',
-      '"네트워크 현황" → aws-data', '"인프라 구성 보여줘" → aws-data',
-    ],
-    handler: 'sql',
-  },
-  topology: {
-    gateway: '',
-    display: 'Topology View',
-    description: 'AWSops VPC topology diagram — resolves the target VPC and links to the Topology View tab (/topology-view)',
-    tools: ['VPC 토폴로지 다이어그램 표시', 'VPC 선택/전환', '빈 서브넷 포함 옵션'],
-    examples: [
-      '"토폴로지 보여줘" → topology', '"VPC 구성도 보여줘" → topology',
-      '"jaeho.p-vpc 다이어그램 보여줘" → topology', '"show the vpc topology diagram" → topology',
-      '"구성도 그려줘" → topology', '"빈 서브넷도 포함해서 구성도 보여줘" → topology',
-    ],
-    handler: 'topology',
-  },
-  'datasource-diag': {
-    gateway: 'monitoring',
-    skill: 'diagnostics',
-    display: 'Datasource Diagnostics (8 tools)',
-    description: 'Datasource connectivity troubleshooting — DNS, network path, SG, NLB targets, HTTP connectivity',
-    tools: [
-      'URL 검증/SSRF 위험 판단/프로토콜 확인',
-      'DNS 해석/IP→VPC CIDR 매핑',
-      'NLB 타겟 그룹 헬스 체크',
-      '보안그룹 체인 분석 (소스→목적지)',
-      '네트워크 경로 추적 (TGW/Peering/Cross-VPC)',
-      'HTTP 엔드포인트 연결 테스트',
-      'K8s Service 엔드포인트/Pod 매칭 확인',
-      '전체 6단계 자동 진단 (run_full_diagnosis)',
-    ],
-    examples: [
-      '"Prometheus 연결 진단" → datasource-diag', '"데이터소스 연결 안됨" → datasource-diag',
-      '"NLB 타겟 헬스 확인" → datasource-diag', '"datasource connection timeout" → datasource-diag',
-      '"datasource connectivity troubleshoot" → datasource-diag', '"데이터소스 네트워크 경로 확인" → datasource-diag',
-    ],
-  },
-  datasource: {
-    gateway: '',
-    display: 'Datasource Analytics',
-    description: 'External datasource metrics, logs, and traces analysis (Prometheus, Loki, Tempo, ClickHouse)',
-    tools: [
-      'Prometheus PromQL 메트릭 쿼리 및 분석',
-      'Loki LogQL 로그 검색 및 패턴 분석',
-      'Tempo TraceQL 분산 트레이스 분석',
-      'ClickHouse SQL 데이터 분석',
-    ],
-    examples: [
-      '"프로메테우스에서 CPU 사용량 확인" → datasource', '"prometheus cpu usage" → datasource',
-      '"로키에서 에러 로그 검색" → datasource', '"loki error logs" → datasource',
-      '"트레이스 조회" → datasource', '"tempo traces" → datasource',
-      '"클릭하우스 데이터 분석" → datasource', '"clickhouse query" → datasource',
-    ],
-    handler: 'datasource',
-  },
-  'eks-optimize': {
-    gateway: '',
-    display: 'EKS Cost Optimizer',
-    description: 'EKS resource optimization: collects Prometheus metrics, K8s resource configs, and cost data to find rightsizing opportunities and cost savings',
-    tools: [
-      'Prometheus CPU/Memory 사용량 vs 요청량 비교',
-      'CPU Throttling 분석',
-      'HTTP 에러율 분석 (5xx)',
-      'Pod 재시작 분석',
-      'K8s 리소스 request/limit 분석 (Steampipe)',
-      'EKS 컨테이너 비용 분석',
-      'Node 활용률 분석',
-    ],
-    examples: [
-      '"EKS 비용 개선점 찾아줘" → eks-optimize', '"EKS 리소스 최적화" → eks-optimize',
-      '"컨테이너 리소스 낭비 분석" → eks-optimize', '"EKS rightsizing" → eks-optimize',
-      '"Pod CPU/메모리 과다 할당 분석" → eks-optimize', '"EKS cost optimization" → eks-optimize',
-      '"EKS 비용 최적화" → eks-optimize', '"EKS 비용 절감" → eks-optimize',
-      '"컨테이너 비용 분석" → eks-optimize', '"K8s 리소스 최적화" → eks-optimize',
-    ],
-    handler: 'auto-collect',
-  },
-  'db-optimize': {
-    gateway: '',
-    display: 'DB Cost Optimizer',
-    description: 'RDS, ElastiCache, OpenSearch instance rightsizing: collects CloudWatch metrics and Steampipe configs to find over-provisioned databases. NOT for EKS (use eks-optimize) or general billing (use cost)',
-    tools: ['RDS CPU/Memory/IOPS/Connections 분석', 'ElastiCache CPU/Memory/Connections 분석', 'OpenSearch JVM/Storage/Latency 분석', '인스턴스 타입 rightsizing 권장'],
-    examples: [
-      '"RDS 비용 최적화" → db-optimize', '"ElastiCache rightsizing" → db-optimize',
-      '"OpenSearch 비용 분석" → db-optimize', '"DB 리소스 낭비 확인" → db-optimize',
-      '"데이터베이스 비용 절감" → db-optimize', '"RDS 인스턴스 다운사이징" → db-optimize',
-    ],
-    handler: 'auto-collect',
-  },
-  'msk-optimize': {
-    gateway: '',
-    display: 'MSK Optimizer',
-    description: 'MSK Kafka broker rightsizing: collects broker CloudWatch metrics, Steampipe configs, and optional Prometheus Kafka metrics for throughput and consumer lag analysis',
-    tools: ['MSK 브로커 CPU/Memory/처리량 분석', 'Kafka consumer lag 분석', '브로커 인스턴스 rightsizing', 'Provisioned vs Serverless 비교'],
-    examples: [
-      '"MSK 비용 최적화" → msk-optimize', '"Kafka 브로커 rightsizing" → msk-optimize',
-      '"MSK 처리량 분석" → msk-optimize', '"MSK 브로커 다운사이징" → msk-optimize',
-    ],
-    handler: 'auto-collect',
-  },
-  'idle-scan': {
-    gateway: '',
-    display: 'Idle Resource Scanner',
-    description: 'Scans for unused/idle AWS resources wasting money: unattached EBS, unassociated EIPs, stopped EC2s, old snapshots, gp2 volumes, unused security groups',
-    tools: ['미연결 EBS 스캔', '미연결 EIP 스캔', '중지 EC2 스캔', '오래된 스냅샷 스캔', 'gp2→gp3 전환 대상 스캔', '미사용 SG 스캔'],
-    examples: [
-      '"미사용 리소스 찾아줘" → idle-scan', '"유휴 리소스 스캔" → idle-scan',
-      '"비용 낭비 리소스" → idle-scan', '"사용 안하는 EBS 확인" → idle-scan',
-      '"idle resources" → idle-scan', '"낭비되는 리소스 정리" → idle-scan',
-    ],
-    handler: 'auto-collect',
-  },
-  'trace-analyze': {
-    gateway: '',
-    display: 'Service Trace Analyzer',
-    description: 'Distributed tracing analysis: auto-discovers Tempo/Jaeger datasource, maps service dependencies, identifies latency bottlenecks and error propagation paths',
-    tools: ['서비스 의존성 매핑', '지연시간 핫스팟 분석', '에러 전파 경로 분석', '서비스별 트레이스 샘플링'],
-    examples: [
-      '"서비스 의존성 분석" → trace-analyze', '"지연시간 병목 찾아줘" → trace-analyze',
-      '"트레이스 분석" → trace-analyze', '"서비스 호출 관계" → trace-analyze',
-      '"latency bottleneck" → trace-analyze', '"서비스간 의존성 확인" → trace-analyze',
-    ],
-    handler: 'auto-collect',
-  },
-  incident: {
-    gateway: '',
-    display: 'Incident Analyzer',
-    description: 'Multi-source incident analysis: cross-correlates Prometheus anomalies, Loki error logs, Tempo error traces, CloudWatch alarms, and K8s warning events to reconstruct incident timelines',
-    tools: ['CloudWatch 알람 분석', 'K8s 이벤트 분석', 'Prometheus 이상 감지', 'Loki 에러 로그 분석', 'Tempo 에러 트레이스 분석'],
-    examples: [
-      '"장애 원인 분석" → incident', '"서비스 에러 원인 찾아줘" → incident',
-      '"사고 분석" → incident', '"최근 이상 현상 분석" → incident',
-      '"incident analysis" → incident', '"지금 무슨 문제가 있어?" → incident',
-    ],
-    handler: 'auto-collect',
-  },
-  general: {
-    gateway: 'ops',
-    display: 'Ops Gateway (9 tools)',
-    description: 'General AWS questions, documentation, and best practices',
-    tools: [
-      'AWS 문서 검색/리전 가용성 확인',
-      'AWS CLI 명령 실행/제안',
-      'Steampipe SQL (580+ 테이블)',
-    ],
-    examples: ['"AWS 모범사례 알려줘" → general', '"이 서비스가 서울 리전에서 사용 가능한지" → general'],
-  },
-};
-
-// Derived values from registry / 레지스트리에서 파생된 값
-type RouteType = keyof typeof ROUTE_REGISTRY;
-const VALID_ROUTES = Object.keys(ROUTE_REGISTRY) as RouteType[];
-
-// Build classification prompt from registry / 레지스트리에서 분류 프롬프트 자동 생성
-function buildClassificationPrompt(): string {
-  const routeDescriptions = Object.entries(ROUTE_REGISTRY)
-    .map(([key, r]) => {
-      const toolList = r.tools.join(', ');
-      return `- "${key}": ${r.description}\n  Tools: ${toolList}`;
-    })
-    .join('\n');
-
-  const examples = Object.entries(ROUTE_REGISTRY)
-    .flatMap(([, r]) => r.examples || [])
-    .map(e => `- ${e}`)
-    .join('\n');
-
-  return `You are an intent classifier for an AWS operations dashboard.
-Classify the user's question into 1-3 routes. Consider the FULL conversation context, not just the last message.
-Choose the route(s) whose TOOLS can best answer the question.
-
-Routes:
-${routeDescriptions}
-
-Classification rules:
-- Most questions need only 1 route. Use multiple routes ONLY when the question explicitly asks about different domains.
-- Examples of multi-route: "VPC 보안그룹과 비용을 분석해줘" → ["network", "cost"], "보안 점검하고 IAM 사용자도 확인" → ["security"]
-- If the user asks a follow-up ("그중에서", "그건", "더 자세히"), use PREVIOUS context to determine the route.
-- Prefer specialized routes for ANALYSIS, TROUBLESHOOTING, and TOOL-based operations.
-- "aws-data" is for simple resource LISTING, COUNTING, STATUS queries (e.g. "VPC 목록", "EC2 현황", "S3 버킷 몇개", "서브넷 리스트").
-- Use "network" ONLY for specific tool-based operations: reachability analyzer, flow log queries, TGW route analysis, firewall rule checks, VPN troubleshooting. NOT for "VPC 구성 분석", "네트워크 현황", or any resource listing.
-- Use "container" ONLY for specific tool operations: EKS troubleshooting, Istio mesh config, ECS task troubleshooting. NOT for simple EKS/ECS/Pod listing.
-- When user asks "XX 구성 분석해줘" or "XX 현황 분석" → use "aws-data" (Steampipe SQL gives real data, then Bedrock analyzes). "network"/"container" gateways are for specialized tool execution only.
-- "code" and "aws-data" should NOT be combined with other routes.
-- "datasource" CAN be combined with AWS routes (monitoring, container, network) for cross-source correlation. Multi-datasource (e.g. Prometheus+Loki) is handled within a single "datasource" route.
-- Keywords like "목록", "리스트", "현황", "몇개", "list", "count", "show" → prefer "aws-data"
-- Keywords like "분석", "진단", "문제", "확인해줘", "troubleshoot", "analyze" → prefer specialized route
-- "eks-optimize" is for EKS/K8s container resource optimization (rightsizing, over-provisioning, CPU/memory). Use instead of "cost" for EKS questions.
-- "db-optimize" is for RDS/ElastiCache/OpenSearch instance rightsizing. Use instead of "cost" for database optimization questions.
-- "msk-optimize" is for MSK Kafka broker rightsizing and throughput optimization. Use instead of "cost" for MSK questions.
-- "idle-scan" is for finding unused/idle AWS resources (EBS, EIP, stopped EC2, old snapshots). Use instead of "cost" for waste/idle resource questions.
-- "trace-analyze" is for distributed tracing analysis (Tempo/Jaeger). Service dependencies, latency bottlenecks, error propagation. Use instead of "datasource" for tracing questions.
-- "incident" is for multi-source incident/outage analysis. Cross-correlates Prometheus + Loki + Tempo + CloudWatch. Use instead of "monitoring" for incident/outage analysis.
-- "cost" is for GENERAL AWS billing, forecast, budgets only. NOT for service-specific optimization (use eks-optimize, db-optimize, msk-optimize, idle-scan instead).
-
-Examples:
-${examples}
-"Prometheus CPU 스파이크와 CloudWatch 알람 비교" → {"routes": ["datasource", "monitoring"]}
-"Loki 에러 로그와 EKS Pod 상태 함께 확인" → {"routes": ["datasource", "container"]}
-"프로메테우스 메트릭과 로키 에러 로그 상관 분석" → {"routes": ["datasource"]}
-"Prometheus CPU 급등인데 EKS Pod 상태와 CloudWatch 로그도 봐줘" → {"routes": ["datasource", "container", "monitoring"]}
-
-Respond with ONLY a JSON object: {"routes": ["<route>"]} or {"routes": ["<route1>", "<route2>"]}`;
-}
-
-const CLASSIFICATION_PROMPT = buildClassificationPrompt();
-
-const BASE_SYSTEM_PROMPT = `You are AWSops AI Assistant, an expert in AWS cloud operations.
-You help users understand and manage their AWS infrastructure.
-You have access to real-time AWS resource data via Steampipe queries.
-When users ask about their resources, analyze the data provided.
-Always be concise and provide actionable insights.
-Format responses in markdown for readability.
-When discussing security issues, prioritize them by severity.`;
-
-// Language-aware system prompt / 언어 인식 시스템 프롬프트
-function getSystemPrompt(lang?: string): string {
-  if (lang === 'en') return BASE_SYSTEM_PROMPT + '\nAlways respond in English regardless of the input language.';
-  if (lang === 'ko') return BASE_SYSTEM_PROMPT + '\nAlways respond in Korean (한국어) regardless of the input language.';
-  if (lang === 'zh') return BASE_SYSTEM_PROMPT + '\nAlways respond in Simplified Chinese (简体中文) regardless of the input language.';
-  return BASE_SYSTEM_PROMPT + '\nRespond in the same language as the user\'s question.';
-}
+import { MODELS, resolveModelId, rawModelId } from '@/lib/ai/models';
+import { bedrockClient, agentCoreClient, getAgentRuntimeArn, getCodeInterpreterName } from '@/lib/ai/clients';
+import { ROUTE_REGISTRY, VALID_ROUTES, type RouteType } from '@/lib/ai/registry';
+import { CLASSIFICATION_PROMPT, getSystemPrompt, SQL_GEN_PROMPT, CODE_PROMPT_SUFFIX, SYNTHESIS_PROMPT_SUFFIX, TOPOLOGY_PROMPT } from '@/lib/ai/prompts';
+import { buildStatus, pick } from '@/lib/ai/status';
+import { extractUsedTools } from '@/lib/ai/tools';
+import { sseEvent, simulateStreaming, streamBedrockToSSE } from '@/lib/ai/sse';
+import { recordAndSave } from '@/lib/ai/stats';
 
 // ============================================================================
 // Intent classification / 의도 분류
@@ -460,62 +79,6 @@ async function classifyIntent(messages: Array<{role: string; content: string}>):
     return { routes: ['general'], inputTokens: 0, outputTokens: 0 };
   }
 }
-
-// ============================================================================
-// SQL generation for aws-data route / aws-data 라우트용 SQL 생성
-// ============================================================================
-const SQL_GEN_PROMPT = `You are a Steampipe SQL expert. Generate a PostgreSQL SELECT query for the user's AWS resource question.
-
-Rules:
-- Return ONLY the SQL query, no explanation, no markdown, no code blocks.
-- Do NOT add LIMIT unless the user explicitly asks for a specific number.
-- Use single quotes for string values: tags ->> 'Name'
-- No $ in SQL — use conditions::text LIKE '%..%' instead of jsonb_path_exists
-- Always include key identifying columns: ID, name/tags, type, state/status
-- Avoid: mfa_enabled, attached_policy_arns, Lambda tags columns (SCP blocks hydrate)
-
-EXACT column names for key tables (use ONLY these, not guessed names):
-
-aws_ec2_instance:
-  instance_id, instance_type, instance_state, private_ip_address, public_ip_address,
-  placement_availability_zone (NOT availability_zone), vpc_id, subnet_id, key_name,
-  launch_time, image_id, platform, monitoring_state, security_groups,
-  tags ->> 'Name' AS name (for resource name)
-
-aws_s3_bucket:
-  name, region, versioning_enabled (NOT versioning), bucket_policy_is_public, creation_date
-
-aws_vpc:
-  vpc_id, cidr_block, state, is_default, tags ->> 'Name' AS name
-
-aws_rds_db_instance:
-  db_instance_identifier, engine, engine_version, class AS instance_class (NOT db_instance_class),
-  status, allocated_storage, multi_az, availability_zone, vpc_id
-
-aws_lambda_function:
-  name, runtime, handler, memory_size, timeout, last_modified
-
-aws_iam_user:
-  name, arn, create_date, password_last_used
-
-aws_iam_role:
-  name, arn, create_date, max_session_duration
-
-aws_vpc_security_group:
-  group_id, group_name, vpc_id, description
-
-aws_ec2_application_load_balancer:
-  name, type, scheme, state_code, vpc_id, dns_name
-
-kubernetes_pod:
-  name, namespace, phase, node_name, creation_timestamp
-
-Examples:
-- "EC2 현황" → SELECT instance_id, tags ->> 'Name' AS name, instance_type, instance_state, placement_availability_zone AS az, private_ip_address, launch_time FROM aws_ec2_instance ORDER BY instance_state
-- "S3 버킷 목록" → SELECT name, region, versioning_enabled, bucket_policy_is_public FROM aws_s3_bucket ORDER BY name
-- "전체 리소스 요약" → SELECT 'EC2' AS resource, COUNT(*) AS count FROM aws_ec2_instance UNION ALL SELECT 'VPC', COUNT(*) FROM aws_vpc UNION ALL SELECT 'RDS', COUNT(*) FROM aws_rds_db_instance UNION ALL SELECT 'Lambda', COUNT(*) FROM aws_lambda_function UNION ALL SELECT 'S3', COUNT(*) FROM aws_s3_bucket
-- "VPC 네트워크 구성 분석" → SELECT v.vpc_id, v.tags ->> 'Name' AS name, v.cidr_block, v.is_default, v.state, (SELECT COUNT(*) FROM aws_vpc_subnet s WHERE s.vpc_id = v.vpc_id) AS subnet_count, (SELECT COUNT(*) FROM aws_vpc_route_table r WHERE r.vpc_id = v.vpc_id) AS route_table_count, (SELECT COUNT(DISTINCT group_id) FROM aws_vpc_security_group sg WHERE sg.vpc_id = v.vpc_id) AS sg_count FROM aws_vpc v ORDER BY v.tags ->> 'Name'
-- "서브넷 구성" → SELECT subnet_id, tags ->> 'Name' AS name, vpc_id, cidr_block, availability_zone, map_public_ip_on_launch, available_ip_address_count FROM aws_vpc_subnet ORDER BY vpc_id, availability_zone`;
 
 async function generateSQL(messages: Array<{role: string; content: string}>, accountId?: string, accountAlias?: string): Promise<string | null> {
   try {
@@ -580,7 +143,7 @@ async function generateTopologyParams(
     const body = JSON.stringify({
       anthropic_version: 'bedrock-2023-05-31',
       max_tokens: 200,
-      system: `The user wants to see a VPC topology diagram. Pick the target VPC from this list:\n${JSON.stringify(vpcs)}\n\nRespond with ONLY a JSON object, no prose:\n{"vpc_id": "<vpc id, or null if you cannot tell which one>", "include_empty": <true only if the user asked to include empty subnets, else false>}\n\nRules: match by VPC name or id mentioned in the conversation (partial/fuzzy match ok). If no VPC is mentioned and there is exactly one VPC, pick it. If several VPCs and none mentioned, use null.`,
+      system: TOPOLOGY_PROMPT(vpcs),
       messages: messages.slice(-6).map(m => ({ role: m.role, content: m.content })),
     });
     const response = await bedrockClient.send(new InvokeModelCommand({
@@ -804,226 +367,6 @@ async function streamToString(stream: any): Promise<string> {
   return String(stream);
 }
 
-// ============================================================================
-// Tool usage extraction / 사용된 도구 추출
-// ============================================================================
-// 알려진 MCP 도구 이름 (125개 중 주요 도구) / Known MCP tool names for matching
-const KNOWN_TOOLS = new Set([
-  // Network (17)
-  'get_path_trace_methodology', 'find_ip_address', 'get_eni_details', 'list_vpcs',
-  'get_vpc_network_details', 'get_vpc_flow_logs', 'describe_network', 'list_transit_gateways',
-  'get_tgw_details', 'get_tgw_routes', 'get_all_tgw_routes', 'list_tgw_peerings',
-  'list_vpn_connections', 'list_network_firewalls', 'get_firewall_rules',
-  'analyze_reachability', 'query_flow_logs',
-  // Container (24)
-  'list_eks_clusters', 'get_eks_vpc_config', 'get_eks_insights', 'get_cloudwatch_logs',
-  'get_cloudwatch_metrics', 'get_eks_metrics_guidance', 'get_policies_for_role',
-  'search_eks_troubleshoot_guide', 'generate_app_manifest',
-  'ecs_resource_management', 'ecs_troubleshooting_tool', 'wait_for_service_ready',
-  'istio_overview', 'list_virtual_services', 'list_destination_rules', 'list_istio_gateways',
-  'list_service_entries', 'list_authorization_policies', 'list_peer_authentications',
-  'check_sidecar_injection', 'list_envoy_filters', 'list_istio_crds', 'istio_troubleshooting', 'query_istio_resource',
-  // IaC (12)
-  'validate_cloudformation_template', 'check_cloudformation_template_compliance',
-  'troubleshoot_cloudformation_deployment', 'search_cdk_documentation',
-  'search_cloudformation_documentation', 'cdk_best_practices', 'read_iac_documentation_page',
-  'SearchAwsProviderDocs', 'SearchAwsccProviderDocs', 'SearchSpecificAwsIaModules',
-  'SearchUserProvidedModule', 'terraform_best_practices',
-  // Data (24)
-  'list_tables', 'describe_table', 'query_table', 'get_item', 'dynamodb_data_modeling', 'compute_performances_and_costs',
-  'list_db_instances', 'list_db_clusters', 'describe_db_instance', 'describe_db_cluster', 'execute_sql', 'list_snapshots',
-  'list_cache_clusters', 'describe_cache_cluster', 'list_replication_groups', 'describe_replication_group',
-  'list_serverless_caches', 'elasticache_best_practices',
-  'list_clusters', 'get_cluster_info', 'get_configuration_info', 'get_bootstrap_brokers', 'list_nodes', 'msk_best_practices',
-  // Security (14)
-  'list_users', 'get_user', 'list_roles', 'get_role_details', 'list_groups', 'get_group',
-  'list_policies', 'list_user_policies', 'list_role_policies', 'get_user_policy', 'get_role_policy',
-  'list_access_keys', 'simulate_principal_policy', 'get_account_security_summary',
-  // Monitoring (16)
-  'get_metric_data', 'get_metric_metadata', 'analyze_metric', 'get_recommended_metric_alarms',
-  'get_active_alarms', 'get_alarm_history', 'describe_log_groups', 'analyze_log_group',
-  'execute_log_insights_query', 'get_logs_insight_query_results', 'cancel_logs_insight_query',
-  'lookup_events', 'list_event_data_stores', 'lake_query', 'get_query_status', 'get_query_results',
-  // Cost (9)
-  'get_today_date', 'get_cost_and_usage', 'get_cost_and_usage_comparisons',
-  'get_cost_comparison_drivers', 'get_cost_forecast', 'get_dimension_values',
-  'get_tag_values', 'get_pricing', 'list_budgets',
-  // Ops (9)
-  'search_documentation', 'read_documentation', 'recommend', 'list_regions',
-  'get_regional_availability', 'prompt_understanding', 'call_aws', 'suggest_aws_commands', 'run_steampipe_query',
-  // Diagnostics (8)
-  'validate_datasource_url', 'resolve_dns', 'check_nlb_targets',
-  'analyze_security_groups', 'trace_network_path', 'test_http_connectivity',
-  'check_k8s_service_endpoints', 'run_full_diagnosis',
-]);
-
-// 응답 내용 기반 도구 추론 매핑 / Infer tools from response content keywords
-const TOOL_KEYWORD_MAP: Record<string, string[]> = {
-  // Security
-  'list_users': ['IAM 사용자', 'IAM user', 'iam user', '사용자 목록', 'user list'],
-  'get_user': ['사용자 상세', 'user detail'],
-  'list_roles': ['IAM 역할', 'IAM role', '역할 목록', 'role list'],
-  'get_role_details': ['역할 상세', 'role detail', 'trust policy'],
-  'list_access_keys': ['액세스 키', 'access key', 'AccessKey'],
-  'simulate_principal_policy': ['시뮬레이션', 'simulate', 'permission test'],
-  'get_account_security_summary': ['보안 요약', 'security summary', 'MFA', 'mfa_enabled'],
-  'list_policies': ['정책 목록', 'policy list', 'AdministratorAccess'],
-  'list_user_policies': ['사용자 정책', 'user policy', '인라인 정책'],
-  'list_role_policies': ['역할 정책', 'role policy'],
-  // Network
-  'list_vpcs': ['VPC 목록', 'vpc_id', 'VPC ID', 'cidr_block'],
-  'get_vpc_network_details': ['서브넷', 'subnet', '라우트 테이블', 'route table', 'NACL'],
-  'list_transit_gateways': ['Transit Gateway', 'TGW', 'tgw-'],
-  'get_tgw_routes': ['TGW 라우트', 'tgw route'],
-  'list_vpn_connections': ['VPN', 'vpn-'],
-  'analyze_reachability': ['Reachability', 'reachability', '도달성'],
-  'query_flow_logs': ['Flow Log', 'flow log', '플로우 로그'],
-  'list_network_firewalls': ['Network Firewall', 'firewall'],
-  'describe_network': ['네트워크 구성', 'network describe'],
-  // Container
-  'list_eks_clusters': ['EKS 클러스터', 'eks cluster'],
-  'ecs_resource_management': ['ECS 서비스', 'ecs service', 'ECS 태스크'],
-  'istio_overview': ['Istio', 'istio', '서비스 메시'],
-  // Monitoring
-  'get_metric_data': ['메트릭', 'metric', 'CPU 사용', 'cpu utilization'],
-  'get_active_alarms': ['알람', 'alarm', 'CloudWatch alarm'],
-  'lookup_events': ['CloudTrail', 'cloudtrail', 'API 이벤트', 'api event'],
-  'execute_log_insights_query': ['Log Insights', 'log insights', '로그 분석'],
-  'describe_log_groups': ['로그 그룹', 'log group'],
-  // Cost
-  'get_cost_and_usage': ['비용', 'cost', 'billing', '청구'],
-  'get_cost_forecast': ['예측', 'forecast'],
-  'list_budgets': ['예산', 'budget'],
-  'get_pricing': ['가격', 'pricing', '단가'],
-  // Data
-  'list_tables': ['DynamoDB', 'dynamodb', '테이블 목록'],
-  'list_db_instances': ['RDS', 'rds', 'DB 인스턴스'],
-  'list_cache_clusters': ['ElastiCache', 'elasticache', 'Redis', 'Valkey'],
-  'list_clusters': ['MSK', 'Kafka', 'kafka'],
-  // Diagnostics
-  'validate_datasource_url': ['URL 검증', 'SSRF', 'ssrf', 'URL validation'],
-  'resolve_dns': ['DNS 해석', 'dns resolution', 'DNS lookup', '호스트 해석'],
-  'check_nlb_targets': ['NLB 타겟', 'nlb target', 'target health', '타겟 헬스'],
-  'analyze_security_groups': ['SG 분석', 'security group analysis', 'SG 체인', 'sg chain'],
-  'trace_network_path': ['네트워크 경로', 'network path', 'cross-vpc', '크로스VPC'],
-  'test_http_connectivity': ['HTTP 연결', 'http connectivity', 'health check', '헬스체크'],
-  'check_k8s_service_endpoints': ['K8s 엔드포인트', 'service endpoint', 'Pod 매칭'],
-  'run_full_diagnosis': ['전체 진단', 'full diagnosis', '연결 진단', 'connectivity diagnosis'],
-};
-
-function extractUsedTools(rawResponse: string): string[] {
-  const tools = new Set<string>();
-  let m: RegExpExecArray | null;
-  // 1. <tool_call> 태그 / <tool_call> tags
-  const callRegex = /<tool_call>\s*\{[^}]*"name"\s*:\s*"([^"]+)"/g;
-  while ((m = callRegex.exec(rawResponse)) !== null) tools.add(m[1]);
-  // 2. "tool_name" 필드 / "tool_name" field
-  const useRegex = /"tool_name"\s*:\s*"([^"]+)"/g;
-  while ((m = useRegex.exec(rawResponse)) !== null) tools.add(m[1]);
-  // 3. 백틱으로 감싼 도구 이름 / Backtick-wrapped tool names
-  const backtickRegex = /`([a-zA-Z][a-zA-Z0-9_]+)`/g;
-  while ((m = backtickRegex.exec(rawResponse)) !== null) {
-    if (KNOWN_TOOLS.has(m[1])) tools.add(m[1]);
-  }
-  // 4. 백틱 없이 텍스트에 등장하는 알려진 도구 이름 / Known tool names in plain text
-  Array.from(KNOWN_TOOLS).forEach(toolName => {
-    if (toolName.length > 6 && rawResponse.includes(toolName)) tools.add(toolName);
-  });
-  // 5. 응답 내용 키워드로 도구 추론 / Infer tools from response content keywords
-  Object.entries(TOOL_KEYWORD_MAP).forEach(([tool, keywords]) => {
-    if (keywords.some(kw => rawResponse.includes(kw))) tools.add(tool);
-  });
-  return Array.from(tools);
-}
-
-// ============================================================================
-// SSE helpers / SSE 헬퍼
-// ============================================================================
-function sseEvent(event: string, data: any): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-}
-
-// ============================================================================
-// Simulated streaming: send pre-generated text as chunks for typing effect
-// 시뮬레이션 스트리밍: 완성된 텍스트를 청크로 나눠 타이핑 효과 구현
-// ============================================================================
-const CHUNK_SIZE = 50;  // Characters per chunk / 청크당 글자 수
-const CHUNK_DELAY_MS = 15; // Delay between chunks (ms) / 청크 간 딜레이
-
-async function simulateStreaming(
-  text: string,
-  send: (event: string, data: any) => void,
-): Promise<void> {
-  for (let i = 0; i < text.length; i += CHUNK_SIZE) {
-    const chunk = text.slice(i, i + CHUNK_SIZE);
-    send('chunk', { delta: chunk });
-    if (i + CHUNK_SIZE < text.length) {
-      await new Promise(r => setTimeout(r, CHUNK_DELAY_MS));
-    }
-  }
-}
-
-// ============================================================================
-// Bedrock streaming helper: stream response chunks as SSE events
-// Bedrock 스트리밍 헬퍼: 응답 청크를 SSE 이벤트로 전송
-// ============================================================================
-async function streamBedrockToSSE(
-  params: { modelId: string; system: string; messages: Array<{role: string; content: string}>; maxTokens?: number },
-  send: (event: string, data: any) => void,
-): Promise<{ content: string; inputTokens: number; outputTokens: number }> {
-  const body = JSON.stringify({
-    anthropic_version: 'bedrock-2023-05-31',
-    max_tokens: params.maxTokens || 4096,
-    system: params.system,
-    messages: params.messages,
-  });
-
-  const response = await bedrockClient.send(new InvokeModelWithResponseStreamCommand({
-    modelId: params.modelId,
-    contentType: 'application/json',
-    accept: 'application/json',
-    body: new TextEncoder().encode(body),
-  }));
-
-  let fullContent = '';
-  let inputTokens = 0;
-  let outputTokens = 0;
-
-  if (response.body) {
-    for await (const event of response.body) {
-      if (event.chunk?.bytes) {
-        const parsed = JSON.parse(new TextDecoder().decode(event.chunk.bytes));
-        // content_block_delta contains streaming text / 스트리밍 텍스트 포함
-        if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-          fullContent += parsed.delta.text;
-          send('chunk', { delta: parsed.delta.text });
-        }
-        // message_delta contains stop reason / 메시지 종료 정보
-        if (parsed.type === 'message_delta' && parsed.usage) {
-          outputTokens = parsed.usage.output_tokens || 0;
-        }
-        // message_start contains input token count / 입력 토큰 수
-        if (parsed.type === 'message_start' && parsed.message?.usage) {
-          inputTokens = parsed.message.usage.input_tokens || 0;
-        }
-      }
-    }
-  }
-
-  return { content: fullContent, inputTokens, outputTokens };
-}
-
-// ============================================================================
-// Helper: 통계 기록 + 대화 저장을 한 번에 / Record stats + save conversation in one call
-function recordAndSave(p: {
-  route: string; gateway: string; responseTimeMs: number; usedTools: string[];
-  success: boolean; via: string; question: string; summary: string; userId: string;
-  inputTokens?: number; outputTokens?: number; model?: string;
-}): void {
-  recordCall({ timestamp: new Date().toISOString(), route: p.route, gateway: p.gateway, responseTimeMs: p.responseTimeMs, usedTools: p.usedTools, success: p.success, via: p.via, inputTokens: p.inputTokens, outputTokens: p.outputTokens, model: p.model });
-  saveConversation({ id: `${Date.now()}`, userId: p.userId, timestamp: new Date().toISOString(), route: p.route, gateway: p.gateway, question: p.question.slice(0, 100), summary: p.summary.slice(0, 200), usedTools: p.usedTools, responseTimeMs: p.responseTimeMs, via: p.via }).catch(() => {});
-}
-
 // POST handler — SSE streaming with step-by-step progress events
 // POST 핸들러 — 단계별 진행 이벤트를 포함한 SSE 스트리밍
 // ============================================================================
@@ -1048,27 +391,7 @@ export async function POST(request: NextRequest) {
 
   // i18n status messages / 다국어 상태 메시지 (ko/en/zh)
   const isEn = clientLang !== 'ko'; // collectors fall back to English for zh
-  const pick = (en: string, ko: string, zh: string) => clientLang === 'ko' ? ko : clientLang === 'zh' ? zh : en;
-  const STATUS = {
-    classifying: pick('🔍 Analyzing question...', '🔍 질문 분석 중...', '🔍 正在分析问题...'),
-    multiRoute: (names: string) => pick(`📡 Multi-route: ${names}`, `📡 멀티 라우트: ${names}`, `📡 多路由: ${names}`),
-    connecting: (display: string) => pick(`📡 Connecting to ${display}...`, `📡 ${display} 연결 중...`, `📡 正在连接 ${display}...`),
-    sqlRetrying: pick('🔄 Retrying with corrected SQL...', '🔄 SQL 수정 후 재시도...', '🔄 修正 SQL 后重试...'),
-    analyzing: (count: number) => pick(`📊 Analyzing ${count} rows of data...`, `📊 ${count}건 데이터 분석 중...`, `📊 正在分析 ${count} 行数据...`),
-    synthesizing: (count: number) => pick(`📊 Synthesizing ${count} responses...`, `📊 ${count}개 응답 합성 중...`, `📊 正在合成 ${count} 个响应...`),
-    gatewayTimeout: pick('🔄 Gateway timeout, switching to Bedrock Direct...', '🔄 Gateway 타임아웃, Bedrock Direct로 전환...', '🔄 Gateway 超时，切换到 Bedrock Direct...'),
-    fallback: pick('🔄 Bedrock Direct fallback...', '🔄 Bedrock Direct 폴백...', '🔄 Bedrock Direct 回退...'),
-    codeGenerating: pick('💻 Generating code...', '💻 코드 생성 중...', '💻 正在生成代码...'),
-    codeExecuting: pick('⚡ Executing code...', '⚡ 코드 실행 중...', '⚡ 正在执行代码...'),
-    sqlGenerating: pick('📝 Generating SQL...', '📝 SQL 생성 중...', '📝 正在生成 SQL...'),
-    sqlQuerying: (retry: boolean) => pick(`🔎 Running Steampipe query...${retry ? ' (retry)' : ''}`, `🔎 Steampipe 쿼리 실행 중...${retry ? ' (재시도)' : ''}`, `🔎 正在运行 Steampipe 查询...${retry ? '（重试）' : ''}`),
-    sqlFallback: pick('⚠️ SQL failed, switching to AgentCore...', '⚠️ SQL 실패, AgentCore로 전환...', '⚠️ SQL 失败，切换到 AgentCore...'),
-    multiCall: (count: number) => pick(`🤖 Calling ${count} Gateways in parallel...`, `🤖 ${count}개 Gateway 병렬 호출 중...`, `🤖 正在并行调用 ${count} 个 Gateway...`),
-    multiCallProgress: (count: number, sec: number) => pick(`🤖 Running ${count} Gateways... (${sec}s)`, `🤖 ${count}개 Gateway 실행 중... (${sec}s)`, `🤖 ${count} 个 Gateway 运行中... (${sec}s)`),
-    agentcoreCall: (display: string) => pick(`🤖 Calling ${display} tools...`, `🤖 ${display} 도구 호출 중...`, `🤖 正在调用 ${display} 工具...`),
-    agentcoreProgress: (display: string, sec: number) => pick(`🤖 Running ${display} tools... (${sec}s)`, `🤖 ${display} 도구 실행 중... (${sec}s)`, `🤖 ${display} 工具运行中... (${sec}s)`),
-    topologyResolving: pick('🗺️ Resolving target VPC...', '🗺️ 대상 VPC 확인 중...', '🗺️ Resolving target VPC...'),
-  };
+  const STATUS = buildStatus(clientLang);
 
   const SYSTEM_PROMPT = getSystemPrompt(clientLang);
 
@@ -1118,8 +441,8 @@ export async function POST(request: NextRequest) {
         // Handler: Code Interpreter / 핸들러: 코드 인터프리터
         if (config.handler === 'code') {
           send('status', { step: 'generating', message: STATUS.codeGenerating });
-          const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
-          const codeSystemPrompt = SYSTEM_PROMPT + `\n\nThe user wants to execute code. If they provide code, wrap it in a \`\`\`python code block. If they describe a task, generate Python code to accomplish it and wrap it in a \`\`\`python code block. Always include print statements to show results.`;
+          const modelId = resolveModelId(modelKey);
+          const codeSystemPrompt = SYSTEM_PROMPT + CODE_PROMPT_SUFFIX;
           // Stream code generation / 코드 생성 스트리밍
           const codeStreamResult = await streamBedrockToSSE(
             { modelId, system: codeSystemPrompt, messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })) },
@@ -1214,7 +537,7 @@ export async function POST(request: NextRequest) {
               .map(r => r.value);
 
             if (successResults.length > 0) {
-              const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+              const modelId = resolveModelId(modelKey);
               const isMultiDs = successResults.length > 1;
               send('status', { step: 'datasource-analyzing', message: isMultiDs
                 ? `${successResults.length}개 데이터소스 상관 분석 중...`
@@ -1265,12 +588,12 @@ export async function POST(request: NextRequest) {
             const data = await collector.collect(send, accountId, isEn);
             const context = collector.formatContext(data);
 
-            send('status', { step: `${route}-analyzing`, message: pick(
+            send('status', { step: `${route}-analyzing`, message: pick(clientLang,
               `🤖 Analyzing with ${collector.displayName}...`,
               `🤖 ${collector.displayName} 분석 중...`,
               `🤖 正在使用 ${collector.displayName} 分析...`) });
 
-            const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+            const modelId = resolveModelId(modelKey);
             const bedrockMessages = messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content }));
             bedrockMessages[bedrockMessages.length - 1].content += context;
 
@@ -1300,7 +623,7 @@ export async function POST(request: NextRequest) {
         // Handler: SQL (aws-data) / SQL 핸들러
         if (config.handler === 'sql') {
           send('status', { step: 'sql-generating', message: STATUS.sqlGenerating });
-          const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+          const modelId = resolveModelId(modelKey);
           let sql = await generateSQL(messages, accountId, account?.alias);
           let queryResult: { data: string; rowCount: number; error?: string } | null = null;
 
@@ -1405,7 +728,7 @@ export async function POST(request: NextRequest) {
           } else {
             // 모든 Gateway 실패 → Bedrock Direct 스트리밍 폴백 / All gateways failed → Bedrock Direct streaming fallback
             send('status', { step: 'fallback', message: STATUS.gatewayTimeout });
-            const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+            const modelId = resolveModelId(modelKey);
             try {
               const mfStreamResult = await streamBedrockToSSE(
                 { modelId, system: SYSTEM_PROMPT, messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })) },
@@ -1467,7 +790,7 @@ export async function POST(request: NextRequest) {
 
         // Fallback: Bedrock Direct streaming / 폴백: Bedrock 직접 스트리밍
         send('status', { step: 'fallback', message: STATUS.fallback });
-        const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+        const modelId = resolveModelId(modelKey);
         const fbStreamResult = await streamBedrockToSSE(
           { modelId, system: SYSTEM_PROMPT, messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })) },
           send,
@@ -1513,8 +836,8 @@ async function handleSingleRoute(
 
   // Code handler / 코드 핸들러
   if (config.handler === 'code') {
-    const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
-    const codeSystemPrompt = SYSTEM_PROMPT + `\n\nThe user wants to execute code. If they provide code, wrap it in a \`\`\`python code block. If they describe a task, generate Python code to accomplish it and wrap it in a \`\`\`python code block. Always include print statements to show results.`;
+    const modelId = resolveModelId(modelKey);
+    const codeSystemPrompt = SYSTEM_PROMPT + CODE_PROMPT_SUFFIX;
     const body = JSON.stringify({
       anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: codeSystemPrompt,
       messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })),
@@ -1535,7 +858,7 @@ async function handleSingleRoute(
 
   // SQL handler / SQL 핸들러
   if (config.handler === 'sql') {
-    const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+    const modelId = resolveModelId(modelKey);
     let sql = await generateSQL(messages, accountId, accountAlias);
     let queryResult: { data: string; rowCount: number; error?: string } | null = null;
     for (let attempt = 0; attempt < 2 && sql; attempt++) {
@@ -1622,7 +945,7 @@ async function handleSingleRoute(
       anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: SYSTEM_PROMPT, messages: bedrockMessages,
     });
     const response = await bedrockClient.send(new InvokeModelCommand({
-      modelId: MODELS[modelKey || 'opus-4.8'], contentType: 'application/json', accept: 'application/json',
+      modelId: rawModelId(modelKey), contentType: 'application/json', accept: 'application/json',
       body: new TextEncoder().encode(body),
     }));
     const analysisText = JSON.parse(new TextDecoder().decode(response.body)).content?.[0]?.text || '';
@@ -1647,7 +970,7 @@ async function handleSingleRoute(
         anthropic_version: 'bedrock-2023-05-31', max_tokens: 8192, system: collector.analysisPrompt, messages: bedrockMessages,
       });
       const response = await bedrockClient.send(new InvokeModelCommand({
-        modelId: MODELS[modelKey || 'opus-4.8'], contentType: 'application/json', accept: 'application/json',
+        modelId: rawModelId(modelKey), contentType: 'application/json', accept: 'application/json',
         body: new TextEncoder().encode(body),
       }));
       const analysisText = JSON.parse(new TextDecoder().decode(response.body)).content?.[0]?.text || '';
@@ -1676,12 +999,12 @@ async function synthesizeResponses(
   question: string, responses: { route: string; content: string; via: string }[], modelKey?: string, lang?: string
 ): Promise<string> {
   const SYSTEM_PROMPT = getSystemPrompt(lang);
-  const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+  const modelId = resolveModelId(modelKey);
   const parts = responses.map(r => `--- ${r.via} ---\n${r.content}`).join('\n\n');
   const body = JSON.stringify({
     anthropic_version: 'bedrock-2023-05-31',
     max_tokens: 4096,
-    system: SYSTEM_PROMPT + `\n\nYou are synthesizing answers from multiple AWS service agents. Combine them into one coherent, well-structured response. Do not repeat information.`,
+    system: SYSTEM_PROMPT + SYNTHESIS_PROMPT_SUFFIX,
     messages: [
       { role: 'user', content: `Question: ${question}\n\nMultiple agents responded:\n\n${parts}\n\nPlease synthesize into one comprehensive answer.` },
     ],
@@ -1699,8 +1022,8 @@ async function synthesizeResponsesStreaming(
   question: string, responses: { route: string; content: string; via: string }[],
   send: (event: string, data: any) => void, modelKey?: string, lang?: string,
 ): Promise<string> {
-  const systemPrompt = getSystemPrompt(lang) + `\n\nYou are synthesizing answers from multiple AWS service agents. Combine them into one coherent, well-structured response. Do not repeat information.`;
-  const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+  const systemPrompt = getSystemPrompt(lang) + SYNTHESIS_PROMPT_SUFFIX;
+  const modelId = resolveModelId(modelKey);
   const parts = responses.map(r => `--- ${r.via} ---\n${r.content}`).join('\n\n');
 
   const response = await bedrockClient.send(new ConverseStreamCommand({
@@ -1747,7 +1070,7 @@ async function handleNonStreaming(messages: Array<{role: string; content: string
         });
       }
       // Fallback / 폴백
-      const modelId = MODELS[modelKey || 'opus-4.8'] || MODELS['opus-4.8'];
+      const modelId = resolveModelId(modelKey);
       const body = JSON.stringify({
         anthropic_version: 'bedrock-2023-05-31', max_tokens: 4096, system: SYSTEM_PROMPT,
         messages: messages.slice(-10).map((m: any) => ({ role: m.role, content: m.content })),
