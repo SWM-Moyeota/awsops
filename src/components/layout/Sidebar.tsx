@@ -39,6 +39,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   Radar,
+  History,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -109,6 +110,7 @@ const navGroups: NavGroup[] = [
       { labelKey: 'sidebar.bedrock', href: '/bedrock', icon: Sparkles },
       { labelKey: 'sidebar.cloudwatch', href: '/cloudwatch', icon: Bell },
       { labelKey: 'sidebar.cloudtrail', href: '/cloudtrail', icon: FileSearch },
+      { labelKey: 'sidebar.changes', href: '/changes', icon: History },
       { labelKey: 'sidebar.cost', href: '/cost', icon: DollarSign },
       { labelKey: 'sidebar.costRadar', href: '/cost-radar', icon: Radar },
       { labelKey: 'sidebar.resourceInventory', href: '/inventory', icon: BarChart3 },

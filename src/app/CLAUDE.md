@@ -52,6 +52,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `monitoring/page.tsx` — CPU/메모리/네트워크/Disk I/O
 - `cloudwatch/page.tsx` — CloudWatch 알람
 - `cloudtrail/page.tsx` — CloudTrail 트레일/이벤트
+- `changes/page.tsx` — 변경 기록 (누가 어떤 리소스를 만들고 지웠는지, 토스 스타일 다크, Pretendard는 `next/font/local`로 이 페이지에만)
 - `cost/page.tsx` — Cost Explorer (MSP 자동 감지, 스냅샷 폴백)
 - `inventory/page.tsx` — Resource Inventory (수량 추이, 비용 영향 추정)
 - `container-cost/page.tsx` — ECS Container Cost (Fargate 가격 + Container Insights)
@@ -87,6 +88,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 | `api/health/route.ts` | 헬스 모니터 상태 조회(GET, 모니터 기동) + 테스트 알림/즉시 점검(POST, admin 전용) |
 | `api/cost-radar/route.ts` | 비용 레이더 — 월 비용 추정 + 정리 추천 + 7일 추세 (`?accountId=<12자리\|__all__>`, 5분 캐시, 잘못된 ID 400) |
 | `api/cost-radar/creators/route.ts` | 리소스 생성자 조회 (`?ids=계정:리전:리소스ID,...` 최대 50개, CloudTrail) |
+| `api/changes/route.ts` | 변경 기록 조회 (`?accountId=<12자리\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`, 잘못된 계정·기간·종류·서비스 400, 500은 오류 이름만, `no-store`) |
 | `api/inventory/export/route.ts` | 인벤토리 XLSX 내보내기 (리소스별 시트 + Summary) |
 | `api/diagram/route.ts` | 2D 다이어그램 PNG 생성 (라이브 쿼리 → Python 렌더러) |
 | `api/diagram-chat/route.ts` | 다이어그램 채팅 — 자연어 → 다이어그램 생성 옵션 |
@@ -155,6 +157,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `monitoring/page.tsx` — CPU/Memory/Network/Disk I/O
 - `cloudwatch/page.tsx` — CloudWatch alarms
 - `cloudtrail/page.tsx` — CloudTrail trails/events
+- `changes/page.tsx` — Change timeline (who created / deleted which resource; Toss-style dark; Pretendard via `next/font/local`, this page only)
 - `cost/page.tsx` — Cost Explorer (MSP auto-detect, snapshot fallback)
 - `inventory/page.tsx` — Resource Inventory (count trends, cost impact estimation)
 - `container-cost/page.tsx` — ECS Container Cost (Fargate pricing + Container Insights)
@@ -190,6 +193,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 | `api/health/route.ts` | Health monitor status (GET, starts the monitor) + test alert / run-now (POST, admin-only) |
 | `api/cost-radar/route.ts` | Cost Radar — monthly cost estimate + cleanup recommendations + 7-day trend (`?accountId=<12-digit\|__all__>`, 5-min cache, 400 on invalid id) |
 | `api/cost-radar/creators/route.ts` | Resource creator lookup (`?ids=account:region:resourceId,...`, max 50, CloudTrail) |
+| `api/changes/route.ts` | Change timeline (`?accountId=<12-digit\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`; 400 on bad account/range/kind/type, 500 carries the error name only, `no-store`) |
 | `api/inventory/export/route.ts` | Inventory XLSX export (one sheet per resource type + Summary) |
 | `api/diagram/route.ts` | 2D diagram PNG generation (live queries -> Python renderer) |
 | `api/diagram-chat/route.ts` | Diagram chat — natural language -> diagram generation options |

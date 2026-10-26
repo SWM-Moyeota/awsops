@@ -28,6 +28,11 @@
 - `cost-radar/SavingsCard.tsx` — 추천 1건 알약 카드 (클릭 시 상세)
 - `cost-radar/RecommendationPanel.tsx` — 추천 상세 모달 (만든 사람 지연 조회, CLI 복사, 콘솔 링크, **실행 버튼 없음**)
 
+### changes/ — 변경 기록 (5 + 헬퍼) — 자세한 내용은 `changes/CLAUDE.md`
+- `changes/ChangeTimelineView.tsx` — `/changes` 본문 (요약 문장, 칩 필터, 검색, 날짜별 목록, 상태 줄, 빈·오류·로딩 상태)
+- `changes/ChangeSummary.tsx` · `ChangeFilters.tsx` · `ChangeRow.tsx` · `ChangeDetailPanel.tsx` — 숫자 카드, 칩·검색칸, 한 줄 문장, 상세 패널 (같은 리소스 기록 지연 조회, 콘솔 링크)
+- `changes/format.ts` — 문장(받침에 맞춘 을/를·이/가), KST 시각, 날짜 묶음, 도구 이름 `toolLabel(tool, via?)`, 콘솔 링크 — 다른 화면·Slack이 재사용
+
 ### charts/ — Recharts 차트 래퍼 (3)
 - `charts/BarChartCard.tsx` — 바 차트
 - `charts/LineChartCard.tsx` — 라인 차트
@@ -79,6 +84,11 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 - `cost-radar/CostDonut.tsx` — CSS conic-gradient donut + total + week-over-week pill
 - `cost-radar/SavingsCard.tsx` — pill card per recommendation (click opens detail)
 - `cost-radar/RecommendationPanel.tsx` — recommendation detail modal (lazy creator lookup, CLI copy, console link, **no action buttons**)
+
+### changes/ — Change timeline (5 + helpers) — see `changes/CLAUDE.md`
+- `changes/ChangeTimelineView.tsx` — `/changes` body (summary sentence, pill filters, search, day-grouped rows, status line, empty/error/loading states)
+- `changes/ChangeSummary.tsx` · `ChangeFilters.tsx` · `ChangeRow.tsx` · `ChangeDetailPanel.tsx` — stat cards, chips + search, sentence row, detail panel (lazy same-resource history, console link)
+- `changes/format.ts` — sentences (을/를 · 이/가 by 받침), KST times, day grouping, `toolLabel(tool, via?)`, console links — reused by other views and Slack
 
 ### charts/ — Recharts Chart Wrappers (3)
 - `charts/BarChartCard.tsx` — Bar chart
