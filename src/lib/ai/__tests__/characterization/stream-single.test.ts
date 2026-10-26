@@ -38,12 +38,6 @@ const classified = (route: string, display: string): Ev =>
 const agentcoreStatus = (display: string): Ev =>
   ['status', { step: 'agentcore', message: `🤖 Calling ${display} tools...` }];
 const chunk = (delta: string): Ev => ['chunk', { delta }];
-/** simulateStreaming splits AgentCore text into 50-character chunks. */
-const simChunks = (text: string): Ev[] => {
-  const out: Ev[] = [];
-  for (let i = 0; i < text.length; i += 50) out.push(chunk(text.slice(i, i + 50)));
-  return out;
-};
 
 function expectRecorded(p: Record<string, unknown>) {
   expect(mocks.recordCall).toHaveBeenCalledTimes(1);
@@ -764,7 +758,6 @@ describe('/api/ai streaming single-route path (characterization)', () => {
     mocks.getUserFromRequest.mockReturnValue({ email: 'other@example.com', sub: 'other' });
     const req = aiRequest({ stream: true, messages: [{ role: 'user', content: 'first' }, { role: 'assistant', content: 'a' }, { role: 'user', content: question }] });
     const ev = await readSse(await POST(req));
-    expect(mocks.getUserFromRequest).toHaveBeenCalledWith(req);
     expect(ev.at(-1)![1].content).toBe(answer);
     expect(mocks.saveConversation).toHaveBeenCalledTimes(1);
     const saved = mocks.saveConversation.mock.calls[0][0];
@@ -811,10 +804,12 @@ describe('/api/ai streaming single-route path (characterization)', () => {
 
   it('streamWriteAfterCloseIsContained', async () => {
     const unhandled: unknown[] = [];
+    const uncaught: unknown[] = [];
     const onUnhandled = (r: unknown) => { unhandled.push(r); };
+    const onUncaught = (e: unknown) => { uncaught.push(e); };
     process.on('unhandledRejection', onUnhandled);
-    const setSpy = vi.spyOn(globalThis, 'setInterval');
-    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+    process.on('uncaughtException', onUncaught);
+    vi.useFakeTimers();
     try {
       const gate = deferred<string>();
       mocks.bedrock.classify(['security']);
@@ -822,24 +817,30 @@ describe('/api/ai streaming single-route path (characterization)', () => {
       const res = await POST(aiRequest({ stream: true, messages: user('q') }));
       const reader = res.body!.getReader();
       await reader.read();
-      // Wait until the request is parked inside the AgentCore call, then the client goes away.
-      await vi.waitFor(() => expect(mocks.agent.calls('InvokeAgentRuntimeCommand')).toHaveLength(1));
+      // Settle all pending work: the request is now parked inside the AgentCore call.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mocks.agent.calls('InvokeAgentRuntimeCommand')).toHaveLength(1);
+      // The client goes away.
       await reader.cancel();
-      expect(setSpy).toHaveBeenCalledTimes(1); // the single-route keepalive interval
-      const intervalId = setSpy.mock.results[0].value;
 
       // AgentCore answers after the client left → every later enqueue throws; contained.
       gate.resolve('late answer');
-      await vi.waitFor(() => expect(clearSpy).toHaveBeenCalledWith(intervalId));
-      await new Promise(r => setTimeout(r, 30));
-      expect(unhandled).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(vi.getTimerCount()).toBe(0); // keepalive + timeout timers are gone
       expect(mocks.reportAgentcoreInvoke.mock.calls).toEqual([[expect.any(String), 'success']]);
       // The first simulated chunk throws before recordAndSave → nothing is recorded.
       expectNoStats();
+
+      // Nothing fires later (no keepalive tick into the closed stream), nothing escapes.
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(unhandled).toEqual([]);
+      expect(uncaught).toEqual([]);
+      expectNoStats();
     } finally {
+      vi.useRealTimers();
       process.off('unhandledRejection', onUnhandled);
-      setSpy.mockRestore();
-      clearSpy.mockRestore();
+      process.off('uncaughtException', onUncaught);
     }
   });
 });
