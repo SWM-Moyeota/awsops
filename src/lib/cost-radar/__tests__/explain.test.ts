@@ -109,6 +109,9 @@ describe('explainChange — snapshot mode', () => {
 
   it('nearestBaseDayIsUsedAndNoted', async () => {
     const d = deps({
+      records: [
+        rec('create', 'i-1', '2026-10-21T01:00:00Z'),
+      ],
       snapshots: {
         '2026-10-18': { [A]: [snap('i-1', 99)] },
         '2026-10-22': { [A]: [snap('i-1', 10)] },
@@ -120,6 +123,19 @@ describe('explainChange — snapshot mode', () => {
     expect(r.mode).toBe('snapshot');
     expect(r.baseMonthly).toBe(10);
     expect(r.notes).toContain('기준일을 2026-10-22로 맞췄어요');
+    // the attribution window starts at the adjusted base day (KST)
+    expect(d.readRecords).toHaveBeenCalledWith(new Date('2026-10-21T15:00:00Z'), NOW);
+  });
+
+  it('attribution window starts at the adjusted base day', async () => {
+    const d = deps({
+      snapshots: { '2026-10-22': { [A]: [] } },
+      est: estimate([live('i-4', 40)]),
+      records: [rec('create', 'i-4', '2026-10-21T01:00:00Z')],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes[0].kind).toBe('added');
+    expect(r.causes[0].actor).toBeUndefined();
   });
 
   it('a snapshot from today is never used as the base', async () => {
@@ -139,13 +155,16 @@ describe('explainChange — snapshot mode', () => {
     const r = await explainChange({ accountId: '__all__', days: 7, now: NOW }, d);
     expect(r.mode).toBe('snapshot');
     expect(r.notes).toContain(`기준일에 없던 계정: ${B}`);
-    // C is not in the live estimate, so it is not part of the comparison.
-    expect(r.baseMonthly).toBe(10);
+    // C has no live resources left; it is still in scope (base ∪ live), so its removals show.
+    expect(r.baseMonthly).toBe(510);
     expect(r.currentMonthly).toBe(17);
-    expect(r.delta).toBe(7);
-    expect(r.causes).toHaveLength(1);
-    expect(r.causes[0]).toMatchObject({ kind: 'added', accountId: B, resourceId: 'i-b', impact: 7 });
+    expect(r.delta).toBe(-493);
+    expect(r.causes.map((c) => [c.kind, c.accountId, c.resourceId, c.impact])).toEqual([
+      ['removed', C, 'i-c', -500],
+      ['added', B, 'i-b', 7],
+    ]);
     expect(r.unexplained).toBe(0);
+    expect(r.notes.some((n) => n.includes(C))).toBe(false);
   });
 
   it('single account missing in the base counts as base 0 and is noted', async () => {
@@ -186,7 +205,8 @@ describe('explainChange — snapshot mode', () => {
     expect(r.causes[49].impact).toBe(11);
     // unexplained is computed over every cause, not only the 50 shown
     expect(r.unexplained).toBe(0);
-    expect(r.notes.some((n) => n.includes('50'))).toBe(true);
+    // hidden causes are impacts 1..10 → 55
+    expect(r.notes).toContain('원인이 60개라 금액 영향이 큰 50개만 보여줘요 · 나머지 10개 합계 +$55.00');
   });
 });
 
@@ -220,6 +240,37 @@ describe('explainChange — timeline-only mode', () => {
     expect(r.causes[0]).toMatchObject({ monthlyBefore: null, monthlyAfter: 40, actor: { kind: 'person', name: 'jiwoo' } });
     expect(r.causes[1]).toMatchObject({ name: 'data', category: 'storage', monthlyBefore: null, monthlyAfter: null });
     expect(r.causes[2]).toMatchObject({ monthlyAfter: 20, category: 'ec2' });
+  });
+
+  it('a stop of a resource no longer live is removed with unknown impact', async () => {
+    const d = deps({
+      est: estimate([]),
+      records: [rec('stop', 'i-1', '2026-10-24T01:00:00Z', { actor: { kind: 'person', name: 'minsu' } })],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes).toEqual([expect.objectContaining({
+      kind: 'removed', resourceId: 'i-1', category: 'ec2', impact: null, action: 'stop', actor: { kind: 'person', name: 'minsu' },
+    })]);
+  });
+
+  it('timeline mode matches RDS ids case-insensitively and derived -ipv4 resources to the parent', async () => {
+    const d = deps({
+      est: estimate([
+        live('mydb', 100, { category: 'rds' }),
+        live('i-4', 40),
+        live('i-4-ipv4', 3.65, { category: 'public-ip' }),
+      ]),
+      records: [
+        rec('create', 'MyDB', '2026-10-24T01:00:00Z', { resourceType: 'rds-instance' }),
+        rec('create', 'i-4', '2026-10-24T02:00:00Z'),
+      ],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => [c.kind, c.resourceId, c.impact, c.action])).toEqual([
+      ['added', 'mydb', 100, 'create'],
+      ['added', 'i-4', 40, 'create'],
+      ['added', 'i-4-ipv4', 3.65, 'create'],
+    ]);
   });
 
   it('a live resource created and then stopped is listed once, as added', async () => {
@@ -259,6 +310,7 @@ describe('explainChange — attribution', () => {
         rec('modify', 'i-2', '2026-10-21T01:00:00Z', { actor: { kind: 'person', name: 'old' } }),
         rec('stop', 'i-2', '2026-10-23T01:00:00Z', { actor: { kind: 'auto', name: 'scheduler', sourceIdentity: 'x' } }),
         rec('create', 'i-2', '2026-10-25T01:00:00Z', { actor: { kind: 'person', name: 'wrongkind' } }),
+        rec('delete', 'i-2', '2026-10-25T02:00:00Z', { actor: { kind: 'person', name: 'wrongkind2' } }),
         rec('modify', 'i-2', '2026-10-26T01:00:00Z', { failed: true, actor: { kind: 'person', name: 'failed' } }),
         rec('modify', 'i-2', '2026-10-26T02:00:00Z', { accountId: B, actor: { kind: 'person', name: 'otheracct' } }),
         rec('modify', 'i-2', '2026-10-01T02:00:00Z', { actor: { kind: 'person', name: 'outside' } }),
@@ -271,7 +323,7 @@ describe('explainChange — attribution', () => {
     expect(r.causes[0].time).toBe('2026-10-23T01:00:00Z');
   });
 
-  it('removed matches delete records, added matches create records', async () => {
+  it('removed matches delete/stop records, added matches create/start records (newest wins)', async () => {
     const d = deps({
       snapshots: { [FROM_DAY]: { [A]: [snap('vol-3', 5)] } },
       est: estimate([live('i-4', 40)]),
@@ -283,9 +335,67 @@ describe('explainChange — attribution', () => {
     });
     const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
     expect(r.causes.map((c) => [c.resourceId, c.action, c.actor?.name])).toEqual([
-      ['i-4', 'create', 'root'],
+      ['i-4', 'start', 'starter'],
       ['vol-3', 'delete', 'minsu'],
     ]);
+  });
+
+  it('a stopped instance (gone from the estimate) is attributed to its stop record', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('i-1', 10)] } },
+      est: estimate([]),
+      records: [rec('stop', 'i-1', '2026-10-24T01:00:00Z', { actor: { kind: 'person', name: 'minsu' } })],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes).toHaveLength(1);
+    expect(r.causes[0]).toMatchObject({
+      kind: 'removed', resourceId: 'i-1', impact: -10, action: 'stop', actor: { kind: 'person', name: 'minsu' },
+      time: '2026-10-24T01:00:00Z',
+    });
+  });
+
+  it('a started instance (back in the estimate) is attributed to its start record', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [] } },
+      est: estimate([live('i-1', 10)]),
+      records: [rec('start', 'i-1', '2026-10-24T01:00:00Z')],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes[0]).toMatchObject({ kind: 'added', impact: 10, action: 'start' });
+  });
+
+  it('RDS ids match case-insensitively', async () => {
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [snap('mydb', 50, { category: 'rds' })] } },
+      est: estimate([live('mydb', 80, { category: 'rds' }), live('i-up', 5)]),
+      records: [
+        rec('modify', 'MyDB', '2026-10-24T01:00:00Z', { resourceType: 'rds-instance', actor: { kind: 'person', name: 'dba' } }),
+        // case-insensitive matching is only for rds-* records
+        rec('create', 'I-UP', '2026-10-24T01:00:00Z'),
+      ],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => [c.resourceId, c.action, c.actor?.name])).toEqual([
+      ['mydb', 'modify', 'dba'],
+      ['i-up', undefined, undefined],
+    ]);
+  });
+
+  it('derived -ipv4 resources attribute to the parent record', async () => {
+    const lbArn = 'arn:aws:elasticloadbalancing:ap-northeast-2:111111111111:loadbalancer/app/web/abc';
+    const d = deps({
+      snapshots: { [FROM_DAY]: { [A]: [] } },
+      est: estimate([
+        live(`${lbArn}-ipv4`, 7.3, { category: 'public-ip' }),
+        live('i-4-ipv4', 3.65, { category: 'public-ip' }),
+      ]),
+      records: [
+        rec('create', lbArn, '2026-10-24T01:00:00Z', { resourceType: 'load-balancer', actor: { kind: 'person', name: 'lb' } }),
+        rec('create', 'i-4', '2026-10-24T01:00:00Z', { actor: { kind: 'person', name: 'ec2' } }),
+      ],
+    });
+    const r = await explainChange({ accountId: A, days: 7, now: NOW }, d);
+    expect(r.causes.map((c) => c.actor?.name)).toEqual(['lb', 'ec2']);
   });
 
   it('noRecordMeansNoActor', async () => {

@@ -24,17 +24,29 @@ const DAY_MS = 86_400_000;
 export const NOTE_TIMELINE_ONLY = '아직 비교할 과거 스냅샷이 없어서 기록 기반으로 추정했어요';
 export const noteBaseDay = (day: string) => `기준일을 ${day}로 맞췄어요`;
 export const noteMissingAccount = (id: string) => `기준일에 없던 계정: ${id}`;
-export const noteCapped = (total: number) => `원인이 ${total}개라 금액 영향이 큰 ${MAX_CAUSES}개만 보여줘요`;
+export const noteCapped = (total: number, hiddenSum: number) =>
+  `원인이 ${total}개라 금액 영향이 큰 ${MAX_CAUSES}개만 보여줘요 · 나머지 ${total - MAX_CAUSES}개 합계 ${signedUsd(hiddenSum)}`;
 
-/** Which change-timeline kinds can explain each cause kind. / 원인 종류별로 맞는 변경 기록 종류. */
+/** Signed money, the global format: +$38.00 / −$12.40 / $0.00. / 부호 있는 금액 표기. */
+export function signedUsd(n: number): string {
+  const v = Math.round(n * 100) / 100;
+  const sign = v > 0 ? '+' : v < 0 ? '\u2212' : '';
+  return `${sign}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Which change-timeline kinds can explain each cause kind. A stopped EC2 leaves the estimate (removed) and a
+ * started one enters it (added), so stop/start also explain removed/added.
+ * 원인 종류별로 맞는 변경 기록 종류. 정지된 EC2는 추정에서 빠지고(removed) 시작되면 들어온다(added).
+ */
 const MATCHING_KINDS: Record<ExplainCause['kind'], ChangeKind[]> = {
-  added: ['create'],
-  removed: ['delete'],
+  added: ['create', 'start'],
+  removed: ['delete', 'stop'],
   changed: ['stop', 'start', 'modify'],
 };
 
-/** Cost category of a deleted resource in timeline mode; types without a fixed cost are skipped. / 비용 없는 종류는 제외. */
-const DELETE_CATEGORY: Partial<Record<ResourceType, CategoryId>> = {
+/** Cost category of a resource gone from the estimate in timeline mode; types without a fixed cost are skipped. / 비용 없는 종류는 제외. */
+const TYPE_CATEGORY: Partial<Record<ResourceType, CategoryId>> = {
   'ec2-instance': 'ec2',
   'ebs-volume': 'storage',
   'ebs-snapshot': 'storage',
@@ -63,12 +75,16 @@ function livePriced(e: Estimate): PricedResource[] {
   return e.resources.filter((r): r is PricedResource & { monthly: number } => typeof r.monthly === 'number' && r.monthly > 0);
 }
 
-/** Accounts in scope: every account present in the live estimate for "All". / 전체면 실시간 추정에 있는 모든 계정. */
-function scopeAccounts(accountId: string, e: Estimate): string[] {
+/**
+ * Accounts in scope. "All" = live accounts ∪ base-snapshot accounts, so an account whose resources were all
+ * deleted still shows its removals. / 전체면 실시간 계정 ∪ 기준 스냅샷 계정 (전부 삭제된 계정의 사라짐도 보인다).
+ */
+function scopeAccounts(accountId: string, e: Estimate, base: DailySnapshot | null): string[] {
   if (accountId !== ALL_SCOPE) return [accountId];
   const ids = new Set<string>();
   for (const r of e.resources) ids.add(r.accountId);
   for (const r of e.unpriced) ids.add(r.accountId);
+  if (base) for (const id of Object.keys(base.accounts)) ids.add(id);
   return Array.from(ids).sort();
 }
 
@@ -129,46 +145,65 @@ function snapshotCauses(
   return { causes, baseMonthly: round2(baseMonthly) };
 }
 
-const recordMatches = (rec: ChangeRecord, c: Pick<ExplainCause, 'accountId' | 'resourceId' | 'name'>) =>
-  rec.accountId === c.accountId &&
-  (rec.resourceType === 's3-bucket' ? rec.resourceName === c.name : rec.resourceId === c.resourceId);
+const IPV4_SUFFIX = '-ipv4';
+
+/**
+ * Does a change record refer to this estimate resource? Same account, then: S3 by bucket name; RDS ids
+ * case-insensitively (records keep the request casing, Steampipe ids are lowercase, as in change-timeline query.ts);
+ * a derived `${id}-ipv4` public-IP resource also matches its parent's record.
+ * 변경 기록과 리소스 매칭: S3는 이름, RDS는 대소문자 무시, 파생 `-ipv4` 리소스는 부모 기록과도 매칭.
+ */
+export function recordMatches(rec: ChangeRecord, r: { accountId: string; resourceId: string; name: string }): boolean {
+  if (rec.accountId !== r.accountId) return false;
+  if (rec.resourceType === 's3-bucket') return rec.resourceName === r.name;
+  const ids = [r.resourceId];
+  if (r.resourceId.endsWith(IPV4_SUFFIX) && r.resourceId.length > IPV4_SUFFIX.length) {
+    ids.push(r.resourceId.slice(0, -IPV4_SUFFIX.length));
+  }
+  if (/^rds-/.test(rec.resourceType)) {
+    const want = rec.resourceId.toLowerCase();
+    return ids.some((id) => id.toLowerCase() === want);
+  }
+  return ids.includes(rec.resourceId);
+}
 
 function timelineCauses(records: ChangeRecord[], live: PricedResource[]): ExplainCause[] {
-  const liveIdx = new Map<string, PricedResource>();
-  for (const r of live) liveIdx.set(key(r.accountId, r.id), r);
+  // Every live resource a record refers to (an instance and its derived -ipv4). / 기록이 가리키는 실시간 리소스 전부.
   const findLive = (rec: ChangeRecord) =>
-    rec.resourceType === 's3-bucket'
-      ? live.find((r) => r.accountId === rec.accountId && r.name === rec.resourceName)
-      : liveIdx.get(key(rec.accountId, rec.resourceId));
+    live.filter((r) => recordMatches(rec, { accountId: r.accountId, resourceId: r.id, name: r.name }));
 
   const added = new Map<string, ExplainCause>();
   const removed = new Map<string, ExplainCause>();
   const changed = new Map<string, ExplainCause>();
   for (const rec of records) {
-    const l = findLive(rec);
-    if (rec.kind === 'create' && l) {
-      const k = key(l.accountId, l.id);
-      if (added.has(k)) continue;
-      const a = l.monthly as number;
-      added.set(k, {
-        kind: 'added', accountId: l.accountId, resourceId: l.id, name: l.name, category: l.category,
-        monthlyBefore: null, monthlyAfter: a, impact: round2(a), detailAfter: l.detail,
-      });
-    } else if (rec.kind === 'delete' && !l) {
-      const category = DELETE_CATEGORY[rec.resourceType];
+    const ls = findLive(rec);
+    if ((rec.kind === 'delete' || rec.kind === 'stop') && ls.length === 0) {
+      // Gone from the estimate (deleted, or a stopped instance): price unknown. / 사라짐(삭제·정지), 금액 알 수 없음.
+      const category = TYPE_CATEGORY[rec.resourceType];
       const k = key(rec.accountId, rec.resourceId);
       if (!category || removed.has(k)) continue;
       removed.set(k, {
         kind: 'removed', accountId: rec.accountId, resourceId: rec.resourceId, name: rec.resourceName || rec.resourceId,
         category, monthlyBefore: null, monthlyAfter: null, impact: null,
       });
-    } else if ((rec.kind === 'stop' || rec.kind === 'start' || rec.kind === 'modify') && l) {
+      continue;
+    }
+    for (const l of ls) {
       const k = key(l.accountId, l.id);
-      if (changed.has(k)) continue;
-      changed.set(k, {
-        kind: 'changed', accountId: l.accountId, resourceId: l.id, name: l.name, category: l.category,
-        monthlyBefore: null, monthlyAfter: l.monthly as number, impact: null, detailAfter: l.detail,
-      });
+      const a = l.monthly as number;
+      if (rec.kind === 'create') {
+        if (added.has(k)) continue;
+        added.set(k, {
+          kind: 'added', accountId: l.accountId, resourceId: l.id, name: l.name, category: l.category,
+          monthlyBefore: null, monthlyAfter: a, impact: round2(a), detailAfter: l.detail,
+        });
+      } else if (rec.kind === 'stop' || rec.kind === 'start' || rec.kind === 'modify') {
+        if (changed.has(k)) continue;
+        changed.set(k, {
+          kind: 'changed', accountId: l.accountId, resourceId: l.id, name: l.name, category: l.category,
+          monthlyBefore: null, monthlyAfter: a, impact: null, detailAfter: l.detail,
+        });
+      }
     }
   }
   // A resource created in the window is "added" even if it was also stopped/started later. / 생성이 우선.
@@ -213,14 +248,11 @@ export async function explainChange(q: ExplainQuery, deps?: Partial<ExplainDeps>
   const now = q.now ?? new Date();
   const fromDay = kstDay(new Date(now.getTime() - q.days * DAY_MS));
   const today = kstDay(now);
-  const windowStart = kstDayStart(fromDay);
-
-  const [estimate, base, rawRecords] = await Promise.all([
-    d.liveEstimate(q.accountId),
-    pickBase(fromDay, today, d),
-    d.readRecords(windowStart, now),
-  ]);
-  const accounts = scopeAccounts(q.accountId, estimate);
+  const [estimate, base] = await Promise.all([d.liveEstimate(q.accountId), pickBase(fromDay, today, d)]);
+  // Attribution window starts at the base day actually compared (a later one when adjusted). / 실제 기준일부터.
+  const windowStart = kstDayStart(base ? base.snap.day : fromDay);
+  const rawRecords = await d.readRecords(windowStart, now);
+  const accounts = scopeAccounts(q.accountId, estimate, base ? base.snap : null);
   const inScope = new Set(accounts);
   const lo = windowStart.getTime();
   const hi = now.getTime();
@@ -252,7 +284,8 @@ export async function explainChange(q: ExplainQuery, deps?: Partial<ExplainDeps>
   attribute(causes, records);
   causes.sort(byImpact);
   if (causes.length > MAX_CAUSES) {
-    notes.push(noteCapped(causes.length));
+    const hiddenSum = causes.slice(MAX_CAUSES).reduce((s, c) => s + (c.impact ?? 0), 0);
+    notes.push(noteCapped(causes.length, hiddenSum));
     causes = causes.slice(0, MAX_CAUSES);
   }
   return {
