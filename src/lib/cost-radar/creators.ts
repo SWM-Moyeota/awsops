@@ -2,15 +2,11 @@
 // CloudTrail LookupEvents로 리소스 생성자 조회 (속도 제한, 캐시, 예외 없음).
 import { CloudTrailClient, LookupEventsCommand } from '@aws-sdk/client-cloudtrail';
 import type { Event } from '@aws-sdk/client-cloudtrail';
-import { STSClient, AssumeRoleCommand } from '@aws-sdk/client-sts';
-import { getConfig } from '@/lib/app-config';
+import { cloudTrailSlot, accountCredentials, resetCloudTrailAccess } from '@/lib/cloudtrail-access';
 import type { CreatorInfo } from './types';
 import { readJson, writeJsonAtomic } from './store';
 
 const CACHE_FILE = 'creators.json';
-const ROLE = 'AWSopsReadOnlyRole';
-const STS_REGION = 'ap-northeast-2';
-const PACE_MS = 1000;
 const MAX_PAGES = 5;
 const RETRY_UNKNOWN_MS = 24 * 3_600_000;
 const CREATE_EVENTS = new Set(['RunInstances', 'CreateVolume', 'CreateSnapshot', 'AllocateAddress', 'CreateLoadBalancer', 'CreateTargetGroup']);
@@ -32,33 +28,9 @@ export function expectedEvents(resourceId: string): Set<string> {
 type Item = { resourceId: string; accountId: string; region: string };
 type CacheEntry = CreatorInfo & { checkedAt: string };
 type Cache = Record<string, CacheEntry>;
-type Creds = { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
 type Opts = { now?: Date };
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 const unknown = (resourceId: string): CreatorInfo => ({ resourceId, user: null, eventTime: null, status: 'unknown' });
-
-// AssumeRole credentials per account, reused until 1 min before expiry. / 만료 1분 전까지 재사용.
-const credCache = new Map<string, { creds: Creds; expires: number }>();
-
-async function credsFor(accountId: string): Promise<Creds | undefined> {
-  const cfg = getConfig();
-  const acct = cfg.accounts?.find((a) => a.accountId === accountId);
-  if (!acct || acct.isHost) return undefined; // default credential chain / 기본 자격증명
-  const hit = credCache.get(accountId);
-  if (hit && hit.expires - 60_000 > Date.now()) return hit.creds;
-  const res = await new STSClient({ region: STS_REGION }).send(new AssumeRoleCommand({
-    RoleArn: `arn:aws:iam::${accountId}:role/${ROLE}`,
-    RoleSessionName: 'awsops-cost-radar',
-    DurationSeconds: 900,
-    ...(cfg.crossAccountExternalId ? { ExternalId: cfg.crossAccountExternalId } : {}),
-  }));
-  const c = res.Credentials;
-  if (!c?.AccessKeyId || !c.SecretAccessKey) throw new Error('NoCredentials');
-  const creds = { accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken };
-  credCache.set(accountId, { creds, expires: c.Expiration ? new Date(c.Expiration).getTime() : Date.now() + 900_000 });
-  return creds;
-}
 
 function userOf(ev: Event): string | null {
   if (ev.Username) return ev.Username;
@@ -70,23 +42,15 @@ function userOf(ev: Event): string | null {
   }
 }
 
-// Process-wide state: per-account queue + last call time (pacing), in-flight de-dup, serialised cache writes.
+// Process-wide state: per-account queue, in-flight de-dup, serialised cache writes.
 // 프로세스 전역 상태: 계정별 큐/마지막 호출 시각(속도 제한), 진행 중 조회 중복 제거, 직렬화된 캐시 쓰기.
 const accountQueue = new Map<string, Promise<unknown>>();
-const lastCall = new Map<string, number>();
 const inflight = new Map<string, Promise<CreatorInfo>>();
 let cacheChain: Promise<unknown> = Promise.resolve();
 
-/** Wait until >= PACE_MS since this account's previous CloudTrail call, then claim the slot. */
-async function pace(accountId: string): Promise<void> {
-  const wait = (lastCall.get(accountId) ?? -Infinity) + PACE_MS - Date.now();
-  if (wait > 0) await sleep(wait);
-  lastCall.set(accountId, Date.now());
-}
-
 /** Test hook: clear process-wide state. / 테스트용 전역 상태 초기화. */
 export function resetCreatorState(): void {
-  credCache.clear(); accountQueue.clear(); lastCall.clear(); inflight.clear(); cacheChain = Promise.resolve();
+  resetCloudTrailAccess(); accountQueue.clear(); inflight.clear(); cacheChain = Promise.resolve();
 }
 
 const isFresh = (c: CacheEntry | undefined, now: Date): c is CacheEntry =>
@@ -115,9 +79,9 @@ async function lookupOne(it: Item, now: Date): Promise<CreatorInfo> {
   if (isFresh(cached, now)) return { resourceId: cached.resourceId, user: cached.user, eventTime: cached.eventTime, status: cached.status };
   let info = unknown(it.resourceId);
   try {
-    const creds = await credsFor(it.accountId);
+    const creds = await accountCredentials(it.accountId, 'awsops-cost-radar');
     const client = new CloudTrailClient({ region: it.region, ...(creds ? { credentials: creds } : {}) });
-    info = await findCreator(client, it.accountId, it.resourceId);
+    info = await findCreator(client, it.accountId, it.region, it.resourceId);
   } catch (e) {
     console.error('[cost-radar] creator lookup failed:', e instanceof Error ? e.name : 'Error');
   }
@@ -138,12 +102,12 @@ function lookupShared(it: Item, now: Date): Promise<CreatorInfo> {
   return p;
 }
 
-async function findCreator(client: CloudTrailClient, accountId: string, resourceId: string): Promise<CreatorInfo> {
+async function findCreator(client: CloudTrailClient, accountId: string, region: string, resourceId: string): Promise<CreatorInfo> {
   const wanted = expectedEvents(resourceId);
   let best: Event | undefined;
   let token: string | undefined;
   for (let page = 0; page < MAX_PAGES; page++) {
-    await pace(accountId);
+    await cloudTrailSlot(accountId, region);
     const res = await client.send(new LookupEventsCommand({
       LookupAttributes: [{ AttributeKey: 'ResourceName', AttributeValue: resourceId }],
       MaxResults: 50,

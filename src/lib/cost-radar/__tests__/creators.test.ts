@@ -114,7 +114,7 @@ describe('creators', () => {
     expect(ctSend).not.toHaveBeenCalled();
   });
 
-  it('callsArePacedOnePerSecondPerAccount', async () => {
+  it('callsArePacedEvery600msPerAccount', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const times: number[] = [];
     ctSend.mockImplementation(async () => { times.push(Date.now()); return { Events: [] }; });
@@ -122,13 +122,13 @@ describe('creators', () => {
     const settle = async (n: number) => { while (times.length < n || vi.getTimerCount() === 0) { if (times.length >= 3) return; await new Promise((r) => setImmediate(r)); } };
     for (let n = 1; n <= 2; n++) {
       await settle(n); // real file IO finishes; the pace timer is pending
-      await vi.advanceTimersByTimeAsync(999);
+      await vi.advanceTimersByTimeAsync(599);
       expect(times).toHaveLength(n);
       await vi.advanceTimersByTimeAsync(1);
     }
     await p;
-    expect(times[1] - times[0]).toBeGreaterThanOrEqual(1000);
-    expect(times[2] - times[0]).toBeGreaterThanOrEqual(2000);
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(600);
+    expect(times[2] - times[0]).toBeGreaterThanOrEqual(1200);
   });
 
   it('cache write failure does not throw', async () => {
@@ -174,9 +174,9 @@ describe('creators', () => {
     ctSend.mockImplementation(async () => { times.push(Date.now()); return { Events: [] }; });
     const p = Promise.all([lookupCreators([item('a')], { now: NOW }), lookupCreators([item('b')], { now: NOW })]);
     while (times.length < 1) await new Promise((r) => setImmediate(r));
-    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(600);
     await p;
-    expect(times[1] - times[0]).toBeGreaterThanOrEqual(1000);
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(600);
   });
 
   it('credentials are re-fetched after expiry', async () => {
