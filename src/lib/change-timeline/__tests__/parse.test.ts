@@ -65,7 +65,7 @@ describe('toRecords', () => {
     expect(r.resourceId).toBe('moyeota-media');
     expect(r.resourceName).toBe('moyeota-media');
     expect(r.actor).toEqual({ kind: 'person', name: 'tjdgns9954' });
-    expect(r.id).toBe(r.eventId);
+    expect(r.id).toBe(`${r.eventId}:0`);
     expect(r.accountId).toBe(ACCT);
     expect(r.region).toBe('ap-northeast-2');
   });

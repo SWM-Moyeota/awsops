@@ -205,7 +205,7 @@ export function toRecords(raw: unknown, accountId: string): ChangeRecord[] {
 
     return resources.map((r, i): ChangeRecord => {
       const rec: ChangeRecord = {
-        id: resources.length > 1 ? `${eventId}:${i}` : eventId,
+        id: `${eventId}:${i}`,
         eventId, eventName, accountId, region, time,
         kind: t.kind, resourceType: t.resourceType, resourceId: r.id, resourceName: r.name,
         actor, tool,
