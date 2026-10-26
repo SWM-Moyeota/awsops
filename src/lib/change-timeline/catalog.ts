@@ -37,6 +37,21 @@ export const TRACKED: TrackedEvent[] = [
   ...pair('iam.amazonaws.com', 'iam-role', 'CreateRole', 'DeleteRole', US),
 ];
 
+// stop / start / modify events — tracked so the cost explainer can name who changed a price.
+// 켜기·끄기·변경 이벤트 — 비용 변화 원인 설명에 쓴다.
+const single = (source: string, type: ResourceType, eventName: string, kind: ChangeKind): TrackedEvent => ({
+  eventName, eventSource: source, kind, resourceType: type, region: AP,
+});
+TRACKED.push(
+  single('ec2.amazonaws.com', 'ec2-instance', 'StopInstances', 'stop'),
+  single('ec2.amazonaws.com', 'ec2-instance', 'StartInstances', 'start'),
+  single('ec2.amazonaws.com', 'ec2-instance', 'ModifyInstanceAttribute', 'modify'),
+  single('rds.amazonaws.com', 'rds-instance', 'StopDBInstance', 'stop'),
+  single('rds.amazonaws.com', 'rds-instance', 'StartDBInstance', 'start'),
+  single('rds.amazonaws.com', 'rds-instance', 'ModifyDBInstance', 'modify'),
+  single('ec2.amazonaws.com', 'ebs-volume', 'ModifyVolume', 'modify'),
+);
+
 const INDEX = new Map<string, TrackedEvent>(TRACKED.map((t) => [`${t.eventSource}|${t.eventName}`, t]));
 
 export function findTracked(eventName: string, eventSource: string): TrackedEvent | undefined {

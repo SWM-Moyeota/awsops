@@ -132,3 +132,22 @@ describe('rdsCaseInsensitive', () => {
     expect(out[0].status).toBe('found');
   });
 });
+
+describe('state kinds', () => {
+  it('summaryStillCountsCreateDeleteOnly', async () => {
+    const now = new Date('2026-10-26T06:00:00Z');
+    const recs = [
+      rec('a', '2026-10-26T05:00:00Z', { kind: 'create' }),
+      rec('b', '2026-10-26T04:00:00Z', { kind: 'delete' }),
+      rec('c', '2026-10-26T03:00:00Z', { kind: 'stop' }),
+      rec('d', '2026-10-26T02:00:00Z', { kind: 'start' }),
+      rec('e', '2026-10-26T01:00:00Z', { kind: 'modify' }),
+    ];
+    const deps = { read: async () => recs, state: async () => ({ accounts: {} }) };
+    const all = await queryChanges({ accountId: '__all__', range: '7d', now }, deps);
+    expect(all.records).toHaveLength(5);
+    expect(all.summary).toEqual({ creates: 1, deletes: 1, people: 1 });
+    const st = await queryChanges({ accountId: '__all__', range: '7d', now, kinds: ['stop', 'start'] }, deps);
+    expect(st.records.map((r) => r.id)).toEqual(['c', 'd']);
+  });
+});

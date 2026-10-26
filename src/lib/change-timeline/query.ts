@@ -37,7 +37,7 @@ export async function queryChanges(q: ChangesQuery, deps: QueryDeps = {}): Promi
   const all = q.accountId === '__all__';
 
   const scoped = (await read(rangeStart(q.range, now), now))
-    .filter((r) => !r.failed && (all || r.accountId === q.accountId) && (!q.kind || r.kind === q.kind));
+    .filter((r) => !r.failed && (all || r.accountId === q.accountId) && (!q.kind || r.kind === q.kind) && (!q.kinds || q.kinds.includes(r.kind)));
   const isPerson = (r: ChangeRecord) => r.actor.kind === 'person' || r.actor.kind === 'root';
   const facets = {
     people: Array.from(new Set(scoped.filter(isPerson).map((r) => r.actor.name))).sort(),

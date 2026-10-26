@@ -5,7 +5,7 @@
 
 ## 주요 파일
 - `types.ts` — 공용 계약 타입: `ChangeRecord`(id는 항상 `${eventId}:${index}`), `IngestState`, `ChangesQuery`/`ChangesResponse`, `CreatorLookup`.
-- `catalog.ts` — 추적 대상 생성·삭제 이벤트 목록 `TRACKED`(ECS와 EKS의 `CreateCluster`는 `eventSource`로 구분, IAM은 `us-east-1`), `findTracked`, `eventNamesFor(region)`. 목록에 없는 이벤트는 저장하지 않는다(노이즈 방지).
+- `catalog.ts` — 추적 대상 생성·삭제 이벤트 목록 `TRACKED`(+ EC2/RDS 끄기·켜기, EC2 타입/RDS/EBS 변경: stop/start/modify. `ModifyInstanceAttribute`는 `instanceType`이 있을 때만 기록. 요약 숫자는 생성·삭제만)(ECS와 EKS의 `CreateCluster`는 `eventSource`로 구분, IAM은 `us-east-1`), `findTracked`, `eventNamesFor(region)`. 목록에 없는 이벤트는 저장하지 않는다(노이즈 방지).
 - `parse.ts` — `toRecords(raw, accountId)`는 CloudTrail 이벤트를 리소스마다 한 줄씩 기록으로 바꾼다.
   - `classifyActor`: IAM 사용자는 사람이다. `invokedBy`가 있어도 사람을 유지하고 `via`에 "CloudFormation"이나 "Auto Scaling"을 넣는다. 서비스 연결 역할과 CDK 실행 역할은 자동, AWSops 역할은 `awsops`(SourceIdentity 보존), SSO 세션은 사람, Root는 `root`다.
   - `detectTool`: `invokedBy`와 userAgent로 도구를 판별한다. 브라우저 UA는 콘솔로 본다.
@@ -39,7 +39,7 @@ Collects **who created and deleted which resources** across the connected accoun
 
 ## Key Files
 - `types.ts` — contract types. Record id is `${eventId}:${index}`.
-- `catalog.ts` — the tracked create/delete events. Untracked events are never stored.
+- `catalog.ts` — the tracked create/delete events plus EC2/RDS stop/start and EC2 type/RDS/EBS modify (summary counts stay create/delete only; `ChangesQuery.kinds` filters by several kinds, API `kind=state` = stop|start). Untracked events are never stored.
 - `parse.ts` — CloudTrail event → one record per resource.
   - Actor rules: an IAM user stays the person even with `invokedBy` (set as `via`). Service-linked and CDK roles are auto, AWSops roles are `awsops`, SSO sessions are people, Root is `root`.
   - Tool detection.

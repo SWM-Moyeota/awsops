@@ -7,18 +7,20 @@ import type { ChangeKind, RangeId, ResourceType } from '@/lib/change-timeline/ty
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { resourceTypeLabel } from './format';
 
+/** Kind chips: `state` = stop OR start (API `kind=state`). / `state`는 켜기·끄기. */
+export type KindFilter = ChangeKind | 'state';
 export const RANGES: RangeId[] = ['24h', '7d', '30d', '90d', 'all'];
 
 interface ChangeFiltersProps {
   range: RangeId;
-  kind: ChangeKind | null;
+  kind: KindFilter | null;
   actor: string | null;
   type: ResourceType | null;
   people: string[];
   types: ResourceType[];
   search: string;
   onRange: (r: RangeId) => void;
-  onKind: (k: ChangeKind | null) => void;
+  onKind: (k: KindFilter | null) => void;
   onActor: (a: string | null) => void;
   onType: (t: ResourceType | null) => void;
   onSearch: (q: string) => void;
@@ -60,6 +62,8 @@ export default function ChangeFilters(p: ChangeFiltersProps) {
         <Chip on={p.kind === null} onClick={() => p.onKind(null)}>{t('changes.kindAll')}</Chip>
         <Chip on={p.kind === 'create'} onClick={() => p.onKind('create')}>{t('changes.kindCreate')}</Chip>
         <Chip on={p.kind === 'delete'} onClick={() => p.onKind('delete')}>{t('changes.kindDelete')}</Chip>
+        <Chip on={p.kind === 'state'} onClick={() => p.onKind('state')}>{t('changes.kindState')}</Chip>
+        <Chip on={p.kind === 'modify'} onClick={() => p.onKind('modify')}>{t('changes.kindModify')}</Chip>
         {people.length > 0 && <Divider />}
         {people.map((name) => (
           <Chip key={`p:${name}`} on={p.actor === name} onClick={() => p.onActor(p.actor === name ? null : name)}>{name}</Chip>

@@ -230,3 +230,52 @@ describe('detectTool', () => {
     expect(detectTool(undefined, undefined)).toBe('other');
   });
 });
+
+// ---- stop / start / modify (cost detective) ----
+function ev(source: string, name: string, req: unknown, id = 'evt-x') {
+  return {
+    eventVersion: '1.11', eventTime: '2026-10-20T05:10:17Z', eventSource: source, eventName: name,
+    awsRegion: 'ap-northeast-2', sourceIPAddress: '203.0.113.10',
+    userAgent: 'Mozilla/5.0 (Macintosh) Chrome/154.0.0.0 Safari/537.36',
+    userIdentity: { type: 'IAMUser', arn: 'arn:aws:iam::111122223333:user/sungyoon', accountId: '111122223333', accessKeyId: 'AKIAEXAMPLE', userName: 'sungyoon' },
+    requestParameters: req, responseElements: null, eventID: id, recipientAccountId: '111122223333',
+  };
+}
+
+describe('stop/start/modify', () => {
+  it('stopStartYieldOneRecordPerInstance', () => {
+    const req = { instancesSet: { items: [{ instanceId: 'i-0aaa' }, { instanceId: 'i-0bbb' }] }, force: false };
+    const stop = toRecords(ev('ec2.amazonaws.com', 'StopInstances', req, 'e-stop'), ACCT);
+    expect(stop.map((r) => [r.id, r.kind, r.resourceType, r.resourceId])).toEqual([
+      ['e-stop:0', 'stop', 'ec2-instance', 'i-0aaa'], ['e-stop:1', 'stop', 'ec2-instance', 'i-0bbb'],
+    ]);
+    const start = toRecords(ev('ec2.amazonaws.com', 'StartInstances', req, 'e-start'), ACCT);
+    expect(start).toHaveLength(2);
+    expect(start[0].kind).toBe('start');
+  });
+  it('modifyInstanceAttributeOnlyForInstanceType', () => {
+    const typed = toRecords(ev('ec2.amazonaws.com', 'ModifyInstanceAttribute', { instanceId: 'i-0aaa', instanceType: { value: 'm5.xlarge' } }), ACCT);
+    expect(typed).toHaveLength(1);
+    expect(typed[0]).toMatchObject({ kind: 'modify', resourceType: 'ec2-instance', resourceId: 'i-0aaa' });
+    expect(toRecords(ev('ec2.amazonaws.com', 'ModifyInstanceAttribute', { instanceId: 'i-0aaa', disableApiTermination: { value: true } }), ACCT)).toEqual([]);
+    expect(toRecords(ev('ec2.amazonaws.com', 'ModifyInstanceAttribute', { instanceId: 'i-0aaa', groupId: ['sg-1'] }), ACCT)).toEqual([]);
+  });
+  it('rdsStopStartModify', () => {
+    const req = { dBInstanceIdentifier: 'moyeota-prod' };
+    const kinds = [['StopDBInstance', 'stop'], ['StartDBInstance', 'start'], ['ModifyDBInstance', 'modify']] as const;
+    for (const [name, kind] of kinds) {
+      const r = toRecords(ev('rds.amazonaws.com', name, req), ACCT);
+      expect(r).toHaveLength(1);
+      expect(r[0]).toMatchObject({ kind, resourceType: 'rds-instance', resourceId: 'moyeota-prod' });
+    }
+  });
+  it('modifyVolume', () => {
+    const r = toRecords(ev('ec2.amazonaws.com', 'ModifyVolume', { volumeId: 'vol-0abc', size: 200, volumeType: 'gp3' }), ACCT);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ kind: 'modify', resourceType: 'ebs-volume', resourceId: 'vol-0abc' });
+  });
+  it('catalogRegions', () => {
+    for (const n of ['StopInstances', 'StartInstances', 'ModifyInstanceAttribute']) expect(findTracked(n, 'ec2.amazonaws.com')?.region).toBe('ap-northeast-2');
+    expect(eventNamesFor('ap-northeast-2')).toEqual(expect.arrayContaining(['StopDBInstance', 'StartDBInstance', 'ModifyDBInstance', 'ModifyVolume']));
+  });
+});

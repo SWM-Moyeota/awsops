@@ -121,7 +121,8 @@ const one = (id: string | undefined, name?: string): Res[] => (id ? [{ id, name:
 const EXTRACT: Partial<Record<ResourceType, Extractor>> = {
   's3-bucket': (req) => one(getStr(req, 'bucketName')),
   'ec2-instance': (req, resp, kind) => {
-    if (kind === 'delete') {
+    if (kind === 'modify') return one(getStr(req, 'instanceId'));
+    if (kind === 'delete' || kind === 'stop' || kind === 'start') {
       const items = get(req, 'instancesSet.items');
       return Array.isArray(items) ? items.flatMap((i) => one(getStr(i, 'instanceId'))) : [];
     }
@@ -192,6 +193,10 @@ export function toRecords(raw: unknown, accountId: string): ChangeRecord[] {
     const eventId = str(raw.eventID);
     const time = str(raw.eventTime);
     if (!eventId || !time) return [];
+
+    // Only an instance-type change moves the price; other attribute edits are noise.
+    // 인스턴스 타입 변경만 비용에 영향을 준다. 다른 속성 변경은 기록하지 않는다.
+    if (eventName === 'ModifyInstanceAttribute' && !get(raw.requestParameters, 'instanceType')) return [];
 
     const resources = safeExtract(t, raw);
     if (resources.length === 0) return [];

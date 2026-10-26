@@ -22,7 +22,7 @@ export interface AccountRegionState {
 export interface IngestState { accounts: Record<string, AccountRegionState>; lastSummaryDay?: string }
 export type RangeId = '24h' | '7d' | '30d' | '90d' | 'all';
 export interface ChangesQuery {
-  accountId: string; range: RangeId; kind?: ChangeKind; actor?: string; resourceType?: ResourceType; q?: string; now?: Date;
+  accountId: string; range: RangeId; kind?: ChangeKind; /** Any of these kinds (wins over `kind`). */ kinds?: ChangeKind[]; actor?: string; resourceType?: ResourceType; q?: string; now?: Date;
 }
 export interface ChangesResponse {
   records: ChangeRecord[];

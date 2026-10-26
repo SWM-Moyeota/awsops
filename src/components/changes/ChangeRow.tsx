@@ -6,21 +6,26 @@ import type { ChangeRecord } from '@/lib/change-timeline/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { kstTime, resourceEmoji, sentence, toolLabel } from './format';
 
+const KIND_STYLE: Record<ChangeRecord['kind'], { bg: string; tag: string; label: string }> = {
+  create: { bg: 'bg-[rgba(0,214,143,0.14)]', tag: 'text-[#00d68f]', label: 'changes.kindCreate' },
+  delete: { bg: 'bg-[rgba(255,95,109,0.14)]', tag: 'text-[#ff5f6d]', label: 'changes.kindDelete' },
+  stop: { bg: 'bg-[rgba(139,149,161,0.16)]', tag: 'text-[#8b95a1]', label: 'changes.kindStop' },
+  start: { bg: 'bg-[rgba(0,214,143,0.14)]', tag: 'text-[#00d68f]', label: 'changes.kindStart' },
+  modify: { bg: 'bg-[rgba(69,147,252,0.16)]', tag: 'text-[#4593fc]', label: 'changes.kindModify' },
+};
+
 /** Icon background: grey for auto/AWSops, else green (create) or red (delete). / 자동은 회색, 생성 초록, 삭제 빨강. */
 export function iconTone(r: ChangeRecord): string {
   if (r.actor.kind === 'auto' || r.actor.kind === 'awsops') return 'bg-[#1a2540]';
-  return r.kind === 'delete' ? 'bg-[rgba(255,95,109,0.14)]' : 'bg-[rgba(0,214,143,0.14)]';
+  return KIND_STYLE[r.kind].bg;
 }
 
 export function KindTag({ kind }: { kind: ChangeRecord['kind'] }) {
   const { t } = useLanguage();
+  const st = KIND_STYLE[kind] ?? KIND_STYLE.create;
   return (
-    <span
-      className={`mr-1 inline-block rounded-[6px] px-[7px] py-[3px] text-[12px] font-bold leading-none ${
-        kind === 'delete' ? 'bg-[rgba(255,95,109,0.14)] text-[#ff5f6d]' : 'bg-[rgba(0,214,143,0.14)] text-[#00d68f]'
-      }`}
-    >
-      {t(kind === 'delete' ? 'changes.kindDelete' : 'changes.kindCreate')}
+    <span className={`mr-1 inline-block rounded-[6px] px-[7px] py-[3px] text-[12px] font-bold leading-none ${st.bg} ${st.tag}`}>
+      {t(st.label)}
     </span>
   );
 }

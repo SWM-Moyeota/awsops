@@ -31,6 +31,12 @@ describe('GET /api/changes', () => {
       accountId: '111111111111', range: '30d', kind: 'delete', actor: 'sungyoon', resourceType: 's3-bucket', q: 'logs',
     });
   });
+  it('kindStateMapsToStopStart', async () => {
+    await GET(req('?kind=state'));
+    expect(queryChanges.mock.calls[0][0]).toEqual({ accountId: '__all__', range: '7d', kinds: ['stop', 'start'] });
+    await GET(req('?kind=modify'));
+    expect(queryChanges.mock.calls[1][0]).toEqual({ accountId: '__all__', range: '7d', kind: 'modify' });
+  });
   it('wires tracked event names per region', async () => {
     await GET(req(''));
     const { namesFor } = queryChanges.mock.calls[0][1];

@@ -4,11 +4,11 @@
 // day-grouped rows, status line and the detail panel. Fetches GET /api/changes for the selected account.
 // 변경 기록 본문 — 요약 문장·숫자 카드, 칩 필터, 검색, 날짜별 목록, 상태 줄, 상세 패널. 선택 계정 기준으로 조회.
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { ChangeKind, ChangeRecord, ChangesResponse, RangeId, ResourceType } from '@/lib/change-timeline/types';
+import type { ChangeRecord, ChangesResponse, RangeId, ResourceType } from '@/lib/change-timeline/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useAccountContext } from '@/contexts/AccountContext';
 import ChangeSummary from './ChangeSummary';
-import ChangeFilters from './ChangeFilters';
+import ChangeFilters, { type KindFilter } from './ChangeFilters';
 import ChangeRow from './ChangeRow';
 import ChangeDetailPanel from './ChangeDetailPanel';
 import { groupByKstDay, kstDate, kstTime, summarySentence } from './format';
@@ -39,7 +39,7 @@ export default function ChangeTimelineView() {
   const { currentAccountId, accounts } = useAccountContext();
 
   const [range, setRange] = useState<RangeId>('7d');
-  const [kind, setKind] = useState<ChangeKind | null>(null);
+  const [kind, setKind] = useState<KindFilter | null>(null);
   const [actor, setActor] = useState<string | null>(null);
   const [type, setType] = useState<ResourceType | null>(null);
   const [search, setSearch] = useState('');

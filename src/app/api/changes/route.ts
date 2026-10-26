@@ -10,7 +10,9 @@ export const dynamic = 'force-dynamic';
 const HEADERS = { 'Cache-Control': 'no-store' };
 
 const RANGES = new Set<RangeId>(['24h', '7d', '30d', '90d', 'all']);
-const KINDS = new Set<ChangeKind>(['create', 'delete']);
+const KINDS = new Set<ChangeKind>(['create', 'delete', 'stop', 'start', 'modify']);
+// `kind=state` is the 켜기·끄기 chip: stop OR start. / 켜기·끄기 칩은 stop 또는 start.
+const STATE_KINDS: ChangeKind[] = ['stop', 'start'];
 const TYPES = new Set<ResourceType>(TRACKED.map((t) => t.resourceType));
 const REGIONS = new Set<string>(TRACKED.map((t) => t.region));
 const MAX_TEXT = 200;
@@ -29,13 +31,13 @@ export async function GET(request: NextRequest) {
 
   if (accountId !== '__all__' && !/^\d{12}$/.test(accountId)) return bad('invalid accountId');
   if (!RANGES.has(range)) return bad('invalid range');
-  if (kind && !KINDS.has(kind as ChangeKind)) return bad('invalid kind');
+  if (kind && kind !== 'state' && !KINDS.has(kind as ChangeKind)) return bad('invalid kind');
   if (type && !TYPES.has(type as ResourceType)) return bad('invalid type');
   if ((actor && actor.length > MAX_TEXT) || (q && q.length > MAX_TEXT)) return bad('text too long');
 
   const query: ChangesQuery = {
     accountId, range,
-    ...(kind ? { kind: kind as ChangeKind } : {}),
+    ...(kind === 'state' ? { kinds: STATE_KINDS } : kind ? { kind: kind as ChangeKind } : {}),
     ...(type ? { resourceType: type as ResourceType } : {}),
     ...(actor ? { actor } : {}),
     ...(q ? { q } : {}),

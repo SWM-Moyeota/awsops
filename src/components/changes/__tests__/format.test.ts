@@ -149,3 +149,17 @@ describe('consoleLinks', () => {
     expect(consoleUrl(rec({ resourceId: 'a b' }))).toBe('https://s3.console.aws.amazon.com/s3/buckets/a%20b');
   });
 });
+
+describe('stateVerbs', () => {
+  it('uses 껐어요 / 켰어요 / 설정을 바꿨어요', () => {
+    expect(sentence(rec({ kind: 'stop', resourceType: 'ec2-instance' }))).toEqual({ who: 'sungyoon', rest: '님이 EC2 서버를 껐어요' });
+    expect(sentence(rec({ kind: 'start', resourceType: 'rds-instance' })).rest).toBe('님이 RDS 데이터베이스를 켰어요');
+    expect(sentence(rec({ kind: 'modify', resourceType: 'ebs-volume' })).rest).toBe('님이 EBS 볼륨의 설정을 바꿨어요');
+    expect(sentence(rec({ kind: 'modify', resourceType: 'ec2-instance' })).rest).toBe('님이 EC2 서버의 설정을 바꿨어요');
+  });
+  it('auto form', () => {
+    const auto = { kind: 'auto' as const, name: 'Auto Scaling' };
+    expect(sentence(rec({ kind: 'stop', resourceType: 'ec2-instance', actor: auto })).rest).toBe('이 EC2 서버를 껐어요');
+    expect(sentence(rec({ kind: 'modify', resourceType: 'ec2-instance', actor: auto })).rest).toBe('이 EC2 서버의 설정을 바꿨어요');
+  });
+});

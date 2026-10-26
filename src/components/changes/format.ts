@@ -89,7 +89,9 @@ export const withSubject = (w: string): string => `${w}${hasBatchim(w) ? '이' :
 
 /** "**sungyoon**님이 S3 버킷을 만들었어요" split into the bold name and the rest. / 굵은 이름과 나머지로 나눈 문장. */
 export function sentence(r: ChangeRecord): { who: string; rest: string } {
-  const what = `${withObject(resourceTypeLabel(r.resourceType))} ${r.kind === 'delete' ? '지웠어요' : '만들었어요'}`;
+  const label = resourceTypeLabel(r.resourceType);
+  const what = r.kind === 'modify' ? `${label}의 설정을 바꿨어요`
+    : `${withObject(label)} ${r.kind === 'delete' ? '지웠어요' : r.kind === 'stop' ? '껐어요' : r.kind === 'start' ? '켰어요' : '만들었어요'}`;
   const who = r.actor.name;
   if (r.actor.kind === 'person') return { who, rest: `님이 ${what}` };
   const subject = withSubject(who).slice(who.length);
