@@ -25,7 +25,7 @@ const user = (content: string) => [{ role: 'user', content }];
 async function postStream(body: Record<string, unknown>) {
   return readSse(await POST(aiRequest({ stream: true, ...body })));
 }
-/** `[event, data]` list reduced to `[event, step | 'delta' | undefined]`-free exact pairs: status → {step,message}, others whole. */
+/** Event names only: a status becomes `status:<step>`, any other event keeps its name. */
 const names = (list: Array<[string, any]>) => list.map(([e, d]) => (e === 'status' ? `status:${d.step}` : e));
 
 /** AgentCore replies keyed by payload.gateway; an Error value fails that gateway. */
@@ -413,6 +413,68 @@ describe('/api/ai streaming multi-route (characterization)', () => {
       ['chunk', { delta: 'NETANS' }],
       ['done', expect.objectContaining({ via: NET, route: 'eks-optimize', routes: ['eks-optimize', 'network'], queriedResources: ['network-gateway'] })],
     ]);
+  });
+
+  it('topologyInMultiUsesParticipantLanguageRule', async () => {
+    // Multi mode: topology runs as a participant via handleSingleRoute, where isEn = (lang === 'en').
+    // So no lang (and zh) → Korean content, unlike the single-route stream handler (English).
+    const vpc = { vpc_id: 'vpc-1', name: 'main', cidr: '10.0.0.0/16' };
+    const KO = '**main** (10.0.0.0/16) AWSops 토폴로지를 준비했습니다.\n\n➡️ [토폴로지뷰 열기](/topology-view?vpc=vpc-1)';
+    const EN = 'Prepared the AWSops topology for **main** (10.0.0.0/16).\n\n➡️ [Open Topology View](/topology-view?vpc=vpc-1)';
+    const synthText = (topo: string) =>
+      `Question: 구성도랑 네트워크\n\nMultiple agents responded:\n\n--- Topology View ---\n${topo}\n\n--- ${NET} ---\nNETANS\n\nPlease synthesize into one comprehensive answer.`;
+    mocks.bedrock.classify(['topology', 'network']);
+    mocks.steampipe.vpcs({ rows: [vpc] });
+    mocks.bedrock.topology({ vpc_id: 'vpc-1', include_empty: false });
+    agentByGateway({ network: 'NETANS' });
+    mocks.bedrock.converse(['SYN']);
+
+    // No lang, both succeed → the Korean topology text goes into the synthesis prompt.
+    let events = await postStream({ messages: user('구성도랑 네트워크') });
+    expect(events).toEqual([
+      ['status', { step: 'classifying', message: '🔍 Analyzing question...' }],
+      ['status', { step: 'classified', route: 'topology', routes: ['topology', 'network'], message: '📡 Multi-route: Topology View + Network Gateway (17 tools)' }],
+      ['status', { step: 'multi-call', message: '🤖 Calling 2 Gateways in parallel...' }],
+      ['status', { step: 'synthesizing', message: '📊 Synthesizing 2 responses...' }],
+      ['chunk', { delta: 'SYN' }],
+      ['done', {
+        content: 'SYN', model: 'test-label', via: `Multi-Route: Topology View + ${NET}`,
+        queriedResources: ['steampipe', 'network-gateway'], route: 'topology', routes: ['topology', 'network'],
+        usedTools: [], inputTokens: 0, outputTokens: 0,
+      }],
+    ]);
+    let conv = mocks.bedrock.calls('converse');
+    expect(conv).toHaveLength(1);
+    expect(conv[0].input.system).toEqual([{ text: SYSTEM_NONE + SYNTH_SUFFIX }]);
+    expect(conv[0].input.messages).toEqual([{ role: 'user', content: [{ text: synthText(KO) }] }]);
+    // No single-route topology status in multi mode.
+    expect(events.some(([, d]) => d?.step === 'topology-resolving')).toBe(false);
+
+    // zh → still Korean content (only 'en' gives English here).
+    mocks.bedrock.clearCalls();
+    await postStream({ messages: user('구성도랑 네트워크'), lang: 'zh' });
+    expect(mocks.bedrock.calls('converse')[0].input.messages[0].content[0].text).toBe(synthText(KO));
+
+    // en → English content.
+    mocks.bedrock.clearCalls();
+    await postStream({ messages: user('구성도랑 네트워크'), lang: 'en' });
+    expect(mocks.bedrock.calls('converse')[0].input.messages[0].content[0].text).toBe(synthText(EN));
+
+    // No lang, network fails → the Korean topology text is the direct answer (no synthesis).
+    mocks.bedrock.clearCalls();
+    agentByGateway({ network: new Error('down') });
+    events = await postStream({ messages: user('구성도랑 네트워크') });
+    const koChunks: Array<[string, any]> = [];
+    for (let i = 0; i < KO.length; i += 50) koChunks.push(['chunk', { delta: KO.slice(i, i + 50) }]);
+    expect(events.slice(3)).toEqual([
+      ...koChunks,
+      ['done', {
+        content: KO, model: 'test-label', via: 'Topology View',
+        queriedResources: ['steampipe'], route: 'topology', routes: ['topology', 'network'],
+        usedTools: [], inputTokens: 0, outputTokens: 0,
+      }],
+    ]);
+    expect(mocks.bedrock.calls('converse')).toHaveLength(0);
   });
 
   it('datasourceAndTopologyFirstAreNotShortCircuitedInMulti', async () => {
