@@ -40,6 +40,7 @@ import {
   ClipboardCheck,
   Radar,
   History,
+  Share2,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -87,6 +88,7 @@ const navGroups: NavGroup[] = [
       { labelKey: 'sidebar.cloudfront', href: '/cloudfront-cdn', icon: Globe },
       { labelKey: 'sidebar.waf', href: '/waf', icon: Shield },
       { labelKey: 'sidebar.topology', href: '/topology', icon: GitBranch },
+      { labelKey: 'sidebar.depGraph', href: '/dependency-graph', icon: Share2 },
       { labelKey: 'sidebar.topologyView', href: '/topology-view', icon: Box },
       { labelKey: 'sidebar.diagram', href: '/diagram', icon: FileSearch },
     ],
