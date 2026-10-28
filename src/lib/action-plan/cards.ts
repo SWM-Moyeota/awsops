@@ -23,7 +23,10 @@ const btn = (actionId: string, text: string, value: string, style?: 'primary' | 
 });
 
 const ctx = (text: string) => ({ type: 'context', elements: [{ type: 'mrkdwn', text }] });
-const section = (text: string) => ({ type: 'section', text: { type: 'mrkdwn', text } });
+// Slack rejects a section over 3000 chars — clamp.
+const clamp = (t: string) => (t.length <= 2900 ? t : `${t.slice(0, 2880)}\n…(길어서 줄였어요)`);
+const section = (text: string) => ({ type: 'section', text: { type: 'mrkdwn', text: clamp(text) } });
+const decider = (id?: string) => (id ? `<@${id}>` : '승인자');
 
 const target = (c: StepChange) => `\`${safeName(c.step.target.name) || safeName(c.step.target.id)}\` (\`${safeName(c.step.target.id)}\`)`;
 const stepLine = (c: StepChange) => `${target(c)} · ${clean(c.before, 120)} → ${clean(c.after, 120)}`;
@@ -37,10 +40,11 @@ function blastLines(req: ActionRequest): string[] {
   for (const id of Array.from(sgs)) {
     const snap = req.snapshot[id];
     const n = snap?.eniCount ?? 0;
-    const list = (snap?.attachedInstances ?? []).map(i => safeName(i.name) || safeName(i.id));
+    const all = (snap?.attachedInstances ?? []).map(i => safeName(i.name) || safeName(i.id));
+    const list = all.length > 5 ? [...all.slice(0, 5), `외 ${all.length - 5}대`] : all;
     const name = safeName(snap?.name || id);
     out.push(list.length
-      ? `• \`${name}\` 보안그룹을 쓰는 서버 ${list.length}대: ${list.join(', ')}`
+      ? `• \`${name}\` 보안그룹을 쓰는 서버 ${all.length}대: ${list.join(', ')}`
       : `• \`${name}\` 보안그룹을 쓰는 네트워크 인터페이스 ${n}개`);
   }
   return out;
@@ -87,7 +91,7 @@ export function actionCard(req: ActionRequest, cfg: ActionPlanConfig): { text: s
   parts.push(req.permission.ok
     ? '• ✅ 실행 권한이 있어요'
     : `• ⛔ 실행 권한이 없어요 — 관리자가 \`scripts/17-setup-action-executor.sh\`에 이 리소스를 등록해야 해요.${req.permission.error ? ` (${clean(req.permission.error, 64)})` : ''}`);
-  if (!denied && !req.undoOf && active.every(c => c.inverse || c.step.action === 'sg.ingress.add')) {
+  if (!denied && !req.undoOf && active.length > 0 && active.every(c => c.inverse || c.step.action === 'sg.ingress.add')) {
     parts.push('', `↩️ 되돌릴 수 있어요 (${cfg.undoHours}시간 안)`);
   }
 
@@ -121,13 +125,13 @@ export function actionCard(req: ActionRequest, cfg: ActionPlanConfig): { text: s
       ] });
       break;
     case 'executing':
-      blocks.push(ctx(`⏳ <@${req.deciderId}>님이 승인 — 실행 중이에요...`));
+      blocks.push(ctx(`⏳ ${decider(req.deciderId)}님이 승인 — 실행 중이에요...`));
       break;
     case 'executed':
     case 'failed': {
       const head = req.status === 'executed'
-        ? `✅ *실행 완료* — 승인: <@${req.deciderId}>`
-        : `⚠️ *실행하지 못한 단계가 있어요* — 승인: <@${req.deciderId}>${req.result ? ` · ${clean(req.result, 64)}` : ''}`;
+        ? `✅ *실행 완료* — 승인: ${decider(req.deciderId)}`
+        : `⚠️ *실행하지 못한 단계가 있어요* — 승인: ${decider(req.deciderId)}${req.result ? ` · ${clean(req.result, 64)}` : ''}`;
       blocks.push(section([head, ...resultLines(req)].join('\n')));
       if (canUndo(req)) {
         blocks.push({ type: 'actions', elements: [btn(AP.undo, '↩️ 되돌리기', req.id)] });
@@ -135,7 +139,7 @@ export function actionCard(req: ActionRequest, cfg: ActionPlanConfig): { text: s
       break;
     }
     case 'rejected':
-      blocks.push(ctx(`❌ <@${req.deciderId}>님이 거절했어요.`));
+      blocks.push(ctx(`❌ ${decider(req.deciderId)}님이 거절했어요.`));
       break;
     case 'cancelled':
       blocks.push(ctx('🚫 요청자가 취소했어요.'));

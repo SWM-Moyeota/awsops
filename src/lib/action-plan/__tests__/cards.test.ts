@@ -99,4 +99,27 @@ describe('actionCard', () => {
     expect(json(p)).toContain('web-dev 태그 owner');
     expect(json(p)).toContain('되돌리기 요청');
   });
+
+  it('sectionsStayUnder3000AndNoUndefinedMention', () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ id: `i-${i}`, name: `server-${i}-` + 'x'.repeat(50) }));
+    const snapshot = { 'sg-1': { type: 'security-group' as const, id: 'sg-1', name: 'sg-web', tags: {}, eniCount: 40, attachedInstances: many } };
+    const long = 'y'.repeat(120);
+    const changes = Array.from({ length: 5 }, (_, i) => ({
+      index: i, step: { action: 'sg.ingress.add' as const, target: { type: 'security-group' as const, id: 'sg-1', name: 'n'.repeat(80) } },
+      before: long, after: long, noop: false,
+    }));
+    const denials = Array.from({ length: 30 }, () => 'd'.repeat(160));
+    for (const status of ['proposed', 'executed'] as const) {
+      const c = actionCard(base({ status, snapshot, changes, prompt: 'p'.repeat(500), policy: { ok: false, denials }, results: [] }), cfg);
+      for (const b of c.blocks as any[]) if (b.type === 'section') expect(b.text.text.length).toBeLessThanOrEqual(3000);
+      expect(json(c)).not.toContain('undefined');
+    }
+    const c = actionCard(base({ snapshot, changes: [changes[0]] }), cfg);
+    expect(json(c)).toContain('외 35대');
+  });
+
+  it('noUndoFooterWithoutActiveSteps', () => {
+    const c = actionCard(base({ changes: [base().changes[1]] }), cfg);
+    expect(json(c)).not.toContain('24시간 안');
+  });
 });
