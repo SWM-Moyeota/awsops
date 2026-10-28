@@ -4,10 +4,7 @@ import type { EdgeType, GraphNode, NodeType, Row, Rows } from '../types';
 import type { NodeIndex } from '../nodes';
 import { asArray, str } from '../nodes';
 import type { EdgeSink } from '../sink';
-
-const acct = (r: Row) => str(r.account_id) ?? '';
-const field = (o: unknown, k: string): string | undefined =>
-  o && typeof o === 'object' ? str((o as Record<string, unknown>)[k]) : undefined;
+import { acct, field, listRows } from './util';
 
 /** Adds src -> (id resolved by type). Empty id adds nothing; unresolved id counts as dropped. */
 // id가 비면 무시, 있는데 노드가 없으면 dropped로 센다.
@@ -23,7 +20,7 @@ const LB_TAIL = /:loadbalancer\/((?:app|net)\/[^/]+\/[0-9a-f]+)$/;
 const ELB_DESC = /^ELB ((?:app|net)\/[^/]+\/[0-9a-f]+)$/;
 
 export function networkEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
-  const list = (q: keyof Rows): Row[] => (Array.isArray(rows[q]) ? (rows[q] as Row[]).filter(r => r && typeof r === 'object') : []);
+  const list = (q: keyof Rows): Row[] => listRows(rows, q);
 
   // lb lookup by account + ARN tail, built once. / 계정+ARN 끝부분으로 lb를 한 번만 색인.
   const lbByTail = new Map<string, GraphNode>();

@@ -4,14 +4,12 @@ import type { Row, Rows } from '../types';
 import type { NodeIndex } from '../nodes';
 import { asArray, str } from '../nodes';
 import type { EdgeSink } from '../sink';
+import { acct, field, listRows } from './util';
 import { link } from './network';
 
-const acct = (r: Row) => str(r.account_id) ?? '';
-const field = (o: unknown, k: string): string | undefined =>
-  o && typeof o === 'object' ? str((o as Record<string, unknown>)[k]) : undefined;
 
 export function computeEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
-  const list = (q: keyof Rows): Row[] => (Array.isArray(rows[q]) ? (rows[q] as Row[]).filter(r => r && typeof r === 'object') : []);
+  const list = (q: keyof Rows): Row[] => listRows(rows, q);
 
   // instance profile ARN -> role ARN. / 인스턴스 프로파일 ARN을 역할 ARN으로.
   const profileToRole = new Map<string, string>();
