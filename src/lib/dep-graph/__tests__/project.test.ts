@@ -28,6 +28,12 @@ describe('previewProject', () => {
     expect(p.members.map(m => m.arn).sort()).toEqual(['a', 'v']);
     expect(p.order.map(o => o.arns)).toEqual([['a'], ['v']]);
   });
+  it('multi-hop closure: chain of exclusively used deps joins in order', () => {
+    const d = g([n('a', 'instance', 'moyeota-a'), n('x', 'ebs', 'x'), n('y', 'ebs', 'y')], [e('a', 'x', 'uses_volume'), e('x', 'y', 'uses_volume')]);
+    const p = previewProject(d, { kind: 'prefix', prefix: 'moyeota-' });
+    expect(p.members.map(m => m.arn).sort()).toEqual(['a', 'x', 'y']);
+    expect(p.order.map(o => o.arns)).toEqual([['a'], ['x'], ['y']]);
+  });
   it('vpc seed orders instance, subnet, vpc', () => {
     const d = g([n('v', 'vpc', 'vpc'), n('s', 'subnet', 's'), n('i', 'instance', 'i')], [e('s', 'v', 'in_vpc'), e('i', 's', 'in_subnet')]);
     const p = previewProject(d, { kind: 'vpc', arn: 'v' });

@@ -56,6 +56,8 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
   if (seedCount === 0) return { seedCount: 0, members: [], order: [], blockers: [], shared: [] };
 
   // Closure: absorb dependencies used only by members. 멤버만 쓰는 의존 대상 흡수
+  // Two non-members that depend only on each other never join (conservative; they stay in shared).
+  // 서로만 의존하는 비멤버 둘은 합류하지 않음(보수적, shared에 남음).
   let changed = true;
   while (changed) {
     changed = false;
