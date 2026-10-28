@@ -8,7 +8,7 @@ Slack에서 태그, 보안그룹 인바운드 규칙, EC2 켜기·끄기를 바�
 
 ## 주요 파일
 - `types.ts`, `config.ts` — 공용 타입(계약)과 `config.actionPlan` 읽기. `getActionPlanConfig()`는 `enabled === true`이고 `slackControl.approverIds`가 있어야 값이 있고, 아니면 null. 기본값 `maxSteps 5`, `maxResources 3`, `maxBlastRadius 5`, `undoHours 24`. `isActionPlanEnabled()`는 `enabled`만 본다. `slackControl.allowSelfApproval`은 물려받지 않고 항상 `false`로 고정한다 — AI 실행은 언제나 요청자가 아닌 다른 승인자가 최종 승인해야 한다(Slack 제어는 기존 동작 그대로).
-- `detect.ts` — `detectActionIntent(text)`: 명령형 동사(붙여/달아/바꿔/지워/열어/닫아 … + 줘·주세요·라)와 대상 단어(태그/보안그룹/sg-/포트/인바운드/규칙)가 함께 있어야 true. 방법·가정 질문("방법", "어떻게", "할 수 있어?", "하면 돼?")은 false. 순수 함수, LLM 없음.
+- `detect.ts` — `detectActionIntent(text)`: 명령형 동사(붙여/달아/바꿔/지워/열어/닫아 … + 줘·줘요·주세요·라)와 대상 단어(태그/보안그룹/sg-…/포트/인바운드/규칙)가 함께 있어야 true. 열어/닫아/막아/허용해는 포트 번호(2-5자리, IP·날짜·개수 제외)나 `sg-…`만 있어도 대상으로 본다("web-dev 8080 열어줘"). 방법·가정 질문("방법", "어떻게", "할 수 있어?", "하면 돼?")은 false. 순수 함수, LLM 없음.
 - `planner.ts` — `callPlanner(message, aliasNames, invoke)`, `bedrockInvoke`(30초). 강제 tool 호출 `submit_plan`. **플래너가 받는 것은 이번 메시지(멘션 제거, 1000자), 고정 작업 목록, 별칭 이름뿐이다.**
 - `validate.ts` — 플래너 출력 형식 검사. 하나라도 틀리면 계획 전체를 거부한다. 별칭은 여기서 CIDR로 펼친다(`maxSteps`는 펼친 뒤 센다).
 - `resolve.ts` — 계획의 `ref`(사람이 쓴 말)를 태그 `awsops:control=allow` 리소스 중에서만 찾는다. 여러 개·못 찾음·리소스 수 초과는 거부.
@@ -47,7 +47,7 @@ mention → `detect` → (one-line notice when off) → `planner` → `validate`
 
 ## Key Files
 - `types.ts`, `config.ts` — Contract types and `config.actionPlan`. `getActionPlanConfig()` is null unless `enabled === true` and `slackControl.approverIds` is set. `isActionPlanEnabled()` reads `enabled` only. `slackControl.allowSelfApproval` is not inherited — it is forced to `false`, so the final approver is always someone other than the requester (slack-control keeps its own behaviour).
-- `detect.ts` — `detectActionIntent`: an imperative verb plus a target word; how-to and hypothetical questions are excluded. Pure, no LLM.
+- `detect.ts` — `detectActionIntent`: an imperative verb plus a target word (for open/close/allow/block, a 2-5 digit port number or an `sg-…` name also counts); how-to and hypothetical questions are excluded. Pure, no LLM.
 - `planner.ts` — One Bedrock call (30 s) with forced `submit_plan`. Input is only the message (≤1000 chars), the fixed catalog and alias names.
 - `validate.ts` / `resolve.ts` — Shape check (any problem rejects the plan; aliases expand to CIDRs here) / free-text refs to tagged resources only.
 - `snapshot.ts` / `changes.ts` — Current state per target; before → after, no-ops and inverses.
