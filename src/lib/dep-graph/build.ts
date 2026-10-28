@@ -35,7 +35,7 @@ export function statsFor(data: GraphData, warnings: string[], now: Date = new Da
 
 async function writeSnapshot(file: string, stats: BuildStats, data: GraphData): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
   await fs.writeFile(tmp, JSON.stringify({ version: 1, stats, data }));
   await fs.rename(tmp, file);
 }
