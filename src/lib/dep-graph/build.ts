@@ -42,6 +42,13 @@ async function writeSnapshot(file: string, stats: BuildStats, data: GraphData): 
 
 export async function rebuildGraph(deps: { run?: BatchRunner; snapshotPath?: string; now?: Date } = {}): Promise<BuildStats> {
   const { rows, warnings } = await collectRows(deps.run);
+  // Every query failed (Steampipe down): keep the previous graph instead of swapping in an empty one.
+  // 모든 쿼리가 실패하면(Steampipe 중단) 빈 그래프로 바꾸지 않고 이전 그래프를 유지한다.
+  if (warnings.length === Object.keys(GRAPH_QUERIES).length) {
+    const err = new Error('all graph queries failed');
+    err.name = 'GraphSourceUnavailable';
+    throw err;
+  }
   const data = extractGraph(rows);
   const stats = statsFor(data, warnings, deps.now);
   const store = await createGraphStore(data, stats);

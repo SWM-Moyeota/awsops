@@ -74,6 +74,15 @@ describe('build', () => {
     await expect(rebuildGraph({ run: async () => { throw new Error('x'); }, snapshotPath: path.join(dir, 's.json') })).rejects.toThrow();
   });
 
+  it('rebuildGraph keeps the previous graph when every query failed', async () => {
+    const snap = path.join(dir, 'latest.json');
+    const down = async (q: Record<string, string>) =>
+      Object.fromEntries(Object.keys(q).map(k => [k, { rows: [], error: 'ECONNREFUSED' }]));
+    await expect(rebuildGraph({ run: down, snapshotPath: snap })).rejects.toMatchObject({ name: 'GraphSourceUnavailable' });
+    expect(getCurrentStore()).toBeNull();
+    await expect(fs.access(snap)).rejects.toBeTruthy();
+  });
+
   it('statsFor counts only present types', () => {
     const s = statsFor({ nodes: [], edges: [], dropped: 2 }, ['a'], new Date(0));
     expect(s).toEqual({ builtAt: new Date(0).toISOString(), nodeCounts: {}, edgeCount: 0, dropped: 2, warnings: ['a'] });
