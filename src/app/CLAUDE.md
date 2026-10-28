@@ -65,7 +65,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `security/page.tsx` — Public S3, Open SG, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 벤치마크
 
-## API 라우트 (28개)
+## API 라우트 (29개)
 
 | API | 설명 |
 |-----|------|
@@ -92,6 +92,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 | `api/cost-radar/explain/route.ts` | 돈 탐정 — 월 예상 비용이 왜 바뀌었는지 설명 (`?accountId=<12자리\|__all__>&days=1\|7\|30`, 스냅샷 + 변경 기록 기반, 새 CloudTrail/Steampipe 호출 없음, 잘못된 입력 400, 500은 오류 이름만, `no-store`) |
 | `api/changes/creators/route.ts` | 리소스별 만든 사람 (`?ids=계정:리소스ID[|생성시각ISO],...` 최대 200개, 잘못된 형식 400) — S3·EC2·RDS 목록 배지용 |
 | `api/changes/route.ts` | 변경 기록 조회 (`?accountId=<12자리\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`, 잘못된 계정·기간·종류·서비스 400, 500은 오류 이름만, `no-store`) |
+| `api/root-cause/route.ts` | 장애 원인 분석 (GET `?op=list[&accountId=<12자리\|__all__>]` → `{incidents, autoDetect}`(용의자 1순위만, 최대 50), `?op=get&id=rc-…` → `{incident}`/404, POST `{op:'analyze',accountId,resourceArn?,at?}` → 200 `{incident}`·429 제한·404·400, 120초 넘으면 202 `{status:'running'}`, 500은 오류 이름만, `no-store`) |
 | `api/graph/route.ts` | 의존성 그래프 (읽기 전용 GET: `?op=stats\|search\|hubs\|neighborhood\|impact\|deps\|project`, `arn`(`arn:` 시작, 1024자 이하)·`depth`(범위 밖은 기본값)·`q`/`prefix`(100자 이하)·`tag=키=값`·`vpc=<arn>`(태그 키·값·접두어는 앞뒤 공백 제거, 공백뿐이면 400), `search`의 `type`(15종 중 하나, 아니면 400 "알 수 없는 리소스 종류예요"), `project` 응답에 `managed`·`edges`(후보끼리)·`warnings`(못 읽은 쿼리), 응답에 `builtAt`, 그래프 없으면 `200 {status:'building'}`, 모르는 arn·VPC 404, 잘못된 입력 400, 500은 오류 이름만) |
 | `api/inventory/export/route.ts` | 인벤토리 XLSX 내보내기 (리소스별 시트 + Summary) |
 | `api/diagram/route.ts` | 2D 다이어그램 PNG 생성 (라이브 쿼리 → Python 렌더러) |
@@ -174,7 +175,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `security/page.tsx` — Public S3, Open SGs, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 benchmarks (431 controls)
 
-## API Routes (28)
+## API Routes (29)
 
 | API | Description |
 |-----|------------|
@@ -201,6 +202,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 | `api/cost-radar/explain/route.ts` | Cost Detective — why the monthly estimate changed (`?accountId=<12-digit\|__all__>&days=1\|7\|30`, from snapshots + change records, no new CloudTrail/Steampipe calls, 400 on bad input, 500 carries the error name only, `no-store`) |
 | `api/changes/creators/route.ts` | Creator per resource (`?ids=account:resourceId[|createdAtISO],...`, max 200, 400 on bad format) — badges on S3/EC2/RDS lists |
 | `api/changes/route.ts` | Change timeline (`?accountId=<12-digit\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`; 400 on bad account/range/kind/type, 500 carries the error name only, `no-store`) |
+| `api/root-cause/route.ts` | Incident root cause (GET `?op=list[&accountId=<12-digit\|__all__>]` → `{incidents, autoDetect}` (top suspect only, max 50), `?op=get&id=rc-…` → `{incident}`/404, POST `{op:'analyze',accountId,resourceArn?,at?}` → 200 `{incident}`, 429 rate limit, 404, 400; 202 `{status:'running'}` after 120 s; 500 carries the error name only; `no-store`) |
 | `api/graph/route.ts` | Dependency graph (read-only GET: `?op=stats\|search\|hubs\|neighborhood\|impact\|deps\|project`; `arn` (starts with `arn:`, max 1024), `depth` (out of range uses default), `q`/`prefix` (max 100), `tag=key=value`, `vpc=<arn>` (tag key/value and prefix trimmed, whitespace-only is 400); `search` takes `type` (one of the 15 kinds, else 400); `project` responses add `managed`, `edges` (among members) and `warnings` (failed queries); responses carry `builtAt`; `200 {status:'building'}` until a graph exists; 404 unknown arn or VPC seed, 400 bad input, 500 carries the error name only) |
 | `api/inventory/export/route.ts` | Inventory XLSX export (one sheet per resource type + Summary) |
 | `api/diagram/route.ts` | 2D diagram PNG generation (live queries -> Python renderer) |
