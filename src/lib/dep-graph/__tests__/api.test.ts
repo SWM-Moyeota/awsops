@@ -26,6 +26,18 @@ describe('parseGraphRequest', () => {
     expect(parseGraphRequest(P('op=project&vpc=foo'))).toHaveProperty('error');
     expect(parseGraphRequest(P('op=project&prefix=moyeota-'))).toMatchObject({ seed: { kind: 'prefix', prefix: 'moyeota-' } });
   });
+  it('search type is validated against the 15 kinds', () => {
+    expect(parseGraphRequest(P('op=search&q=x&type=vpc'))).toEqual({ op: 'search', q: 'x', type: 'vpc' });
+    expect(parseGraphRequest(P('op=search&q=x&type=bogus'))).toEqual({ error: '알 수 없는 리소스 종류예요' });
+    expect(parseGraphRequest(P('op=search&q=x'))).toEqual({ op: 'search', q: 'x' });
+  });
+  it('trims tag key, value and prefix; whitespace-only is an error', () => {
+    expect(parseGraphRequest(P('op=project&tag=' + encodeURIComponent(' Project = x ')))).toMatchObject({ seed: { kind: 'tag', key: 'Project', value: 'x' } });
+    expect(parseGraphRequest(P('op=project&prefix=' + encodeURIComponent('  moyeota-  ')))).toMatchObject({ seed: { kind: 'prefix', prefix: 'moyeota-' } });
+    expect(parseGraphRequest(P('op=project&tag=' + encodeURIComponent('  =  ')))).toHaveProperty('error');
+    expect(parseGraphRequest(P('op=project&tag=' + encodeURIComponent('k=   ')))).toHaveProperty('error');
+    expect(parseGraphRequest(P('op=project&prefix=' + encodeURIComponent('   ')))).toHaveProperty('error');
+  });
   it('rejects long q; drops bad accountId', () => {
     expect(parseGraphRequest(P(`op=search&q=${'a'.repeat(101)}`))).toHaveProperty('error');
     expect(parseGraphRequest(P('op=hubs&accountId=abc'))).toEqual({ op: 'hubs' });
@@ -39,7 +51,7 @@ const data: GraphData = {
   edges: [{ src: ARN, dst: 'arn:sg', type: 'uses_sg' }], dropped: 0,
 };
 let store: GraphStore;
-const getStore = async () => (store ??= await createGraphStore(data, { builtAt: 'T', nodeCounts: {}, edgeCount: 1, dropped: 0, warnings: [] }));
+const getStore = async () => (store ??= await createGraphStore(data, { builtAt: 'T', nodeCounts: {}, edgeCount: 1, dropped: 0, warnings: ['s3'] }));
 afterAll(async () => { await store?.close(); });
 
 describe('handleGraphRequest', () => {
@@ -63,9 +75,20 @@ describe('handleGraphRequest', () => {
     expect((await handleGraphRequest({ op: 'neighborhood', arn: 'arn:sg', depth: 2 }, s)).body).toMatchObject({ builtAt: 'T', center: { arn: 'arn:sg' } });
     expect((await handleGraphRequest({ op: 'neighborhood', arn: 'arn:x', depth: 2 }, s)).status).toBe(404);
   });
-  it('project prefix returns members', async () => {
+  it('project prefix returns members, edges and warnings', async () => {
     const r = await handleGraphRequest({ op: 'project', seed: { kind: 'prefix', prefix: 'moyeota-' } }, await getStore());
     expect(r.status).toBe(200);
-    expect((r.body as { members: unknown[] }).members).toHaveLength(2);
+    const body = r.body as { members: unknown[]; edges: unknown[]; warnings: string[] };
+    expect(body.members).toHaveLength(2);
+    expect(body.edges).toEqual([{ src: ARN, dst: 'arn:sg', type: 'uses_sg' }]);
+    expect(body.warnings).toEqual(['s3']);
+  });
+  it('project with an unknown vpc arn -> 404', async () => {
+    const r = await handleGraphRequest({ op: 'project', seed: { kind: 'vpc', arn: 'arn:aws:ec2:r:1:vpc/nope' } }, await getStore());
+    expect(r).toEqual({ status: 404, body: { error: 'not-found', builtAt: 'T' } });
+  });
+  it('search passes the type filter', async () => {
+    const s = await getStore();
+    expect((await handleGraphRequest({ op: 'search', q: 'moyeota', type: 'sg' }, s)).body).toMatchObject({ results: [{ arn: 'arn:sg' }] });
   });
 });

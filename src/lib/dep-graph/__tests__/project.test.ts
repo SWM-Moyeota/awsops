@@ -5,6 +5,7 @@ import type { GraphData, GraphNode, NodeType, EdgeType } from '../types';
 function n(arn: string, type: NodeType, name: string, tags?: Record<string, string>, accountId = '111'): GraphNode {
   return { arn, type, id: arn, name, accountId, region: 'r', attrs: tags ? { tags } : {} };
 }
+const managedEni = (arn: string): GraphNode => ({ ...n(arn, 'eni', arn), attrs: { requesterManaged: true } });
 const e = (src: string, dst: string, type: EdgeType = 'uses_sg') => ({ src, dst, type });
 const g = (nodes: GraphNode[], edges: ReturnType<typeof e>[]): GraphData => ({ nodes, edges, dropped: 0 });
 
@@ -55,8 +56,47 @@ describe('previewProject', () => {
     const p = previewProject(d, { kind: 'prefix', prefix: 'p-' }, { accountId: '222' });
     expect(p.members.map(m => m.arn)).toEqual(['b']);
   });
+  it('permission edges never absorb: can_access / allows_from targets go to shared', () => {
+    const d = g(
+      [n('r', 'role', 'p-role'), n('b', 's3', 'bucket'), n('A', 'sg', 'p-sg'), n('B', 'sg', 'other-sg')],
+      [e('r', 'b', 'can_access'), e('A', 'B', 'allows_from')],
+    );
+    const p = previewProject(d, { kind: 'prefix', prefix: 'p-' });
+    expect(p.members.map(m => m.arn).sort()).toEqual(['A', 'r']);
+    expect(p.shared.map(s => s.arn).sort()).toEqual(['B', 'b']);
+  });
+  it('a non-member permission edge into a dependency keeps it out', () => {
+    const d = g(
+      [n('i', 'instance', 'p-i'), n('v', 'ebs', 'vol'), n('x', 'role', 'outsider')],
+      [e('i', 'v', 'uses_volume'), e('x', 'v', 'can_access')],
+    );
+    const p = previewProject(d, { kind: 'prefix', prefix: 'p-' });
+    expect(p.members.map(m => m.arn)).toEqual(['i']);
+    expect(p.shared.map(s => s.arn)).toEqual(['v']);
+  });
+  it('a dependency also reached by a real edge from a member is absorbed', () => {
+    const d = g(
+      [n('i', 'instance', 'p-i'), n('A', 'sg', 'p-sg'), n('X', 'sg', 'x-sg')],
+      [e('i', 'X', 'uses_sg'), e('A', 'X', 'allows_from')],
+    );
+    const p = previewProject(d, { kind: 'prefix', prefix: 'p-' });
+    expect(p.members.map(m => m.arn).sort()).toEqual(['A', 'X', 'i']);
+  });
+  it('requester-managed ENIs move from blockers to managed', () => {
+    const d = g(
+      [n('sg', 'sg', 'p-sg'), managedEni('m'), n('u', 'eni', 'user-eni')],
+      [e('m', 'sg', 'uses_sg'), e('u', 'sg', 'uses_sg')],
+    );
+    const p = previewProject(d, { kind: 'prefix', prefix: 'p-' });
+    expect(p.managed.map(x => x.arn)).toEqual(['m']);
+    expect(p.blockers.map(b => b.node.arn)).toEqual(['u']);
+  });
+  it('edges lists edges among members only', () => {
+    const p = previewProject(base, { kind: 'prefix', prefix: 'moyeota-' });
+    expect(p.edges).toEqual([{ src: 'a', dst: 'sg', type: 'uses_sg' }]);
+  });
   it('empty seed gives empty preview', () => {
     const p = previewProject(base, { kind: 'prefix', prefix: 'nope' });
-    expect(p).toEqual({ seedCount: 0, members: [], order: [], blockers: [], shared: [] });
+    expect(p).toEqual({ seedCount: 0, members: [], order: [], blockers: [], shared: [], managed: [], edges: [] });
   });
 });

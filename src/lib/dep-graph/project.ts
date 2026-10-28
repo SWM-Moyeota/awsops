@@ -1,6 +1,6 @@
 // Read-only project cleanup preview: suggests a safe delete order, never deletes.
 // 프로젝트 정리 미리보기 — 삭제 순서만 제안하고 실제로 지우지 않는다.
-import type { GraphData, GraphNode } from './types';
+import type { EdgeType, GraphData, GraphEdge, GraphNode } from './types';
 
 export type ProjectSeed =
   | { kind: 'tag'; key: string; value: string }
@@ -13,7 +13,15 @@ export interface ProjectPreview {
   order: Array<{ step: number; arns: string[]; cycle: boolean }>;
   blockers: Array<{ node: GraphNode; uses: string[] }>;
   shared: GraphNode[];
+  /** Requester-managed ENIs that use a member: AWS removes them with their service. / AWS가 관리하는 ENI. */
+  managed: GraphNode[];
+  /** Edges with both ends in members. / 후보끼리의 간선. */
+  edges: GraphEdge[];
 }
+
+// Permission edges say who may reach a target, not who owns it: never absorb through them.
+// 권한 간선은 "누가 접근할 수 있나"일 뿐 소유가 아니다 — 이 간선으로는 흡수하지 않는다.
+const PERMISSION: ReadonlySet<EdgeType> = new Set<EdgeType>(['can_access', 'allows_from']);
 
 const arr = <T>(s?: Iterable<T>): T[] => (s ? Array.from(s) : []);
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -25,12 +33,21 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
   for (const nd of data.nodes) byArn.set(nd.arn, nd);
   const fwd = new Map<string, Set<string>>();
   const rev = new Map<string, Set<string>>();
+  // Non-permission edges only: the ones that can make a member own its target.
+  // 권한이 아닌 간선만 — 후보가 대상을 "소유"하게 만들 수 있는 간선.
+  const own = new Map<string, Set<string>>();
+  const valid: GraphEdge[] = [];
   for (const ed of data.edges) {
     if (!byArn.has(ed.src) || !byArn.has(ed.dst) || ed.src === ed.dst) continue;
+    valid.push(ed);
     if (!fwd.has(ed.src)) fwd.set(ed.src, new Set());
     fwd.get(ed.src)!.add(ed.dst);
     if (!rev.has(ed.dst)) rev.set(ed.dst, new Set());
     rev.get(ed.dst)!.add(ed.src);
+    if (!PERMISSION.has(ed.type)) {
+      if (!own.has(ed.src)) own.set(ed.src, new Set());
+      own.get(ed.src)!.add(ed.dst);
+    }
   }
 
   // Seed matching. 시드 매칭
@@ -53,18 +70,21 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
   }
   if (opts?.accountId) for (const a of Array.from(members)) if (byArn.get(a)!.accountId !== opts.accountId) members.delete(a);
   const seedCount = members.size;
-  if (seedCount === 0) return { seedCount: 0, members: [], order: [], blockers: [], shared: [] };
+  if (seedCount === 0) return { seedCount: 0, members: [], order: [], blockers: [], shared: [], managed: [], edges: [] };
 
   // Closure: absorb dependencies used only by members. 멤버만 쓰는 의존 대상 흡수
+  // Only a non-permission edge from a member can absorb; any edge into d from a non-member
+  // (permission edges included) means a non-member uses it, so it stays out.
+  // 후보에서 권한이 아닌 간선으로 닿아야 흡수하고, 비멤버가 어떤 간선(권한 포함)으로든 쓰면 빠진다.
   // Two non-members that depend only on each other never join (conservative; they stay in shared).
   // 서로만 의존하는 비멤버 둘은 합류하지 않음(보수적, shared에 남음).
   let changed = true;
   while (changed) {
     changed = false;
     for (const m of Array.from(members)) {
-      for (const d of arr(fwd.get(m))) {
+      for (const d of arr(own.get(m))) {
         if (members.has(d)) continue;
-        if (arr(arr(rev.get(d))).every(s => members.has(s))) { members.add(d); changed = true; }
+        if (arr(rev.get(d)).every(s => members.has(s))) { members.add(d); changed = true; }
       }
     }
   }
@@ -139,11 +159,18 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
   }
 
   const toNodes = (s: Iterable<string>) => arr(s).map(a => byArn.get(a)!).sort(byTypeNameArn);
+  // AWS-managed ENIs (Lambda, RDS, ELB …) go away with their service: list them apart.
+  // AWS가 관리하는 ENI는 연결된 서비스를 지우면 같이 정리되므로 따로 보여 준다.
+  const isManaged = (nd: GraphNode) => nd.type === 'eni' && nd.attrs?.requesterManaged === true;
+  const allBlockers = toNodes(blockerUses.keys());
+  const edgeCmp = (a: GraphEdge, b: GraphEdge) => cmp(a.src, b.src) || cmp(a.dst, b.dst) || cmp(a.type, b.type);
   return {
     seedCount,
     members: toNodes(members),
     order,
-    blockers: toNodes(blockerUses.keys()).map(node => ({ node, uses: Array.from(blockerUses.get(node.arn)!).sort(cmp) })),
+    blockers: allBlockers.filter(nd => !isManaged(nd)).map(node => ({ node, uses: Array.from(blockerUses.get(node.arn)!).sort(cmp) })),
     shared: toNodes(shared),
+    managed: allBlockers.filter(isManaged),
+    edges: valid.filter(ed => members.has(ed.src) && members.has(ed.dst)).sort(edgeCmp),
   };
 }
