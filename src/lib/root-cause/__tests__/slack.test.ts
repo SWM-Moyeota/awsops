@@ -38,6 +38,22 @@ describe('formatIncidentAlert', () => {
     expect(t).not.toContain('x\n');
     expect(t.split('\n')).toHaveLength(2);
   });
+  it('no analysis / partial / escape', () => {
+    expect(formatIncidentAlert(inc({ analysis: undefined }))).toContain('분석 결과가 아직 없어요');
+    expect(formatIncidentAlert(inc({ analysis: undefined }))).not.toContain('관련 변경이 없어요');
+    const f = inc(); f.analysis!.failedRegions = ['us-east-1'];
+    expect(formatIncidentAlert(f)).toContain('일부 기록을 못 읽었어요');
+    expect(formatIncidentAlert(f)).toContain('의심 1위');
+    const t = inc(); t.analysis!.suspects = []; t.analysis!.truncated = true;
+    const tt = formatIncidentAlert(t);
+    expect(tt).toContain('일부 기록을 못 읽었어요');
+    expect(tt).not.toContain('관련 변경이 없어요');
+    const e = inc({ resourceName: 'a<b>&c' }); e.analysis!.suspects[0].event.actor.name = '<!channel>';
+    const et = formatIncidentAlert(e);
+    expect(et).toContain('a&lt;b&gt;&amp;c');
+    expect(et).toContain('&lt;!channel&gt;님이');
+    expect(et).not.toContain('<!channel>');
+  });
   it('no suspects', () => {
     const i = inc(); i.analysis!.suspects = [];
     expect(formatIncidentAlert(i)).toContain('직전 60분에 관련 변경이 없어요');
@@ -78,6 +94,8 @@ describe('detectRcaQuestion', () => {
     expect(detectRcaQuestion('누가 sg-1 만들었어?')).toBeNull();
     expect(detectRcaQuestion('왜 고장났어')).toBeNull();
     expect(detectRcaQuestion('why is it down')).toBeNull();
+    expect(detectRcaQuestion('EC2 비용 원인이 뭐야')).toBeNull();
+    expect(detectRcaQuestion('원인 분석 report 만들어줘')).toBeNull();
   });
 });
 
@@ -90,6 +108,14 @@ describe('maybeHandleRcaQuestion', () => {
     const reply = vi.fn();
     expect(await maybeHandleRcaQuestion(ev('왜 고장났어 sg-9'), { reply, search: async () => [] })).toBe(false);
     expect(reply).not.toHaveBeenCalled();
+  });
+  it('plain word needs exact name/id hit', async () => {
+    const reply = vi.fn();
+    const fuzzy = { ...node, name: 'web-prod-2', id: 'i-9' };
+    expect(await maybeHandleRcaQuestion(ev('web-prod 원인이 뭐야'), { reply, search: async () => [fuzzy] })).toBe(false);
+    expect(reply).not.toHaveBeenCalled();
+    const exact = { ...node, name: 'Web-Prod' };
+    expect(await maybeHandleRcaQuestion(ev('web-prod 원인이 뭐야'), { reply, search: async () => [exact], analyze: async () => inc() })).toBe(true);
   });
   it('found -> progress + alert', async () => {
     const reply = vi.fn(); const analyze = vi.fn(async () => inc());

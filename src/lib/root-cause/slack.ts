@@ -15,7 +15,12 @@ const errName = (e: unknown) => (e instanceof Error ? e.name : 'Error');
 const CAUSE_WORDS = /왜\s*고장|원인|뭐가\s*바뀌|무슨\s*변경|why.*(down|broken|fail)|root\s*cause/i;
 const ID_TOKEN = /\b(?:sg|i|eni)-[0-9a-z]+|arn:aws:\S+/i;
 // Words that are never a resource name. / 리소스 이름이 아닌 단어들.
-const STOP_WORDS = new Set(['why', 'down', 'broken', 'fail', 'failed', 'the', 'is', 'are', 'was', 'what', 'root', 'cause', 'causes', 'did', 'does', 'and', 'for', 'with', 'this', 'that', 'awsops']);
+const STOP_WORDS = new Set(['why', 'down', 'broken', 'fail', 'failed', 'the', 'is', 'are', 'was', 'what', 'root', 'cause', 'causes', 'did', 'does', 'and', 'for', 'with', 'this', 'that', 'awsops', 'ec2', 'aws', 'cost', 'costs', 'report', 'rds', 'lambda', 'alb', 'nlb', 'elb', 's3', 'iam', 'vpc', 'eks', 'ecs', 'sg', 'ebs', 'nat', 'tg', 'slack', 'bot', 'dashboard']);
+
+// Escape Slack control chars. / Slack 제어 문자 이스케이프.
+const esc = (t: string): string => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// Ids and ARNs may match by search; plain words need an exact name/id hit. / ID·ARN이 아닌 단어는 이름·ID가 정확히 같아야 한다.
+const isIdQuery = (q: string): boolean => /^(?:(?:sg|i|eni|subnet|vpc|nat|eipalloc|vol|tg)-[0-9a-z]+|arn:aws:)/i.test(q);
 
 // KST HH:mm. / 한국 시각 HH:mm.
 const kstHm = (iso: string): string => new Date(new Date(iso).getTime() + 9 * 3_600_000).toISOString().slice(11, 16);
@@ -33,18 +38,23 @@ function typeLabel(arn: string | null): string {
 
 /** Alert text for one analyzed incident. / 분석된 사건 하나의 알림 문장. */
 export function formatIncidentAlert(inc: Incident, appUrl?: string): string {
-  const name = inc.resourceName ?? inc.signals[0]?.alarmName ?? '계정 전체';
-  const detail = inc.signals[0]?.detail ?? '이상 감지';
+  const name = esc(inc.resourceName ?? inc.signals[0]?.alarmName ?? '계정 전체');
+  const detail = esc(inc.signals[0]?.detail ?? '이상 감지');
   const extra = inc.signals.length > 1 ? ` 외 신호 ${inc.signals.length - 1}개` : '';
   const lines = [`🔎 장애 감지: ${name}(${typeLabel(inc.resourceArn)}) ${detail}${extra} (${kstHm(inc.startedAt)}부터)`];
-  const top = inc.analysis?.suspects[0];
+  const a = inc.analysis;
+  const top = a?.suspects[0];
   if (top) {
     const res = top.event.refs.find((r) => r.id)?.id ?? top.event.refs[0]?.arn ?? '';
-    lines.push(`의심 1위: ${kstHm(top.event.time)} ${top.event.actor.name}님이 ${res} ${top.event.eventName} (${toolLabel(top.event.tool)})`.replace(/ {2,}/g, ' '));
-  } else {
-    lines.push('직전 60분에 관련 변경이 없어요');
+    lines.push(`의심 1위: ${kstHm(top.event.time)} ${esc(top.event.actor.name)}님이 ${esc(res)} ${esc(top.event.eventName)} (${toolLabel(top.event.tool)})`.replace(/ {2,}/g, ' '));
   }
-  if (inc.analysis?.ai.status === 'ok' && inc.analysis.ai.summary) lines.push(inc.analysis.ai.summary);
+  if (!a) lines.push('분석 결과가 아직 없어요');
+  else {
+    const partial = a.failedRegions.length > 0 || a.truncated;
+    if (partial) lines.push('일부 기록을 못 읽었어요');
+    else if (!top) lines.push('직전 60분에 관련 변경이 없어요');
+  }
+  if (a?.ai.status === 'ok' && a.ai.summary) lines.push(esc(a.ai.summary));
   if (appUrl) lines.push(`자세히: ${appUrl.replace(/\/+$/, '')}/root-cause?id=${inc.id}`);
   return lines.join('\n');
 }
@@ -92,7 +102,11 @@ export async function maybeHandleRcaQuestion(event: MentionEvent, deps: RcaHandl
   const q = detectRcaQuestion(event.text);
   if (!q) return false;
   let node: GraphNode | undefined;
-  try { node = (await (deps.search ?? defaultSearch)(q.query))[0]; } catch (e) { console.error('[root-cause] slack search failed:', errName(e)); return false; }
+  try {
+    const hits = await (deps.search ?? defaultSearch)(q.query);
+    const lc = q.query.toLowerCase();
+    node = isIdQuery(q.query) ? hits[0] : hits.find((h) => h.name.toLowerCase() === lc || h.id.toLowerCase() === lc);
+  } catch (e) { console.error('[root-cause] slack search failed:', errName(e)); return false; }
   if (!node) return false;
   await deps.reply('분석 중이에요…');
   try {
