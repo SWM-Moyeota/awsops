@@ -36,19 +36,25 @@ export default function ProjectPreviewPanel({ accountId, reloadKey }: { accountI
   const [vpc, setVpc] = useState<GraphNode | null>(null);
   const [vpcArn, setVpcArn] = useState('');
   const [params, setParams] = useState<GraphParams | null>(null);
+  // Bumped per run so the same seed refetches. / 같은 씨앗으로 다시 눌러도 새로 조회
+  const [runNonce, setRunNonce] = useState(0);
 
   // Results belong to one account. / 결과는 계정마다 다르다.
   useEffect(() => { setParams(null); setVpc(null); }, [accountId]);
 
   const seedParams = useMemo((): GraphParams | null => {
-    if (kind === 'tag') return tagKey.trim() ? { tag: `${tagKey.trim()}=${tagValue.trim()}` } : null;
+    if (kind === 'tag') return tagKey.trim() && tagValue.trim() ? { tag: `${tagKey.trim()}=${tagValue.trim()}` } : null;
     if (kind === 'prefix') return prefix.trim() ? { prefix: prefix.trim() } : null;
     const arn = vpcArn.trim() || vpc?.arn || '';
     return arn ? { vpc: arn } : null;
   }, [kind, tagKey, tagValue, prefix, vpc, vpcArn]);
 
-  const run = () => { if (seedParams) setParams({ op: 'project', ...seedParams, accountId }); };
-  const { data, loading, building, error } = useGraph<ProjectBody>(params, reloadKey);
+  const run = () => {
+    if (!seedParams) return;
+    setParams({ op: 'project', ...seedParams, accountId });
+    setRunNonce((n) => n + 1);
+  };
+  const { data, loading, building, error } = useGraph<ProjectBody>(params, `${reloadKey}:${runNonce}`);
   const byArn = useMemo(() => new Map((data?.members ?? []).map((n) => [n.arn, n])), [data]);
 
   return (

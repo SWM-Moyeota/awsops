@@ -41,7 +41,13 @@ export default function SearchBox({ placeholder, accountId, onPick, onlyType, re
   const pick = (n: GraphNode) => { onPick(n); setOpen(false); setText(''); setQ(''); };
 
   return (
-    <div className="relative w-full md:max-w-md">
+    <div
+      className="relative w-full md:max-w-md"
+      // Close only when focus leaves the box, so Tab into the results keeps them open.
+      // 포커스가 검색 영역 밖으로 나갈 때만 닫는다 — Tab으로 결과로 옮겨도 목록이 유지된다.
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}
+    >
       <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
       <input
         type="text"
@@ -49,8 +55,8 @@ export default function SearchBox({ placeholder, accountId, onPick, onlyType, re
         maxLength={MAX_Q}
         onChange={(e) => { setText(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder={placeholder}
+        aria-label={placeholder}
         className="w-full rounded-lg border border-navy-600 bg-navy-800 py-2 pl-8 pr-3 text-sm text-gray-200 placeholder-gray-600 focus:border-accent-cyan focus:outline-none"
       />
       {open && q && (
@@ -64,8 +70,10 @@ export default function SearchBox({ placeholder, accountId, onPick, onlyType, re
             <button
               key={n.arn}
               type="button"
-              // mousedown fires before the input blur. / 입력창 blur보다 먼저 실행되도록 mousedown 사용
-              onMouseDown={(e) => { e.preventDefault(); pick(n); }}
+              // Keep input focus on mouse; pick on click so Enter/Space work too.
+              // 마우스로 눌러도 입력창 포커스 유지, 선택은 click이라 키보드(Enter/Space)로도 된다.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => pick(n)}
               className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-navy-700"
             >
               <span className="h-2.5 w-2.5 flex-none rounded-sm" style={{ background: typeColor(n.type) }} />

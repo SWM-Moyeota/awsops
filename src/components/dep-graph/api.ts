@@ -39,7 +39,7 @@ const IDLE = { data: null, loading: false, building: false, error: null };
  * Fetch `params` (null = idle). Refetches when params or `reloadKey` change.
  * params가 null이면 아무것도 안 한다. params나 reloadKey가 바뀌면 다시 부른다.
  */
-export function useGraph<T>(params: GraphParams | null, reloadKey = 0): GraphState<T> {
+export function useGraph<T>(params: GraphParams | null, reloadKey: number | string = 0): GraphState<T> {
   const key = params ? new URLSearchParams(params).toString() : '';
   const [state, setState] = useState<GraphState<T>>(IDLE);
   const lastKey = useRef('');

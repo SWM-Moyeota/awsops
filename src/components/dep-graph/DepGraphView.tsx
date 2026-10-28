@@ -2,7 +2,7 @@
 
 // /dependency-graph page body: build line, search, tabs (relations canvas + panel / project cleanup preview).
 // 의존성 그래프 본문 — 빌드 상태 줄, 검색, 탭(관계 보기: 캔버스+패널 / 프로젝트 정리 미리보기). 읽기 전용.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Header from '@/components/layout/Header';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useAccountContext } from '@/contexts/AccountContext';
@@ -25,6 +25,8 @@ export default function DepGraphView() {
   const [depth, setDepth] = useState<number>(2);
   const [reloadKey, setReloadKey] = useState(0);
   const [now, setNow] = useState(() => Date.now());
+  const [statsNonce, setStatsNonce] = useState(0);
+  const refetchedFor = useRef('');
 
   // Keep "N분 전" fresh. / "N분 전"을 1분마다 갱신
   useEffect(() => {
@@ -32,7 +34,7 @@ export default function DepGraphView() {
     return () => clearInterval(id);
   }, []);
 
-  const stats = useGraph<StatsBody>(useMemo(() => ({ op: 'stats' }), []), reloadKey);
+  const stats = useGraph<StatsBody>(useMemo(() => ({ op: 'stats' }), []), `${reloadKey}:${statsNonce}`);
   const ready = !!stats.data;
 
   const hubs = useGraph<HubsBody>(
@@ -52,6 +54,24 @@ export default function DepGraphView() {
     reloadKey,
   );
 
+  // Hubs and walks differ per account. / 계정이 바뀌면 처음 화면으로
+  useEffect(() => { setCenter(null); }, [currentAccountId]);
+
+  // Newest builtAt seen: a later response can come from a newer build than stats.
+  // 본 것 중 가장 새 builtAt — 통계보다 나중 응답이 더 새 빌드일 수 있다.
+  const statsBuiltAt = stats.data?.stats.builtAt;
+  const builtAt = [statsBuiltAt, hubs.data?.builtAt, nb.data?.builtAt, impact.data?.builtAt, deps.data?.builtAt]
+    .filter((v): v is string => !!v && Number.isFinite(Date.parse(v)))
+    .sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+
+  // Refetch stats once per newer build so the counts match. / 더 새 빌드를 보면 통계를 한 번 다시 불러 개수도 맞춘다.
+  useEffect(() => {
+    if (!builtAt || !statsBuiltAt || builtAt === statsBuiltAt || refetchedFor.current === builtAt) return;
+    if (Date.parse(builtAt) <= Date.parse(statsBuiltAt)) return;
+    refetchedFor.current = builtAt;
+    setStatsNonce((n) => n + 1);
+  }, [builtAt, statsBuiltAt]);
+
   const pick = useCallback((arn: string) => { setCenter(arn); setTab('relations'); }, []);
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
 
@@ -65,7 +85,7 @@ export default function DepGraphView() {
       {/* Build line / 빌드 상태 줄 */}
       {s && (
         <p className="text-xs text-gray-400">
-          {t('depGraph.builtAgo', { minutes: minutesSince(s.builtAt, now), nodes: nodeTotal, edges: s.edgeCount })}
+          {t('depGraph.builtAgo', { minutes: minutesSince(builtAt ?? s.builtAt, now), nodes: nodeTotal, edges: s.edgeCount })}
         </p>
       )}
       {stats.building && (
