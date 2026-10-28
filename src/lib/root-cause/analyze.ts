@@ -26,6 +26,8 @@ const MANUAL_FUTURE_MS = 2 * 60_000;
 const MANUAL_MAX_AGE_MS = 7 * 86_400_000;
 const MANUAL_TIMEOUT_MS = 120_000;
 const DEFAULT_REGION = 'ap-northeast-2';
+const LOOKUP_TIMEOUT_MS = 20_000;
+const JOB_CAP_MS = 180_000;
 
 const errName = (e: unknown) => (e instanceof Error ? e.name : 'Error');
 function namedError(name: string, message = name): Error { const e = new Error(message); e.name = name; return e; }
@@ -42,7 +44,7 @@ export const defaultLookup: LookupFn = async (accountId, region, p) => {
     MaxResults: 50,
     NextToken: p.nextToken,
     LookupAttributes: [{ AttributeKey: 'ReadOnly', AttributeValue: 'false' }],
-  }));
+  }), { abortSignal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) }); // a hung call must not stall the queue / 멈춘 호출이 큐를 막지 않게
   return { events: (res.Events ?? []).map((e) => ({ CloudTrailEvent: e.CloudTrailEvent })), nextToken: res.NextToken };
 };
 
@@ -126,10 +128,22 @@ export async function analyzeIncident(inc: Incident, deps: AnalyzeDeps = {}): Pr
   };
 }
 
-/** Process-wide serial chain: one analysis at a time (shares CloudTrail slots with ingest). / 프로세스 전체에서 한 번에 하나씩. */
+// Settle within capMs: reject with Timeout, leave the job running unawaited. / capMs 안에 끝나지 않으면 Timeout — 작업은 기다리지 않고 둔다.
+function withCap<T>(fn: () => Promise<T>, capMs: number): Promise<T> {
+  const job = Promise.resolve().then(fn);
+  job.catch(() => undefined); // late rejection after the cap is not unhandled / 상한 뒤 늦은 실패 처리
+  let timer: NodeJS.Timeout | undefined;
+  const cap = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(namedError('Timeout')), capMs);
+    timer.unref?.();
+  });
+  return Promise.race([job, cap]).finally(() => clearTimeout(timer));
+}
+
+/** Process-wide serial chain: one analysis at a time (shares CloudTrail slots with ingest), each capped at 180 s. / 프로세스 전체에서 한 번에 하나씩, 작업당 180초 상한. */
 export function enqueueAnalysis<T>(fn: () => Promise<T>): Promise<T> {
   const s = rootCauseState();
-  const p = s.queue.then(() => fn());
+  const p = s.queue.then(() => withCap(fn, JOB_CAP_MS));
   s.queue = p.catch(() => undefined);
   return p;
 }
@@ -165,7 +179,9 @@ export async function manualAnalyze(req: { accountId: string; resourceArn: strin
     if (req.resourceArn) {
       const history = await (deps.listHistory ?? (() => defaultListHistory()))().catch(() => [] as GraphSnapshot[]);
       const node = findNode(req.resourceArn, (deps.currentData ?? currentGraph)(), history);
-      if (!node) throw namedError('NotFound');
+      // Stay inside the requested account; IAM roles carry it in the ARN. / 요청 계정 안에서만 — 역할은 ARN 계정 칸.
+      const nodeAccount = node && (node.type === 'role' ? (node.arn.split(':')[4] || node.accountId) : node.accountId);
+      if (!node || nodeAccount !== req.accountId) throw namedError('NotFound');
       name = node.name;
       region = node.region || undefined;
     }

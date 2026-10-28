@@ -3,11 +3,19 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { analyzeIncident, enqueueAnalysis, lookupWriteEvents, manualAnalyze } from '../analyze';
+import { analyzeIncident, defaultLookup, enqueueAnalysis, lookupWriteEvents, manualAnalyze } from '../analyze';
 import { readIncidents } from '../store';
 import type { LookupFn } from '@/lib/change-timeline/ingest';
 import type { GraphData, GraphNode } from '@/lib/dep-graph/types';
 import type { Analysis, GraphSnapshot, Incident } from '../types';
+
+// Fake the CloudTrail SDK and the shared access helpers: no real AWS. / CloudTrail SDK·공용 접근 도구를 가짜로.
+const ct = vi.hoisted(() => ({ send: vi.fn(), commands: [] as unknown[] }));
+vi.mock('@aws-sdk/client-cloudtrail', () => ({
+  CloudTrailClient: vi.fn(() => ({ send: ct.send })),
+  LookupEventsCommand: vi.fn((input: unknown) => { ct.commands.push(input); return { input }; }),
+}));
+vi.mock('@/lib/cloudtrail-access', () => ({ accountCredentials: vi.fn(async () => undefined), cloudTrailSlot: vi.fn(async () => undefined) }));
 
 const A = '111111111111';
 const start = new Date('2026-10-29T12:00:00Z');
@@ -68,6 +76,17 @@ describe('lookupWriteEvents', () => {
   });
 });
 
+describe('defaultLookup', () => {
+  it('asks for write events only and passes an abortSignal', async () => {
+    ct.send.mockResolvedValueOnce({ Events: [{ CloudTrailEvent: '{}' }], NextToken: 'n' });
+    const r = await defaultLookup(A, 'ap-northeast-2', { start, end: NOW });
+    expect(r).toEqual({ events: [{ CloudTrailEvent: '{}' }], nextToken: 'n' });
+    expect(ct.commands.at(-1)).toMatchObject({ MaxResults: 50, LookupAttributes: [{ AttributeKey: 'ReadOnly', AttributeValue: 'false' }] });
+    const opts = ct.send.mock.calls.at(-1)![1] as { abortSignal?: AbortSignal };
+    expect(opts.abortSignal).toBeInstanceOf(AbortSignal);
+  });
+});
+
 describe('analyzeIncident', () => {
   it('one region failing -> other region suspects present and failedRegions', async () => {
     const lookup: LookupFn = vi.fn(async (_a, region) => {
@@ -118,6 +137,20 @@ describe('enqueueAnalysis', () => {
     expect(await second).toBe(2);
     expect(log).toEqual(['a-start', 'a-end', 'b-start']);
   });
+  it('a never-resolving job is capped at 180 s and does not block the next', async () => {
+    vi.useFakeTimers();
+    try {
+      const hung = enqueueAnalysis(() => new Promise<never>(() => undefined));
+      const hungDone = expect(hung).rejects.toMatchObject({ name: 'Timeout' });
+      const next = vi.fn(async () => 'next');
+      const second = enqueueAnalysis(next);
+      await vi.advanceTimersByTimeAsync(179_999);
+      expect(next).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await hungDone;
+      expect(await second).toBe('next');
+    } finally { vi.useRealTimers(); }
+  });
   it('a failing analysis does not block the next', async () => {
     await expect(enqueueAnalysis(async () => { throw new Error('x'); })).rejects.toThrow('x');
     expect(await enqueueAnalysis(async () => 'ok')).toBe('ok');
@@ -161,6 +194,16 @@ describe('manualAnalyze', () => {
     await expect(manualAnalyze({ accountId: A, resourceArn: LB, at: new Date(NOW.getTime() - 8 * 86_400_000).toISOString() }, d)).rejects.toMatchObject({ name: 'BadTime' });
     await expect(manualAnalyze({ accountId: A, resourceArn: LB, at: 'nope' }, d)).rejects.toMatchObject({ name: 'BadTime' });
     await expect(manualAnalyze({ accountId: A, resourceArn: LB, at: new Date(NOW.getTime() + 60_000).toISOString() }, { ...d, analyze: vi.fn(async () => fakeAnalysis()) })).resolves.toBeTruthy();
+  });
+  it('NotFound when the node belongs to another account (roles: ARN account)', async () => {
+    const B = '222222222222';
+    const OTHER = `arn:aws:ec2:ap-northeast-2:${B}:instance/i-b`;
+    const ROLE = `arn:aws:iam::${A}:role/app`;
+    const g: GraphData = { nodes: [...graph.nodes, { ...node('instance', 'i-b', OTHER), accountId: B }, { ...node('role', 'app', ROLE), accountId: B }], edges: [], dropped: 0 };
+    const d = { ...baseDeps(), currentData: () => g, analyze: vi.fn(async () => fakeAnalysis()) };
+    await expect(manualAnalyze({ accountId: A, resourceArn: OTHER }, d)).rejects.toMatchObject({ name: 'NotFound' });
+    await expect(manualAnalyze({ accountId: B, resourceArn: ROLE }, d)).rejects.toMatchObject({ name: 'NotFound' });
+    await expect(manualAnalyze({ accountId: A, resourceArn: ROLE }, d)).resolves.toMatchObject({ resourceName: 'app' });
   });
   it('a deleted resource found only in history is ok', async () => {
     const inc = await manualAnalyze({ accountId: A, resourceArn: GONE }, { ...baseDeps(), analyze: vi.fn(async () => fakeAnalysis()) });
