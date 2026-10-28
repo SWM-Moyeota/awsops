@@ -45,6 +45,7 @@ export function createApprovalStore<R extends ApprovalRecord>(opts: { now?: () =
 
   return {
     create(input) {
+      // input omits the ApprovalRecord fields we fill in here; TS can't see that R is exactly input + those. / 입력에 빠진 공용 필드를 여기서 채움
       const req = { ...input, id: randomUUID(), status: 'proposed', createdAt: now() } as unknown as R;
       requests.set(req.id, req);
       // Bound memory: drop the oldest *finished* request — never one that is still pending or executing.
@@ -73,7 +74,7 @@ export function createApprovalStore<R extends ApprovalRecord>(opts: { now?: () =
       const req = load(id, cfg.ttlMs);
       if (typeof req === 'string') return fail(req);
       // Self-approval is refused at every stage, including before step 1. / 1단계 전에도 본인 승인은 거절
-      if (!cfg.allowSelfApproval && userId === req.requesterId) {
+      if ((req.status === 'proposed' || req.status === 'pending') && !cfg.allowSelfApproval && userId === req.requesterId) {
         return fail('요청한 본인은 최종 승인할 수 없어요. 다른 승인자가 승인해야 해요.');
       }
       if (req.status === 'proposed') return fail('요청자가 먼저 1단계 확인을 해야 해요.');

@@ -26,4 +26,14 @@ describe('createApprovalStore', () => {
     expect(ok.ok && ok.req.prompt).toBe('stop it');
     expect(store.beginApproval(r.id, 'U_APP', cfg).ok).toBe(false);
   });
+
+  it('keeps the finished-request message for the requester', () => {
+    const store = createApprovalStore<Custom>();
+    const r = store.create({ prompt: 'x', requesterId: 'U_REQ', channel: 'C1', threadTs: '1.1' });
+    store.confirm(r.id, 'U_REQ');
+    expect(store.beginApproval(r.id, 'U_APP', cfg).ok).toBe(true);
+    store.finish(r.id, 'executed', 'ok');
+    const res = store.beginApproval(r.id, 'U_REQ', cfg);
+    expect(!res.ok && res.reason).toContain('이미 처리된 요청이에요');
+  });
 });
