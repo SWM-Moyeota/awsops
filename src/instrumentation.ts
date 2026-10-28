@@ -16,5 +16,13 @@ export async function register() {
     } catch (e) {
       console.error('[change-timeline] start failed:', e instanceof Error ? e.name : 'Error');
     }
+    // Dependency graph: Steampipe -> graph rebuild loop (production only, never throws).
+    // 의존성 그래프: Steampipe 기반 재빌드 루프 (프로덕션 전용).
+    try {
+      const { ensureDepGraphStarted } = await import('./lib/dep-graph/loop');
+      ensureDepGraphStarted();
+    } catch (e) {
+      console.error('[dep-graph] start failed:', e instanceof Error ? e.name : 'Error');
+    }
   }
 }
