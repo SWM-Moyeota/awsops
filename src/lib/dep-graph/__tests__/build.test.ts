@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
-import { rebuildGraph, loadSnapshot, ensureGraph, collectRows, statsFor, runBuildOnce, REBUILD_COOLDOWN_MS } from '../build';
+import { rebuildGraph, listHistory, HISTORY_KEEP, loadSnapshot, ensureGraph, collectRows, statsFor, runBuildOnce, REBUILD_COOLDOWN_MS } from '../build';
 import { getCurrentStore } from '../store';
 
 const A = '111111111111';
@@ -159,5 +159,43 @@ describe('build', () => {
   it('statsFor counts only present types', () => {
     const s = statsFor({ nodes: [], edges: [], dropped: 2 }, ['a'], new Date(0));
     expect(s).toEqual({ builtAt: new Date(0).toISOString(), nodeCounts: {}, edgeCount: 0, dropped: 2, warnings: ['a'] });
+  });
+
+  describe('history', () => {
+    const at = (i: number) => new Date(Date.UTC(2026, 9, 29, 0, i, 0, 123));
+    it('writes a sanitized history file and prunes to 12', async () => {
+      const snap = path.join(dir, 'graph', 'latest.json');
+      const historyDir = path.join(dir, 'graph', 'history');
+      await rebuildGraph({ run, snapshotPath: snap, historyDir, now: at(0) });
+      expect(await fs.readdir(historyDir)).toEqual(['2026-10-29T00-00-00-123Z.json']);
+      for (let i = 1; i < 13; i++) await rebuildGraph({ run, snapshotPath: snap, historyDir, now: at(i) });
+      const names = (await fs.readdir(historyDir)).sort();
+      expect(names).toHaveLength(HISTORY_KEEP);
+      expect(names[0]).toBe('2026-10-29T00-01-00-123Z.json');
+      expect(names[11]).toBe('2026-10-29T00-12-00-123Z.json');
+    }, 120_000);
+    it('listHistory is ascending, skips corrupt files, [] for a missing dir', async () => {
+      const snap = path.join(dir, 'graph', 'latest.json');
+      const historyDir = path.join(dir, 'graph', 'history');
+      await rebuildGraph({ run, snapshotPath: snap, historyDir, now: at(2) });
+      await rebuildGraph({ run, snapshotPath: snap, historyDir, now: at(5) });
+      await fs.writeFile(path.join(historyDir, 'bad.json'), '{nope');
+      const list = await listHistory(historyDir);
+      expect(list.map((x) => x.builtAt)).toEqual([at(2).toISOString(), at(5).toISOString()]);
+      expect(list[0].data.nodes.length).toBe(2);
+      expect(await listHistory(path.join(dir, 'missing'))).toEqual([]);
+    });
+    it('does not throw when the snapshot or history write fails', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const blocker = path.join(dir, 'file');
+      await fs.writeFile(blocker, 'x');
+      await expect(rebuildGraph({ run, snapshotPath: path.join(blocker, 'latest.json'), historyDir: path.join(blocker, 'h') })).resolves.toBeTruthy();
+    });
+    it('does not throw when only the history write fails', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const blocker = path.join(dir, 'file');
+      await fs.writeFile(blocker, 'x');
+      await expect(rebuildGraph({ run, snapshotPath: path.join(dir, 'g', 'latest.json'), historyDir: path.join(blocker, 'h') })).resolves.toBeTruthy();
+    });
   });
 });

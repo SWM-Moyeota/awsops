@@ -6,11 +6,17 @@ import { batchQuery } from '@/lib/steampipe';
 import { GRAPH_QUERIES } from './queries';
 import { extractGraph } from './extract';
 import { createGraphStore, getCurrentStore, setCurrentStore, type GraphStore } from './store';
+import type { GraphSnapshot } from '@/lib/root-cause/types';
 import type { BuildStats, GraphData, NodeType, QueryName, Row, Rows } from './types';
 
 export type BatchRunner = (q: Record<string, string>) => Promise<Record<string, { rows: unknown[]; error?: string }>>;
 
 export const SNAPSHOT_PATH = path.join(process.cwd(), 'data/graph/latest.json');
+
+/** Per-build snapshots kept for root-cause graph merging. / 장애 원인 분석용 빌드별 스냅샷 폴더. */
+export const HISTORY_DIR = path.join(process.cwd(), 'data/graph/history');
+/** How many history files to keep (about 3 hours). / 남기는 이력 개수(약 3시간). */
+export const HISTORY_KEEP = 12;
 
 const defaultRun: BatchRunner = (q) => batchQuery(q);
 
@@ -69,7 +75,33 @@ async function writeSnapshot(file: string, stats: BuildStats, data: GraphData): 
   await fs.rename(tmp, file);
 }
 
-export async function rebuildGraph(deps: { run?: BatchRunner; snapshotPath?: string; now?: Date } = {}): Promise<BuildStats> {
+/** Write one history file, then prune to the newest HISTORY_KEEP; never throws. / 이력 파일을 쓰고 최근 12개만 남긴다(실패해도 던지지 않음). */
+async function writeHistory(dir: string, stats: BuildStats, data: GraphData): Promise<void> {
+  try {
+    await writeSnapshot(path.join(dir, `${stats.builtAt.replace(/[:.]/g, '-')}.json`), stats, data);
+    const names = (await fs.readdir(dir)).filter((n) => n.endsWith('.json')).sort();
+    for (const n of names.slice(0, Math.max(0, names.length - HISTORY_KEEP))) await fs.rm(path.join(dir, n), { force: true });
+  } catch (e) {
+    console.error('[dep-graph] history failed:', e instanceof Error ? e.name : 'Error');
+  }
+}
+
+/** History snapshots, oldest first; unreadable files skipped, [] if the folder is missing. / 이력을 오래된 순으로 읽는다(깨진 파일은 건너뜀). */
+export async function listHistory(dir: string = HISTORY_DIR): Promise<GraphSnapshot[]> {
+  let names: string[];
+  try { names = (await fs.readdir(dir)).filter((n) => n.endsWith('.json')); } catch { return []; }
+  const out: GraphSnapshot[] = [];
+  for (const n of names) {
+    try {
+      const j = JSON.parse(await fs.readFile(path.join(dir, n), 'utf8'));
+      if (!j || j.version !== 1 || typeof j.stats?.builtAt !== 'string' || !Array.isArray(j.data?.nodes) || !Array.isArray(j.data?.edges)) continue;
+      out.push({ builtAt: j.stats.builtAt, data: j.data as GraphData });
+    } catch { /* skip / 건너뜀 */ }
+  }
+  return out.sort((a, b) => a.builtAt.localeCompare(b.builtAt));
+}
+
+export async function rebuildGraph(deps: { run?: BatchRunner; snapshotPath?: string; historyDir?: string; now?: Date } = {}): Promise<BuildStats> {
   const { rows, warnings } = await collectRows(deps.run);
   // Every query failed (Steampipe down): keep the previous graph instead of swapping in an empty one.
   // 모든 쿼리가 실패하면(Steampipe 중단) 빈 그래프로 바꾸지 않고 이전 그래프를 유지한다.
@@ -90,7 +122,11 @@ export async function rebuildGraph(deps: { run?: BatchRunner; snapshotPath?: str
     // Snapshot is best-effort; the live store is already swapped in.
     // 스냅샷은 부가 기능 — 저장소는 이미 교체됐다.
     console.error('[dep-graph] snapshot failed:', e instanceof Error ? e.name : 'Error');
+    return stats;
   }
+  // A custom snapshotPath without historyDir means no history (tests, tools). / snapshotPath만 바꾸면 이력은 쓰지 않는다.
+  const hist = deps.historyDir ?? (deps.snapshotPath ? null : HISTORY_DIR);
+  if (hist) await writeHistory(hist, stats, data);
   return stats;
 }
 

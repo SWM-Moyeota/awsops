@@ -23,6 +23,7 @@ AWS 리소스 15종(VPC, Subnet, ENI, EC2, SG, ELB, TG, RDS, Lambda, IAM Role, N
 ## 주기와 저장
 - 서버 기동 60초 뒤 첫 빌드, 이후 15분마다. 모든 빌드(루프·첫 요청)는 잠금 하나를 같이 써서 겹치지 않고, 프로덕션에서만 돈다. 그래서 그래프는 **최대 15분 늦을 수 있다** — 화면과 카드에 "N분 전 기준"을 보여 준다.
 - 스냅샷: `data/graph/latest.json`(git 제외, 임시 파일에 쓴 뒤 rename). 기동할 때(프로덕션) 바로 적재하고, 그 전에 요청이 오면 첫 요청에서도 적재한다. 더 오래된 스냅샷은 더 새 그래프를 덮지 않는다.
+- 이력: `data/graph/history/<builtAt의 ':'·'.'를 '-'로>.json`(같은 `{version:1, stats, data}`, git 제외, 임시 파일 + rename). 빌드마다 하나 쓰고 최근 12개(`HISTORY_KEEP`)만 남긴다(실패해도 빌드는 안 깨짐). `listHistory()`가 오래된 순으로 읽는다 — 장애 원인 분석(`src/lib/root-cause/graph.ts`)이 스냅샷을 합쳐 변경 직전 그래프로 거리를 잰다.
 - 일부 쿼리가 실패하면 그 이름이 `warnings`에 남고 화면의 빌드 줄("일부 종류를 못 읽었어요")과 정리 탭 경고에 보인다.
 - 실측(공유 샌드박스 계정, 2026-10-28): 쿼리 19/19 성공 약 8초, 노드 230 · 간선 274 · dropped 0. 같은 계정 덤프로 이번 수정 뒤 다시 추출: 노드 214 · 간선 280 · dropped 0, Lambda→ENI 2 · RDS→ENI 4.
 
@@ -62,6 +63,7 @@ Edge `src -> dst` means **"src uses (depends on) dst"**. Impact walks edges back
 ## Timings and Storage
 - First build 60 s after boot, then every 15 min; every build (loop or first request) shares one lock, so they never overlap; production only. So the graph can be **up to 15 minutes stale** — the screen and cards show "as of N minutes ago".
 - Snapshot: `data/graph/latest.json` (git-ignored, written via temp file + rename). Loaded at boot (production) and, if a request comes first, on that request. An older snapshot never replaces a newer graph.
+- History: `data/graph/history/<builtAt with ':' and '.' replaced by '-'>.json` (same `{version:1, stats, data}`, git-ignored, temp file + rename). One per build, newest 12 kept (`HISTORY_KEEP`); a failure never breaks the build. `listHistory()` reads them oldest first — root-cause analysis (`src/lib/root-cause/graph.ts`) merges snapshots to measure distance on the pre-change graph.
 - Failed queries stay in `warnings`; the screen names them on the build line and warns on the cleanup tab.
 - Real-data dry run (shared sandbox account, 2026-10-28): 19/19 queries in about 8 s, 230 nodes, 274 edges, 0 dropped. Re-extracted from the same account's dump after this fix wave: 214 nodes, 280 edges, 0 dropped, Lambda→ENI 2, RDS→ENI 4.
 
