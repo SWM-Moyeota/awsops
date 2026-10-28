@@ -21,9 +21,16 @@ function scrubValue(v: unknown): unknown {
   if (typeof v === 'string') return v.replace(ACCESS_KEY, '[숨김]');
   return v;
 }
+// Fallback for invalid/truncated JSON: regex-mask pairs. / 잘리거나 깨진 JSON용 정규식 대체 처리.
+const VAL = '("(?:[^"\\\\]|\\\\.)*"?|[^,}\\s]*)';
+const DROP_PAIR = new RegExp('"?(?:useragent|sourceipaddress)"?\\s*[:=]\\s*' + VAL + '\\s*,?', 'gi');
+const SECRET_PAIR = new RegExp('("?[\\w-]*(?:password|secret|token|credential|privatekey)[\\w-]*"?)\\s*[:=]\\s*' + VAL, 'gi');
+function scrubText(t: string): string {
+  return t.replace(DROP_PAIR, '').replace(SECRET_PAIR, '$1:"[숨김]"').replace(ACCESS_KEY, '[숨김]');
+}
 export function scrubParams(params: string): string {
   let s: string;
-  try { s = JSON.stringify(scrubValue(JSON.parse(params))); } catch { s = params.replace(ACCESS_KEY, '[숨김]'); }
+  try { s = JSON.stringify(scrubValue(JSON.parse(params))); } catch { s = scrubText(params); }
   return s.replace(IPV4, '[IP]').replace(/useragent|sourceipaddress/gi, '[숨김]');
 }
 

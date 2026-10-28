@@ -22,6 +22,13 @@ describe('buildBundle', () => {
     expect(text).not.toContain('AKIA');
     expect(text).toContain('ev-0');
   });
+  it('masks secrets/UA/IP in truncated (invalid) JSON', () => {
+    const p = '{"userAgent":"aws-cli/2.1 x","sourceIPAddress":"203.0.113.9","a":1,"password":"hunter2","apiToken": bare99,"clientSecret":"cut-off-sec';
+    const { text } = buildBundle(ctx, [sus(0, p)]);
+    for (const bad of ['hunter2', 'bare99', 'cut-off-sec', 'aws-cli', '203.0.113.9']) expect(text).not.toContain(bad);
+    expect(text).toContain('[숨김]');
+    expect(text).toContain('"a":1');
+  });
   it('caps size and keeps eventIds consistent', () => {
     const big = JSON.stringify({ x: 'y'.repeat(590) });
     const many = Array.from({ length: 50 }, (_, i) => sus(i, big));
