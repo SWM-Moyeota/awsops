@@ -92,6 +92,14 @@ export interface AppConfig {
     allowSelfApproval?: boolean;      // default false: the requester cannot approve their own request / 기본 false: 요청자 본인 승인 불가
     requestTtlMinutes?: number;       // default 15 / 요청 만료(분)
   };
+  actionPlan?: {                    // Safe AI actions (src/lib/action-plan) — off unless enabled AND slackControl.approverIds is set / 안전한 AI 실행
+    enabled?: boolean;                // default false
+    maxSteps?: number;                // default 5 (after alias expansion) / 단계 상한
+    maxResources?: number;            // default 3 / 계획 하나가 건드리는 리소스 상한
+    maxBlastRadius?: number;          // default 5 ENIs per security-group change / 보안그룹 변경 영향 상한
+    undoHours?: number;               // default 24 / 되돌리기 가능 시간
+    sourceAliases?: Record<string, string[]>; // admin-maintained source names → CIDRs (e.g. {"사무실": ["203.0.113.0/24"]}) / 출처 별칭
+  };
 }
 
 const DEFAULT_CONFIG: AppConfig = {

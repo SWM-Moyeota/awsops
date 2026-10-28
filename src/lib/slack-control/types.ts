@@ -17,10 +17,9 @@ export interface ControllableInstance {
 export type RequestStatus =
   | 'proposed' | 'pending' | 'executing' | 'executed' | 'failed' | 'cancelled' | 'rejected' | 'expired';
 
-export interface ControlRequest {
+/** Fields every two-step approval request has — shared by slack-control and action-plan. / 2단계 승인 공용 필드 */
+export interface ApprovalRecord {
   id: string;
-  action: ControlAction;
-  instance: ControllableInstance;
   requesterId: string;
   channel: string;
   threadTs: string;
@@ -33,6 +32,11 @@ export interface ControlRequest {
   decidedAt?: number;
   /** Execution outcome, e.g. "running → stopping" or an error code. */
   result?: string;
+}
+
+export interface ControlRequest extends ApprovalRecord {
+  action: ControlAction;
+  instance: ControllableInstance;
 }
 
 export interface ControlConfig {
