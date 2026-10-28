@@ -117,7 +117,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `dep-graph/` — 의존성 그래프: 리소스 15종의 관계를 Steampipe에서 뽑아 PGlite(재귀 CTE)에 담고 "지우면 뭐가 영향 받는지" 안내 (15분 주기 재빌드, `data/graph/latest.json`, `/dependency-graph`·안전한 AI 실행 카드 참고 줄, 안내만 — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 600ms) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
-### API 라우트 (`src/app/api/`, 26개 — 전체 목록은 `src/app/CLAUDE.md`)
+### API 라우트 (`src/app/api/`, 28개 — 전체 목록은 `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI 라우팅 진입점 (얇은 파일: `GET`/`POST`만, 검증 후 `src/lib/ai/`의 JSON·SSE 파이프라인으로 넘김. 등록표 19 라우트, 멀티 라우트, SSE 스트리밍, 도구 추론)
 - `steampipe/route.ts` — Steampipe 쿼리 + Cost 가용성 + 인벤토리 (POST/GET/PUT)
 - `auth/route.ts` — 로그아웃 (HttpOnly 쿠키 서버 사이드 삭제)
@@ -334,7 +334,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `dep-graph/` — Dependency graph: extracts relationships of 15 resource kinds from Steampipe into PGlite (recursive CTE) and shows what is affected if one is deleted (rebuilt every 15 min, `data/graph/latest.json`, `/dependency-graph` and a reference line on safe-AI-action cards, guidance only — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `cloudtrail-access.ts` — Shared CloudTrail pacing (600 ms per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
-### API Routes (`src/app/api/`, 26 routes — full list in `src/app/CLAUDE.md`)
+### API Routes (`src/app/api/`, 28 routes — full list in `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI routing entry point (thin: only `GET`/`POST`; validates, then hands off to the JSON/SSE pipelines in `src/lib/ai/`. 19 routes in the registry, multi-route, SSE streaming, tool inference)
 - `steampipe/route.ts` — Steampipe queries + Cost availability + Inventory (POST/GET/PUT)
 - `auth/route.ts` — Logout (server-side HttpOnly cookie deletion)

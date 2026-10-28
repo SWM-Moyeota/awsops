@@ -15,16 +15,16 @@ Extract the relationships ourselves into an `edges(src_arn, dst_arn, type)` tabl
 관계를 직접 뽑아 `edges(src_arn, dst_arn, type)` 테이블(과 `nodes`)에 담고, **재귀 CTE**로 영향 범위를 계산한다. 저장소는 **PGlite**다 — WASM으로 Node 프로세스 안에서 메모리로 도는 진짜 PostgreSQL이다.
 
 1. **Direction rule** — edge `src -> dst` means "src uses (depends on) dst". Impact walks edges backwards from dst; cleanup deletes the dependent side first.
-2. **Build from Steampipe, read-only** — one SELECT per resource kind (19 queries) through the existing `runQuery()` pool; nothing is written to Steampipe's database and no AWS resource is changed.
-3. **Swap, not mutate** — every rebuild loads a fresh in-memory PGlite and swaps the pointer, so readers always see a complete graph; the previous instance closes after 60 s. The last result is also saved to `data/graph/latest.json` for fast restart.
+2. **Build from Steampipe, read-only** — one SELECT per resource kind (20 queries; role policies are read by a separate `rolePolicy` query so an SCP-blocked policy read keeps the roles) through the existing `batchQuery()` pool; nothing is written to Steampipe's database and no AWS resource is changed.
+3. **Swap, not mutate** — every rebuild loads a fresh in-memory PGlite and swaps the pointer, so readers always see a complete graph; the previous instance closes after 60 s, and an older build never replaces a newer one. All builds and snapshot loads (the loop started from `src/instrumentation.ts` and the first API request) share one process-wide lock (`runBuildOnce`); after a failed build the API waits 60 s before trying again. The last result is saved to `data/graph/latest.json` and loaded at boot (and on the first request if that comes first).
 4. **Bounded walks** — `UNION` over `(node, depth)` with a depth bound (no path arrays) so cycles such as sg <-> sg stop and rows stay at most nodes x (depth+1); minimum depth per node; 300-node cap with `truncated`.
-5. **Display only** — the graph feeds the `/dependency-graph` screen, a reference line on action cards and the project-cleanup preview. Policy checks (for example the ENI limit in ADR-011) keep using live AWS reads.
+5. **Display only** — the graph feeds the `/dependency-graph` screen, a reference line on action cards (`impactSummary(resourceId)`: only `uses_sg`/`uses_eni` edges, depth 2, non-ENI nodes, `N+` when capped, no line when a kind it depends on failed) and the project-cleanup preview (permission edges `can_access`/`allows_from` never make a member own its target; AWS-managed ENIs are listed apart as `managed`). Policy checks (for example the ENI limit in ADR-011) keep using live AWS reads.
 
 - 방향 규칙: 간선 `src -> dst`는 "src가 dst를 쓴다"이다. 영향은 dst에서 거꾸로, 정리는 의존하는 쪽부터.
-- Steampipe에서 읽기만 한다 — 종류마다 SELECT 하나(19개), 기존 풀 사용. Steampipe DB에 쓰지 않고 AWS도 바꾸지 않는다.
-- 갈아 끼우기 — 빌드마다 새 PGlite에 적재한 뒤 포인터를 바꾼다. 직전 인스턴스는 60초 뒤 닫는다. 결과는 `data/graph/latest.json`에도 저장한다.
+- Steampipe에서 읽기만 한다 — 종류마다 SELECT 하나(20개, 역할 정책은 `rolePolicy`로 따로 읽어 실패해도 역할은 남는다), 기존 풀 사용. Steampipe DB에 쓰지 않고 AWS도 바꾸지 않는다.
+- 갈아 끼우기 — 빌드마다 새 PGlite에 적재한 뒤 포인터를 바꾼다. 직전 인스턴스는 60초 뒤 닫고, 더 오래된 빌드로는 되돌리지 않는다. 빌드와 스냅샷 적재는 잠금 하나(`runBuildOnce`)를 같이 쓴다 — 루프는 `src/instrumentation.ts`가 기동하고, 첫 API 요청도 같은 잠금을 쓴다. 빌드가 실패하면 API는 60초 동안 다시 시작하지 않는다. 결과는 `data/graph/latest.json`에 저장하고 기동할 때(먼저 온 요청이 있으면 그때) 적재한다.
 - 깊이 상한 — `UNION`으로 (노드, 깊이) 쌍을 한 번만 방문해 순환을 막고, 노드마다 최단 깊이, 최대 300개(`truncated`).
-- 표시용 — 정책 검사는 계속 실시간 AWS 조회를 쓴다.
+- 표시용 — 카드 줄(`impactSummary(resourceId)`)은 `uses_sg`·`uses_eni`만 깊이 2로 따라가 ENI가 아닌 것만 센다(상한이면 `N+`, 필요한 종류를 못 읽었으면 줄 없음). 정리 미리보기는 권한 간선(`can_access`·`allows_from`)으로는 흡수하지 않고, AWS가 관리하는 ENI는 `managed`로 따로 보여 준다. 정책 검사는 계속 실시간 AWS 조회를 쓴다.
 
 ## Alternatives / 대안 비교
 
@@ -46,14 +46,14 @@ PGlite를 골랐다. 새 인프라 없이 "edges 테이블 + 재귀 CTE"를 그�
 
 - The graph can be up to 15 minutes stale (first build 60 s after boot, then every 15 min, never overlapping, production only). The screen and cards always show "as of N minutes ago".
 - Display only: the graph never writes to AWS and never decides allow/deny; policy stays live. Cleanup preview is guidance only ("안내만 해요 — 실제로 지우지 않아요").
-- If every query fails the previous graph is kept (`GraphSourceUnavailable`); if only some fail, those kinds are missing and listed in `warnings`.
+- If every query fails the previous graph is kept (`GraphSourceUnavailable`); if only some fail, those kinds are missing and listed in `warnings`, which the screen shows on the build line and as a cleanup-tab banner.
 - Only 15 resource kinds are covered; others (ECS, EKS, DynamoDB, Route 53, VPC endpoints ...) need a new extractor.
 - Adds `@electric-sql/pglite` (listed in `experimental.serverComponentsExternalPackages` so webpack does not bundle the WASM).
 - Real-data dry run (shared sandbox account, 2026-10-28): 19/19 queries in about 8 s, 230 nodes, 274 edges, 0 dropped.
 
 - 그래프는 최대 15분 늦을 수 있다. 화면과 카드에 "N분 전 기준"을 항상 보여 준다.
 - 표시용이다. AWS를 바꾸지 않고 허용·거부 판단에도 쓰지 않는다. 정책은 실시간 조회를 쓴다.
-- 쿼리가 모두 실패하면 이전 그래프를 유지하고, 일부만 실패하면 그 종류만 빠지고 `warnings`에 남는다.
+- 쿼리가 모두 실패하면 이전 그래프를 유지하고, 일부만 실패하면 그 종류만 빠지고 `warnings`에 남아 화면의 빌드 줄과 정리 탭 경고에 보인다.
 - 15종 밖의 리소스는 추출기를 추가해야 한다.
 
 ## When to revisit / 다시 검토할 때

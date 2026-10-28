@@ -3,7 +3,7 @@
 ## 역할
 페이지 전반에 걸쳐 사용되는 공유 React 컴포넌트. 레이아웃, 카드, 차트, 테이블, K8s UI.
 
-## 주요 파일 (22개)
+## 주요 파일 (37개)
 
 ### layout/ — 레이아웃 (3)
 - `layout/Sidebar.tsx` — 메인 네비게이션 (6개 그룹, Bedrock·비용 레이더 포함, 활성 표시는 경로 세그먼트 단위) + Sign Out 버튼 (로고 우측) + AccountSelector + 계정별 기능 필터링
@@ -38,11 +38,11 @@
 
 ### dep-graph/ — 의존성 그래프 (5 + 헬퍼) — 자세한 내용은 `dep-graph/CLAUDE.md`
 - `dep-graph/DepGraphView.tsx` — `/dependency-graph` 본문 (빌드 상태 "N분 전 기준", 검색, 탭: 관계 보기 · 프로젝트 정리 미리보기, 허브 카드)
-- `dep-graph/GraphCanvas.tsx` — React Flow 관계도 (노드 클릭 시 중심 이동, 종류별 색, 한국어 간선 라벨)
+- `dep-graph/GraphCanvas.tsx` — React Flow 관계도 (좌표는 부르는 쪽이 줌, 노드 클릭 시 중심 이동, 종류별 색, 한국어 간선 라벨)
 - `dep-graph/ImpactPanel.tsx` — "이걸 바꾸거나 지우면 영향 받는 리소스 N개" · 쓰는 것 · 리소스 정보
-- `dep-graph/ProjectPreviewPanel.tsx` — 씨앗 입력과 정리 순서·막는 것·공유로 빠진 것 ("안내만 해요 — 실제로 지우지 않아요")
+- `dep-graph/ProjectPreviewPanel.tsx` — 씨앗 입력과 정리 순서·후보 관계도·막는 것·AWS가 관리하는 연결·공유로 빠진 것, 못 읽은 종류 경고 ("안내만 해요 — 실제로 지우지 않아요")
 - `dep-graph/SearchBox.tsx` — 이름·ID 검색
-- `dep-graph/layout.ts` — 열 배치 순수 함수 (중심 가운데, 나를 쓰는 쪽 왼쪽, 내가 쓰는 쪽 오른쪽)
+- `dep-graph/layout.ts` — 열 배치 순수 함수 (`layoutNeighborhood`: 중심 가운데, 나를 쓰는 쪽 왼쪽, 내가 쓰는 쪽 오른쪽 / `layoutSteps`: 정리 단계마다 한 열)
 
 ### charts/ — Recharts 차트 래퍼 (3)
 - `charts/BarChartCard.tsx` — 바 차트
@@ -71,7 +71,7 @@
 ## Role
 Shared React components across pages: layout, cards, charts, tables, K8s UI.
 
-## Key Files (22)
+## Key Files (37)
 
 ### layout/ — Layout (3)
 - `layout/Sidebar.tsx` — Main navigation (6 groups, incl. Bedrock and Cost Radar; active state matches whole path segments) + Sign Out button (next to logo) + AccountSelector + account feature filtering
@@ -105,11 +105,11 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 
 ### dep-graph/ — Dependency graph (5 + helper) — see `dep-graph/CLAUDE.md`
 - `dep-graph/DepGraphView.tsx` — `/dependency-graph` body (build status "as of N min ago", search, tabs: relationship view / project cleanup preview, hub cards)
-- `dep-graph/GraphCanvas.tsx` — React Flow map (click a node to re-center, per-kind colors, Korean edge labels)
+- `dep-graph/GraphCanvas.tsx` — React Flow map (positions come from the caller, click a node to re-center, per-kind colors, Korean edge labels)
 - `dep-graph/ImpactPanel.tsx` — "N resources affected if changed or deleted", what it uses, resource info
-- `dep-graph/ProjectPreviewPanel.tsx` — seed input plus cleanup order, blockers and shared-and-excluded nodes ("guidance only — nothing is deleted")
+- `dep-graph/ProjectPreviewPanel.tsx` — seed input plus cleanup order, candidate graph, blockers, AWS-managed links and shared-and-excluded nodes, failed-kind warning ("guidance only — nothing is deleted")
 - `dep-graph/SearchBox.tsx` — name/ID search
-- `dep-graph/layout.ts` — pure column-layout function (center in the middle, dependents on the left, dependencies on the right)
+- `dep-graph/layout.ts` — pure column layouts (`layoutNeighborhood`: center in the middle, dependents left, dependencies right / `layoutSteps`: one column per cleanup step)
 
 ### charts/ — Recharts Chart Wrappers (3)
 - `charts/BarChartCard.tsx` — Bar chart
