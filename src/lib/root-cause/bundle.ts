@@ -72,7 +72,7 @@ export function buildBundle(
     '## 용의자',
   ].join('\n');
   const render = (n: number, lim: number[]) => head + '\n' + list.slice(0, n).map((s, i) => suspectBlock(s, ctx.startedAt, lim[i])).join('\n');
-  let lim = list.map(() => 600);
+  const lim = list.map(() => 600);
   let n = list.length;
   // shorten params bottom-up to 120 / 아래 순위부터 파라미터를 120자로 줄임
   for (let i = list.length - 1; i >= 0 && render(n, lim).length > max; i--) lim[i] = 120;

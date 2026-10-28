@@ -41,6 +41,7 @@ import {
   Radar,
   History,
   Share2,
+  SearchCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
@@ -113,6 +114,7 @@ const navGroups: NavGroup[] = [
       { labelKey: 'sidebar.cloudwatch', href: '/cloudwatch', icon: Bell },
       { labelKey: 'sidebar.cloudtrail', href: '/cloudtrail', icon: FileSearch },
       { labelKey: 'sidebar.changes', href: '/changes', icon: History },
+      { labelKey: 'sidebar.rootCause', href: '/root-cause', icon: SearchCheck },
       { labelKey: 'sidebar.cost', href: '/cost', icon: DollarSign },
       { labelKey: 'sidebar.costRadar', href: '/cost-radar', icon: Radar },
       { labelKey: 'sidebar.resourceInventory', href: '/inventory', icon: BarChart3 },

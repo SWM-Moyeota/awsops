@@ -3,7 +3,7 @@
 ## 역할
 페이지 전반에 걸쳐 사용되는 공유 React 컴포넌트. 레이아웃, 카드, 차트, 테이블, K8s UI.
 
-## 주요 파일 (37개)
+## 주요 파일 (43개)
 
 ### layout/ — 레이아웃 (3)
 - `layout/Sidebar.tsx` — 메인 네비게이션 (6개 그룹, Bedrock·비용 레이더 포함, 활성 표시는 경로 세그먼트 단위) + Sign Out 버튼 (로고 우측) + AccountSelector + 계정별 기능 필터링
@@ -44,6 +44,13 @@
 - `dep-graph/SearchBox.tsx` — 이름·ID 검색
 - `dep-graph/layout.ts` — 열 배치 순수 함수 (`layoutNeighborhood`: 중심 가운데, 나를 쓰는 쪽 왼쪽, 내가 쓰는 쪽 오른쪽 / `layoutSteps`: 정리 단계마다 한 열)
 
+### root-cause/ — 장애 원인 분석 (6 + 헬퍼) — 자세한 내용은 `root-cause/CLAUDE.md`
+- `root-cause/RootCauseView.tsx` — `/root-cause` 본문 (자동 감지 꺼짐 배너, 직접 분석, 사건 목록·상세, `?id=` 선택, 202면 30초 뒤 새로고침, 429 안내)
+- `root-cause/AnalyzeForm.tsx` — 리소스 검색(`/api/graph?op=search`, 250ms, 화살표·Enter) + 시각(기본 지금, 7일 안) + 분석 버튼
+- `root-cause/IncidentList.tsx` · `IncidentDetail.tsx` — 사건 카드(신호 아이콘·상태·1위 한 줄) · 사건 카드 + 그래프 기준 + 검증된 AI 설명(인용 칩 → 용의자 줄로 이동, 아니면 흐린 안내)
+- `root-cause/SuspectTable.tsx` · `SuspectTimeline.tsx` — 용의자 표(몇 분 전, 누가(도구), 경로, 점수 + 세 값 막대, 참고 순위 안내) · Recharts 산점도(−60~+5분, 시작 세로선)
+- `root-cause/format.ts` · `api.ts` — 시각 차이·신호·거리 문구 순수 함수 · `/api/root-cause` 클라이언트와 abort 훅
+
 ### charts/ — Recharts 차트 래퍼 (3)
 - `charts/BarChartCard.tsx` — 바 차트
 - `charts/LineChartCard.tsx` — 라인 차트
@@ -71,7 +78,7 @@
 ## Role
 Shared React components across pages: layout, cards, charts, tables, K8s UI.
 
-## Key Files (37)
+## Key Files (43)
 
 ### layout/ — Layout (3)
 - `layout/Sidebar.tsx` — Main navigation (6 groups, incl. Bedrock and Cost Radar; active state matches whole path segments) + Sign Out button (next to logo) + AccountSelector + account feature filtering
@@ -110,6 +117,13 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 - `dep-graph/ProjectPreviewPanel.tsx` — seed input plus cleanup order, candidate graph, blockers, AWS-managed links and shared-and-excluded nodes, failed-kind warning ("guidance only — nothing is deleted")
 - `dep-graph/SearchBox.tsx` — name/ID search
 - `dep-graph/layout.ts` — pure column layouts (`layoutNeighborhood`: center in the middle, dependents left, dependencies right / `layoutSteps`: one column per cleanup step)
+
+### root-cause/ — Incident root cause (6 + helpers) — see `root-cause/CLAUDE.md`
+- `root-cause/RootCauseView.tsx` — `/root-cause` body (auto-detect-off banner, manual analysis, incident list + detail, `?id=` selection, refresh 30 s after a 202, 429 notice)
+- `root-cause/AnalyzeForm.tsx` — resource search (`/api/graph?op=search`, 250 ms, arrows + Enter) + time (defaults to now, last 7 days) + analyze button
+- `root-cause/IncidentList.tsx` · `IncidentDetail.tsx` — incident cards (signal icon, status, top suspect line) · incident card + graph basis + verified AI explanation (citation chips jump to the suspect row, otherwise a muted note)
+- `root-cause/SuspectTable.tsx` · `SuspectTimeline.tsx` — suspect table (minutes before, who (tool), path, score + three bars, reference-ranking caveat) · Recharts scatter (−60..+5 min, start line)
+- `root-cause/format.ts` · `api.ts` — pure offset/signal/distance copy helpers · `/api/root-cause` client and abortable hooks
 
 ### charts/ — Recharts Chart Wrappers (3)
 - `charts/BarChartCard.tsx` — Bar chart
