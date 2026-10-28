@@ -13,6 +13,8 @@ import type { Incident } from './types';
 
 const errName = (e: unknown) => (e instanceof Error ? e.name : 'Error');
 const CAUSE_WORDS = /왜\s*고장|원인|뭐가\s*바뀌|무슨\s*변경|why.*(down|broken|fail)|root\s*cause/i;
+// Cost questions belong to the cost handler ("nat-0abc 비용 증가 원인"). / 비용 질문은 비용 처리기 몫.
+const COST_WORDS = /비용|요금|청구|\bcosts?\b|\bbill(ing)?\b/i;
 const ID_TOKEN = /\b(?:sg|i|eni)-[0-9a-z]+|arn:aws:\S+/i;
 // Words that are never a resource name. / 리소스 이름이 아닌 단어들.
 const STOP_WORDS = new Set(['why', 'down', 'broken', 'fail', 'failed', 'the', 'is', 'are', 'was', 'what', 'root', 'cause', 'causes', 'did', 'does', 'and', 'for', 'with', 'this', 'that', 'awsops', 'ec2', 'aws', 'cost', 'costs', 'report', 'rds', 'lambda', 'alb', 'nlb', 'elb', 's3', 'iam', 'vpc', 'eks', 'ecs', 'sg', 'ebs', 'nat', 'tg', 'slack', 'bot', 'dashboard']);
@@ -81,7 +83,7 @@ export async function notifyIncident(inc: Incident, deps: NotifyDeps = {}): Prom
 /** Rule-based detection of "왜 고장났어 <리소스>"; null when no cause word or no resource token. / 규칙 기반 질문 감지. */
 export function detectRcaQuestion(text: string): { query: string } | null {
   const t = text.replace(/<@[^>]+>/g, ' ').trim();
-  if (!CAUSE_WORDS.test(t)) return null;
+  if (!CAUSE_WORDS.test(t) || COST_WORDS.test(t)) return null;
   const id = t.match(ID_TOKEN)?.[0];
   if (id) return { query: id.replace(/[?.,!>)]+$/, '') };
   const word = extractCandidates(t).find((w) => !STOP_WORDS.has(w.toLowerCase()));

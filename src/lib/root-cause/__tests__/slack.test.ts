@@ -96,6 +96,11 @@ describe('detectRcaQuestion', () => {
     expect(detectRcaQuestion('why is it down')).toBeNull();
     expect(detectRcaQuestion('EC2 비용 원인이 뭐야')).toBeNull();
     expect(detectRcaQuestion('원인 분석 report 만들어줘')).toBeNull();
+    // Cost questions go to the cost handler even with an id and a cause word. / 비용 질문은 id·원인 단어가 있어도 비용 처리기로.
+    expect(detectRcaQuestion('nat-0abc 비용 증가 원인')).toBeNull();
+    expect(detectRcaQuestion('why did i-0123 cost go up')).toBeNull();
+    expect(detectRcaQuestion('web-prod 요금 왜 올랐어 원인이 뭐야')).toBeNull();
+    expect(detectRcaQuestion('sg-0ab billing 원인')).toBeNull();
   });
 });
 
