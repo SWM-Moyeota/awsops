@@ -11,8 +11,8 @@ const nextConfig = {
   experimental: {
     // src/instrumentation.ts starts the Slack ChatOps bot on server boot.
     instrumentationHook: true,
-    // Slack SDKs use undici WebSockets — load them from node_modules instead of bundling.
-    serverComponentsExternalPackages: ['@slack/socket-mode', '@slack/web-api'],
+    // Slack SDKs use undici WebSockets; PGlite ships WASM — load them from node_modules instead of bundling.
+    serverComponentsExternalPackages: ['@slack/socket-mode', '@slack/web-api', '@electric-sql/pglite'],
   },
   webpack: (config) => {
     // CLAUDE.md docs live alongside code under src/; dynamic imports like
