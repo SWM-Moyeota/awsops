@@ -128,6 +128,8 @@ export interface ActionRequest extends ApprovalRecord {
   /** Execution id this request undoes. */
   undoOf?: string;
   skippedForDrift?: string[];
+  /** Policy denials from the re-check on the fresh snapshot at final approval (nothing ran). */
+  approvalDenials?: string[];
   results?: StepResult[];
 }
 

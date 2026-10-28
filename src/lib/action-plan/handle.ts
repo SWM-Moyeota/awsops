@@ -216,7 +216,7 @@ async function redraw(req: ActionRequest, cfg: ActionPlanConfig, deps: ActionDep
   }
 }
 
-/** Approve click that passed beginApproval: re-snapshot, refuse on drift, else execute as the approver. */
+/** Approve click that passed beginApproval: re-snapshot, refuse on drift or a policy denial, else execute as the approver. */
 async function execute(req: ActionRequest, approverId: string, cfg: ActionPlanConfig, deps: ActionDeps): Promise<void> {
   const active = req.changes.filter(c => !c.noop);
   let fresh: Snapshot;
@@ -231,6 +231,15 @@ async function execute(req: ActionRequest, approverId: string, cfg: ActionPlanCo
     // Reasons carry target names — shown only through the card's sanitizing path (skippedForDrift lines).
     req.skippedForDrift = [...(req.skippedForDrift ?? []), ...drift];
     deps.store.finish(req.id, 'failed', '그 사이 상태가 바뀌었어요, 다시 요청해 주세요');
+    return;
+  }
+  // Rules are re-evaluated on the fresh state: env=prod added or ENIs grown past maxBlastRadius since the
+  // preview must still block (drift only looks at the fields the steps touch). Denials carry names — shown only
+  // through the card's sanitizing path. 승인 시점 상태로 규칙을 다시 검사한다.
+  const recheck = evaluatePolicy(req.changes, fresh, cfg);
+  if (!recheck.ok) {
+    req.approvalDenials = recheck.denials;
+    deps.store.finish(req.id, 'failed', '최종 승인 시점의 규칙 검사에서 거부됐어요');
     return;
   }
 

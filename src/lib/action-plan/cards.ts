@@ -175,7 +175,10 @@ export function actionCard(req: ActionRequest, cfg: ActionPlanConfig): { text: s
       const head = req.status === 'executed'
         ? `✅ *실행 완료* — 승인: ${decider(req.deciderId)}`
         : `⚠️ *실행하지 못한 단계가 있어요* — 승인: ${decider(req.deciderId)}${req.result ? ` · ${clean(req.result, 64)}` : ''}`;
-      blocks.push(section([head, ...resultLines(req)].join('\n')));
+      const recheck = req.approvalDenials?.length
+        ? ['*최종 승인 때 다시 검사한 규칙에서 거부돼서 실행하지 않았어요*', ...req.approvalDenials.map(d => `• ⛔ ${clean(d, 160)}`)]
+        : [];
+      blocks.push(section([head, ...recheck, ...resultLines(req)].join('\n')));
       if (canUndo(req)) {
         blocks.push({ type: 'actions', elements: [btn(AP.undo, '↩️ 되돌리기', req.id)] });
       }

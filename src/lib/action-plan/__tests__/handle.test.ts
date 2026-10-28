@@ -317,6 +317,50 @@ describe('handleActionClick', () => {
     expect(s.execs.size).toBe(0);
   });
 
+  it('policyIsReEvaluatedOnTheFreshSnapshotAtApproval', async () => {
+    // env=prod added between preview and approval: drift does not see it (owner is the touched key), policy must.
+    const prod = setup();
+    await maybeHandleActionMention(mention(TAG_TEXT), prod.deps);
+    const id = idOf(prod.posts[0]);
+    await handleActionClick(click(AP.confirm, id, 'UREQ'), prod.deps);
+    prod.w.instances[0].tags.env = 'prod';
+    await handleActionClick(click(AP.approve, id, 'UAPP'), prod.deps);
+    expect(prod.runs.filter(r => !r.dryRun)).toHaveLength(0);
+    expect(prod.writerCalls).toHaveLength(1); // only the preview dry-run session
+    expect(prod.w.instances[0].tags.owner).toBeUndefined();
+    expect(prod.deps.store.get(id)!.status).toBe('failed');
+    let card = lastCard(prod.updates);
+    expect(card).toContain('최종 승인 때 다시 검사한 규칙에서 거부');
+    expect(card).toContain('운영(Production)');
+    expect(card).not.toContain(AP.undo);
+    expect(prod.execs.size).toBe(0);
+
+    // ENI count rising above maxBlastRadius blocks a security-group change.
+    const eni = setup({}, twoStepPlan);
+    await maybeHandleActionMention(mention(TAG_TEXT), eni.deps);
+    const id2 = idOf(eni.posts[0]);
+    await handleActionClick(click(AP.confirm, id2, 'UREQ'), eni.deps);
+    eni.deps.reader.listEniUsers = vi.fn(async () => ({ eniCount: 6, instances: [{ id: INST, name: 'web-dev' }] }));
+    await handleActionClick(click(AP.approve, id2, 'UAPP'), eni.deps);
+    expect(eni.runs.filter(r => !r.dryRun)).toHaveLength(0);
+    expect(eni.w.rules[SG]).toHaveLength(0);
+    expect(eni.deps.store.get(id2)!.status).toBe('failed');
+    card = lastCard(eni.updates);
+    expect(card).toContain('6개라 영향이 너무 커요');
+  });
+
+  it('writerFactoryFailureAtApprovalFailsWithoutRunning', async () => {
+    const s = setup();
+    await maybeHandleActionMention(mention(TAG_TEXT), s.deps);
+    const id = idOf(s.posts[0]);
+    await handleActionClick(click(AP.confirm, id, 'UREQ'), s.deps);
+    s.deps.writers = vi.fn(async () => { throw Object.assign(new Error('x'), { name: 'AccessDenied' }); });
+    await handleActionClick(click(AP.approve, id, 'UAPP'), s.deps);
+    expect(s.runs.filter(r => !r.dryRun)).toHaveLength(0);
+    expect(s.deps.store.get(id)!.status).toBe('failed');
+    expect(lastCard(s.updates)).toContain('실행 권한을 받지 못했어요');
+  });
+
   it('rejectAndCancelEndTheRequest', async () => {
     const a = setup();
     await maybeHandleActionMention(mention(TAG_TEXT), a.deps);
