@@ -6,6 +6,7 @@ import { getConfig } from '@/lib/app-config';
 export const CLOUDTRAIL_MIN_INTERVAL_MS = 1000; // 1 request/s per account+region (headroom for callers outside the limiter)
 const ROLE = 'AWSopsReadOnlyRole';
 const STS_REGION = 'ap-northeast-2';
+const STS_TIMEOUT_MS = 20_000; // a hung AssumeRole must not stall callers / 멈춘 AssumeRole이 호출자를 막지 않게
 
 export type Creds = { accessKeyId: string; secretAccessKey: string; sessionToken?: string };
 
@@ -47,7 +48,7 @@ export async function accountCredentials(accountId: string, sessionName: string)
     RoleSessionName: sessionName,
     DurationSeconds: 900,
     ...(cfg.crossAccountExternalId ? { ExternalId: cfg.crossAccountExternalId } : {}),
-  }));
+  }), { abortSignal: AbortSignal.timeout(STS_TIMEOUT_MS) });
   const c = res.Credentials;
   if (!c?.AccessKeyId || !c.SecretAccessKey) throw new Error('NoCredentials');
   const creds = { accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken };

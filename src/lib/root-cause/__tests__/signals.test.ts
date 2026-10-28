@@ -1,5 +1,14 @@
 // Signal detection tests (no real AWS). / 신호 감지 시험 — 실제 AWS 호출 없음.
 import { describe, it, expect, vi } from 'vitest';
+
+// Fake CloudWatch client: records each send's options (abortSignal). / 가짜 CloudWatch — send 옵션 기록.
+const cwSend = vi.hoisted(() => vi.fn());
+vi.mock('@aws-sdk/client-cloudwatch', () => ({
+  CloudWatchClient: class { send = cwSend; },
+  GetMetricDataCommand: class { constructor(public input: unknown) {} },
+  DescribeAlarmsCommand: class { constructor(public input: unknown) {} },
+}));
+vi.mock('@/lib/cloudtrail-access', () => ({ accountCredentials: async () => undefined }));
 import { detect5xx, detectRise, watchTargets, lbDimension, tgDimension, fetchSignals, type Series } from '../signals';
 import type { GraphData, GraphNode } from '@/lib/dep-graph/types';
 
@@ -84,5 +93,18 @@ describe('fetchSignals', () => {
     const s = await fetchSignals('A', 'ap-northeast-2', data, now, { getMetricData: async () => { throw new Error('boom'); }, describeAlarms: async () => [alarm] });
     expect(s.map((x) => x.kind)).toEqual(['alarm']);
     spy.mockRestore();
+  });
+});
+
+describe('default CloudWatch calls', () => {
+  it('GetMetricData and DescribeAlarms each carry a 20 s abort signal', async () => {
+    cwSend.mockReset();
+    cwSend.mockImplementation(async (cmd: { input: Record<string, unknown> }) => ('MetricDataQueries' in cmd.input ? { MetricDataResults: [] } : { MetricAlarms: [] }));
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    await fetchSignals('A', 'ap-northeast-2', data, now);
+    expect(cwSend).toHaveBeenCalledTimes(2);
+    for (const call of cwSend.mock.calls) expect((call[1] as { abortSignal?: unknown } | undefined)?.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(timeout).toHaveBeenCalledWith(20_000);
+    timeout.mockRestore();
   });
 });

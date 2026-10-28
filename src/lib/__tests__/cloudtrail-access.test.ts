@@ -53,6 +53,8 @@ describe('cloudtrail-access', () => {
     expect(input.ExternalId).toBe('ext-1');
     expect(input.RoleSessionName).toBe('awsops-x');
     expect(input.DurationSeconds).toBe(900);
+    // A hung STS call must not stall callers. / 멈춘 STS 호출이 호출자를 막지 않게.
+    expect((stsSend.mock.calls[0][1] as { abortSignal?: unknown } | undefined)?.abortSignal).toBeInstanceOf(AbortSignal);
     await accountCredentials('222222222222', 'awsops-x');
     expect(stsSend).toHaveBeenCalledTimes(1);
   });

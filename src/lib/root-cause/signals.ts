@@ -73,6 +73,8 @@ function sumSeries(list: Series[]): Series {
 }
 
 function errName(e: unknown): string { return e instanceof Error ? e.name : 'Error'; }
+// A hung CloudWatch call must not stall detection. / 멈춘 CloudWatch 호출이 감지를 막지 않게.
+const CW_TIMEOUT_MS = 20_000;
 
 // Default GetMetricData: batches of 500, follows NextToken. / 기본 GetMetricData — 500개씩, NextToken 순회.
 async function defaultGetMetricData(accountId: string, region: string, queries: MetricQuery[], from: Date, to: Date): Promise<Record<string, Series>> {
@@ -89,7 +91,7 @@ async function defaultGetMetricData(accountId: string, region: string, queries: 
           Id: q.id, ReturnData: true,
           MetricStat: { Period: 60, Stat: q.stat, Metric: { Namespace: q.namespace, MetricName: q.metric, Dimensions: Object.entries(q.dimensions).map(([Name, Value]) => ({ Name, Value })) } },
         })),
-      }));
+      }), { abortSignal: AbortSignal.timeout(CW_TIMEOUT_MS) });
       for (const r of res.MetricDataResults ?? []) {
         const arr = (out[r.Id ?? ''] ??= []);
         (r.Timestamps ?? []).forEach((t, k) => arr.push({ t: t.toISOString(), v: r.Values?.[k] ?? 0 }));
@@ -106,7 +108,7 @@ async function defaultDescribeAlarms(accountId: string, region: string): Promise
   const out: AlarmInfo[] = [];
   let token: string | undefined;
   do {
-    const res = await client.send(new DescribeAlarmsCommand({ StateValue: 'ALARM', AlarmTypes: ['MetricAlarm'], NextToken: token }));
+    const res = await client.send(new DescribeAlarmsCommand({ StateValue: 'ALARM', AlarmTypes: ['MetricAlarm'], NextToken: token }), { abortSignal: AbortSignal.timeout(CW_TIMEOUT_MS) });
     for (const a of res.MetricAlarms ?? []) {
       out.push({
         name: a.AlarmName ?? '', arn: a.AlarmArn ?? '',
