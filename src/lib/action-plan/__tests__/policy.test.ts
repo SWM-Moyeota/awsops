@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { evaluatePolicy } from '../policy';
+import { validatePlannerOutput } from '../validate';
 import type { ActionKind, IngressRule, ResourceSnapshot, ResourceType, Snapshot, StepChange } from '../types';
 
 const cfg = { maxBlastRadius: 5 };
@@ -71,5 +72,37 @@ describe('evaluatePolicy', () => {
   it('sanitizes display names', () => {
     const r = run([ch('ec2.stop', 'i-1')], [snap('i-1', { name: '`<@here>`*x*', tags: {} })]);
     expect(r.denials[0]).not.toMatch(/[`<>*]/);
+  });
+
+  it('worldOpenBypassSpellingsAreRejectedOrDenied', () => {
+    const vopts = { aliases: {}, maxSteps: 5 };
+    // Validate, then (if it passes) evaluate policy on what validate produced — the real pipeline order.
+    const outcome = (source: string, p: number) => {
+      const v = validatePlannerOutput({ kind: 'plan', summary: '', steps: [
+        { action: 'sg.ingress.add', ref: 'sg', protocol: 'tcp', fromPort: p, toPort: p, source }] }, vopts);
+      if (!v.ok || v.value.kind !== 'plan') return 'rejected';
+      const r = run([sgAdd('sg-1', v.value.steps[0].rule!)], [sgSnap('sg-1')]);
+      return r.ok ? 'allowed' : 'denied';
+    };
+    for (const src of ['::0/0', '0::/0', '0:0:0:0:0:0:0:0/0', '1.2.3.4/0', '0.0.0.0/00', '000.0.0.0/0', '0.0.0.0/0', '::/0', '2001:db8::/0']) {
+      expect(['rejected', 'denied'], src).toContain(outcome(src, 22));
+    }
+    expect(outcome('0.0.0.0/0', 443)).toBe('allowed');
+    expect(outcome('::/0', 443)).toBe('allowed');
+    expect(outcome('0::/0', 443)).toBe('allowed');
+    // policy alone does not depend on canonical input: any /0 is world-open
+    for (const src of ['::0/0', '0::/0', '1.2.3.4/0', '0.0.0.0/00', '000.0.0.0/0', '10.0.0.0']) {
+      expect(run([sgAdd('sg-1', rule(src, 22))], [sgSnap('sg-1')]).ok, src).toBe(false);
+    }
+    expect(run([sgAdd('sg-1', rule('sg-0123456789abcdef0', 22))], [sgSnap('sg-1')]).ok).toBe(true);
+  });
+
+  it('trimsProdValuesAndFailsClosedOnUnknownEniCount', () => {
+    for (const tags of [{ ...OK, env: 'prod ' }, { ...OK, env: ' Production' }, { ...OK, 'env ': 'prod' }]) {
+      expect(run([ch('ec2.stop', 'i-1')], [snap('i-1', { tags })]).ok).toBe(false);
+    }
+    const r = run([sgAdd('sg-1', rule('10.0.0.0/8', 22))], [sgSnap('sg-1', { eniCount: undefined })]);
+    expect(r.ok).toBe(false);
+    expect(r.denials[0]).toContain('확인하지 못해서');
   });
 });

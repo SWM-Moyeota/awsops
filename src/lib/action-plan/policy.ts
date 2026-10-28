@@ -8,7 +8,18 @@ const PROD_VALUES = new Set(['prod', 'production']);
 const MAX_PORT_SPAN = 1000;
 
 function isProd(tags: Record<string, string>): boolean {
-  return Object.entries(tags).some(([k, v]) => PROD_KEYS.has(k.toLowerCase()) && PROD_VALUES.has(String(v).toLowerCase()));
+  return Object.entries(tags).some(([k, v]) => PROD_KEYS.has(k.trim().toLowerCase()) && PROD_VALUES.has(String(v).trim().toLowerCase()));
+}
+
+/**
+ * World-open = prefix length 0, whatever the address is written as (::0/0, 0::/0, 1.2.3.4/0, 0.0.0.0/00 …).
+ * validate.ts already canonicalizes; this does not rely on it.
+ * 주소 표기와 상관없이 접두사 길이가 0이면 전체 공개로 본다.
+ */
+function isWorldOpen(source: string): boolean {
+  if (source.startsWith('sg-')) return false;
+  const m = /\/\s*(\d+)\s*$/.exec(source);
+  return !m || Number(m[1]) === 0; // no parsable prefix → treat as world-open (fail closed)
 }
 
 export function evaluatePolicy(
@@ -43,7 +54,7 @@ export function evaluatePolicy(
       const r = step.rule;
       if (r) {
         // 4. no world-open except 80/443
-        if (r.source === '0.0.0.0/0' || r.source === '::/0') {
+        if (isWorldOpen(r.source)) {
           const web = r.fromPort === r.toPort && (r.fromPort === 80 || r.fromPort === 443);
           if (!web) deny(`${label}에 전체 공개(${r.source})로 ${r.fromPort === r.toPort ? r.fromPort : `${r.fromPort}-${r.toPort}`} 포트를 여는 것은 허용되지 않아요. 80과 443만 가능해요.`);
         }
@@ -56,9 +67,13 @@ export function evaluatePolicy(
       }
     }
 
-    // 6. blast radius
-    if (step.target.type === 'security-group' && step.action.startsWith('sg.') && (snap.eniCount ?? 0) > cfg.maxBlastRadius) {
-      deny(`${label}을(를) 쓰는 네트워크 인터페이스가 ${snap.eniCount}개라 영향이 너무 커요(최대 ${cfg.maxBlastRadius}개). 콘솔에서 직접 해 주세요.`);
+    // 6. blast radius — unknown ENI count is a denial (fail closed)
+    if (step.target.type === 'security-group' && step.action.startsWith('sg.')) {
+      if (snap.eniCount === undefined) {
+        deny(`${label}을(를) 쓰는 네트워크 인터페이스 수를 확인하지 못해서 실행할 수 없어요.`);
+      } else if (snap.eniCount > cfg.maxBlastRadius) {
+        deny(`${label}을(를) 쓰는 네트워크 인터페이스가 ${snap.eniCount}개라 영향이 너무 커요(최대 ${cfg.maxBlastRadius}개). 콘솔에서 직접 해 주세요.`);
+      }
     }
 
     // 7. transitional states
