@@ -40,6 +40,18 @@ describe('executeChanges', () => {
   });
 });
 
+describe('sg.ingress.add without a returned rule id', () => {
+  it('is done but has no inverse and no after', async () => {
+    const writer: Ec2Writer = { async run() { return { requestId: 'r1' }; } };
+    const stale: ResolvedStep = { action: 'sg.ingress.remove', target: sg, rule, ruleId: 'sgr-old' };
+    const r = await executeChanges([ch(0, { action: 'sg.ingress.add', target: sg, rule }, { inverse: stale })], writer);
+    expect(r).toEqual([{ index: 0, status: 'done', requestId: 'r1' }]);
+  });
+  it('afterCheckFor remove without a rule throws a named error', () => {
+    expect(() => afterCheckFor({ action: 'sg.ingress.remove', target: sg })).toThrow(expect.objectContaining({ name: 'MissingRuleError' }));
+  });
+});
+
 describe('dryRunAll', () => {
   it('dryRunReportsUnauthorizedByName', async () => {
     const writer: Ec2Writer = {

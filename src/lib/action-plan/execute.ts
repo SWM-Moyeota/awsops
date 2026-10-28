@@ -21,7 +21,8 @@ export function afterCheckFor(step: ResolvedStep, ruleIdFromResult?: string): Af
     case 'sg.ingress.add':
       return { kind: 'rule-present', sgId: id, ruleId: ruleIdFromResult ?? '' };
     case 'sg.ingress.remove':
-      return { kind: 'rule-absent', sgId: id, rule: step.rule! };
+      if (!step.rule) throw Object.assign(new Error('rule missing'), { name: 'MissingRuleError' });
+      return { kind: 'rule-absent', sgId: id, rule: step.rule };
   }
 }
 
@@ -36,15 +37,26 @@ export async function executeChanges(changes: StepChange[], writer: Ec2Writer): 
     }
     try {
       const r = await writer.run(c.step, false);
-      let inverse = c.inverse;
-      if (!inverse && c.step.action === 'sg.ingress.add') {
-        inverse = { action: 'sg.ingress.remove', target: c.step.target, rule: c.step.rule, ruleId: r.ruleId };
+      if (c.step.action === 'sg.ingress.add') {
+        // Always built from the result. Without a returned rule id there is nothing safe to undo.
+        results.push(
+          r.ruleId
+            ? {
+                index: c.index,
+                status: 'done',
+                requestId: r.requestId,
+                inverse: { action: 'sg.ingress.remove', target: c.step.target, rule: c.step.rule, ruleId: r.ruleId },
+                after: afterCheckFor(c.step, r.ruleId),
+              }
+            : { index: c.index, status: 'done', requestId: r.requestId },
+        );
+        continue;
       }
       results.push({
         index: c.index,
         status: 'done',
         requestId: r.requestId,
-        inverse,
+        inverse: c.inverse,
         after: afterCheckFor(c.step, r.ruleId),
       });
     } catch (e) {

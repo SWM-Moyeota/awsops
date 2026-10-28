@@ -26,10 +26,17 @@ export const SESSION_POLICY_MAX_CHARS = 2048;
  * Task 14's IAM script should likewise grant on the security-group ARN only.
  */
 export function buildSessionPolicy(steps: ResolvedStep[], account: string, region: string): object {
+  if (!/^\d{12}$/.test(account)) throw new Error('invalid account id');
   const byAction = new Map<string, Set<string>>();
   for (const s of steps) {
     const action = ACTION_MAP[s.action];
+    if (!action) throw new Error('unknown action');
     const kind = s.target.type === 'instance' ? 'instance' : 'security-group';
+    const idRe = kind === 'instance' ? /^i-[0-9a-f]{8,17}$/ : /^sg-[0-9a-f]{8,17}$/;
+    if (!idRe.test(s.target.id)) throw new Error(`invalid ${kind} id`);
+    const isSgAction = s.action.startsWith('sg.');
+    if (isSgAction && kind !== 'security-group') throw new Error(`${s.action} needs a security group target`);
+    if (s.action.startsWith('ec2.') && kind !== 'instance') throw new Error(`${s.action} needs an instance target`);
     const arn = `arn:aws:ec2:${region}:${account}:${kind}/${s.target.id}`;
     if (!byAction.has(action)) byAction.set(action, new Set());
     byAction.get(action)!.add(arn);
@@ -53,10 +60,8 @@ function sameRule(a: SnapshotRule, b: { protocol: string; fromPort: number; toPo
   return a.protocol === b.protocol && a.fromPort === b.fromPort && a.toPort === b.toPort && a.source === b.source;
 }
 
-function hasRule(rules: SnapshotRule[] | undefined, step: ResolvedStep): boolean {
-  const list = rules ?? [];
-  if (step.ruleId) return list.some((r) => r.ruleId === step.ruleId);
-  return step.rule ? list.some((r) => sameRule(r, step.rule!)) : false;
+function ruleChanged(plan: SnapshotRule, now: SnapshotRule): boolean {
+  return !sameRule(plan, now) || (plan.description ?? '') !== (now.description ?? '');
 }
 
 /** One Korean reason per non-noop step whose touched field changed since plan time. */
@@ -69,6 +74,10 @@ export function findDrift(changes: StepChange[], planSnap: Snapshot, fresh: Snap
     const name = step.target.name;
     const was = planSnap[id];
     const now = fresh[id];
+    if (!was) {
+      reasons.push(`${name}의 계획 때 상태를 찾을 수 없어요`);
+      continue;
+    }
     if (!now) {
       reasons.push(`${name}을(를) 더 이상 찾을 수 없어요`);
       continue;
@@ -76,22 +85,32 @@ export function findDrift(changes: StepChange[], planSnap: Snapshot, fresh: Snap
     switch (step.action) {
       case 'ec2.start':
       case 'ec2.stop':
-        if (was?.state !== now.state) reasons.push(`${name}의 상태가 ${was?.state ?? '알 수 없음'}에서 ${now.state ?? '알 수 없음'}(으)로 바뀌었어요`);
+        if (was.state !== now.state) reasons.push(`${name}의 상태가 ${was.state ?? '알 수 없음'}에서 ${now.state ?? '알 수 없음'}(으)로 바뀌었어요`);
         break;
       case 'tag.set':
       case 'tag.remove': {
         const key = step.key ?? '';
-        const a = was?.tags?.[key];
+        const a = was.tags?.[key];
         const b = now.tags?.[key];
         if (a !== b) reasons.push(`${name}의 태그 ${key} 값이 바뀌었어요`);
         break;
       }
-      case 'sg.ingress.add':
-      case 'sg.ingress.remove':
-        if (hasRule(was?.ingress, step) !== hasRule(now.ingress, step)) {
+      case 'sg.ingress.add': {
+        const exists = (snap: typeof was) => !!step.rule && (snap.ingress ?? []).some((r) => sameRule(r, step.rule!));
+        if (exists(was) !== exists(now)) reasons.push(`${name}의 인바운드 규칙이 그 사이에 바뀌었어요`);
+        break;
+      }
+      case 'sg.ingress.remove': {
+        // The id alone is not enough: ModifySecurityGroupRules keeps the sgr- id while changing the content.
+        const find = (snap: typeof was) =>
+          (snap.ingress ?? []).find((r) => (step.ruleId ? r.ruleId === step.ruleId : !!step.rule && sameRule(r, step.rule)));
+        const planRule = find(was);
+        const nowRule = find(now);
+        if (!planRule !== !nowRule || (planRule && nowRule && ruleChanged(planRule, nowRule))) {
           reasons.push(`${name}의 인바운드 규칙이 그 사이에 바뀌었어요`);
         }
         break;
+      }
     }
   }
   return reasons;
