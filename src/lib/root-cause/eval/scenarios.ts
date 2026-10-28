@@ -449,6 +449,11 @@ function sgRevokeShop(): Scenario {
     req: { loadBalancerArn: g.arn('lb'), attributes: [{ key: 'idle_timeout.timeout_seconds', value: '180' }] },
     err: ACCESS_DENIED(`arn:aws:iam::${acct}:user/dohyun.kim`, 'elasticloadbalancing:ModifyLoadBalancerAttributes'),
   });
+  // Connected, harmless: monitoring port on the app SG. / 연결됐지만 무해: 앱 SG에 모니터링 포트.
+  tr.add({
+    t: -17, name: 'AuthorizeSecurityGroupIngress', source: EC2, who: viaTf(iamUser(acct, 'ci-terraform'), '192.0.2.18', 'ec2#1.187.0'),
+    req: { groupId: g.id('sg-app'), ipPermissions: items([sgPerm(9100, { cidr: '10.10.10.0/23', desc: 'node exporter' })]) },
+  });
   tr.noise({ count: 9, from: -50, to: 3, instances: ssmOf(g, ['web1', 'web2', 'web3'], 'shop-web-ec2-role') });
   return { id: 'sg-revoke-shop-alb-to-app', title: 'shop-alb 5xx — app SG lost its 8080 rule from the ALB SG', category: 'sg-revoke', accountId: acct, region, targetArn: g.arn('lb'), startedAt: start, graphs: [before, after], events: tr.events, answer };
 }
@@ -490,6 +495,12 @@ function sgRevokeApiDb(): Scenario {
     resp: { dBInstanceIdentifier: 'analytics-replica', dBInstanceClass: 'db.r6g.large', engine: 'postgres', dBInstanceStatus: 'available', pendingModifiedValues: { masterUserPassword: '****' }, dBInstanceArn: g.arn('replica') },
   });
   tr.add({ t: -15, name: 'AddTags', source: ELB, who: viaTf(iamUser(acct, 'ci-terraform'), '192.0.2.18', 'elasticloadbalancingv2#1.40.1'), req: elbTags([g.arn('tg')], { Service: 'api', Tier: 'backend' }) });
+  // Connected, harmless: backup window on the same DB. / 연결됐지만 무해: 같은 DB의 백업 시간대.
+  tr.add({
+    t: -8, name: 'ModifyDBInstance', source: RDS, who: viaConsole(yuna, '203.0.113.191'),
+    req: { dBInstanceIdentifier: 'api-prod-pg', preferredBackupWindow: '18:00-18:30', applyImmediately: false },
+    resp: { dBInstanceIdentifier: 'api-prod-pg', dBInstanceClass: 'db.r6g.xlarge', engine: 'postgres', dBInstanceStatus: 'available', preferredBackupWindow: '18:00-18:30', dBInstanceArn: g.arn('db') },
+  });
   tr.noise({ count: 7, from: -55, to: 2, instances: ssmOf(g, ['web1', 'web2'], 'api-ec2-role') });
   return { id: 'sg-revoke-api-db-5432', title: 'api-tg unhealthy — DB SG lost 5432 from the app SG', category: 'sg-revoke', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
 }
@@ -522,6 +533,12 @@ function sgRevokeIngestCidr(): Scenario {
   tr.add({
     t: -2, name: 'StopInstances', source: EC2, who: viaConsole(iamUser(acct, 'intern-readonly'), '203.0.113.140', UA.consoleWin),
     req: { instancesSet: instSet(g.id('web2')), force: false }, err: UNAUTH(`arn:aws:iam::${acct}:user/intern-readonly`, 'ec2:StopInstances'),
+  });
+  // Connected, harmless: deregistration delay on the target TG. / 연결됐지만 무해: 대상 그룹 등록 해제 지연.
+  tr.add({
+    t: -11, name: 'ModifyTargetGroupAttributes', source: ELB, who: viaCli(iamUser(acct, 'sangwoo.han'), '203.0.113.88', 'elbv2.modify-target-group-attributes'),
+    req: { targetGroupArn: g.arn('tg'), attributes: [{ key: 'deregistration_delay.timeout_seconds', value: '120' }] },
+    resp: { attributes: [{ key: 'deregistration_delay.timeout_seconds', value: '120' }] },
   });
   tr.noise({ count: 8, from: -45, to: 4, instances: ssmOf(g, ['web1', 'web2', 'web3'], 'ingest-broker-role') });
   return { id: 'sg-revoke-ingest-nlb-cidr', title: 'ingest-tg unhealthy — broker SG lost 9092 from the VPC CIDR', category: 'sg-revoke', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [snapOld, snap], events: tr.events, answer };
@@ -593,6 +610,12 @@ function tgDeregisterSearchCfn(): Scenario {
   });
   tr.add({ t: -15, name: 'CreateTags', source: EC2, who: autoscaling(acct), req: tagSet([g.id('web1')], { 'aws:autoscaling:groupName': 'search-nodes-asg' }) });
   tr.add({ t: -2, name: 'PutRetentionPolicy', source: 'logs.amazonaws.com', who: viaConsole(sso(acct, 'yuna.kang@example.com', 'PowerUserAccess'), '203.0.113.191'), req: { logGroupName: '/search/slowlog', retentionInDays: 30 } });
+  // Connected, harmless: more IOPS on a remaining node's volume. / 연결됐지만 무해: 남은 노드 볼륨 IOPS 증설.
+  tr.add({
+    t: -6, name: 'ModifyVolume', source: EC2, who: viaConsole(sso(acct, 'seojun.choi@example.com'), '203.0.113.61'),
+    req: { volumeId: g.id('web1.vol'), iops: 6000, throughput: 250 },
+    resp: { requestId: uuid('search-modvol'), volumeModification: { volumeId: g.id('web1.vol'), modificationState: 'modifying', targetIops: 6000, originalIops: 3000, targetVolumeType: 'gp3', originalVolumeType: 'gp3', targetSize: 30, originalSize: 30, progress: 0 } },
+  });
   tr.noise({ count: 9, from: -57, to: 4, instances: ssmOf(g, ['web1', 'web2', 'web3'], 'search-node-role') });
   return { id: 'tg-deregister-search-cfn', title: 'search-tg unhealthy — a CDK deploy deregistered 2 of 3 nodes', category: 'tg-deregister', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
 }
@@ -628,6 +651,12 @@ function stopAdminSlack(): Scenario {
     req: { instanceId: g.id('web1'), instanceType: { value: 'm7g.xlarge' } },
     err: ['Client.IncorrectInstanceState', `The instance '${g.id('web1')}' is not in the 'stopped' state.`],
   });
+  // Connected, harmless: access logs on the ALB in front of the target. / 연결됐지만 무해: ALB 접근 로그 켜기.
+  tr.add({
+    t: -12, name: 'ModifyLoadBalancerAttributes', source: ELB, who: viaConsole(yuna, '203.0.113.191'),
+    req: { loadBalancerArn: g.arn('lb'), attributes: [{ key: 'access_logs.s3.enabled', value: 'true' }, { key: 'access_logs.s3.bucket', value: `elb-logs-${acct}` }] },
+    resp: { attributes: [{ key: 'access_logs.s3.enabled', value: 'true' }] },
+  });
   tr.noise({ count: 7, from: -52, to: 2, instances: ssmOf(g, ['web1', 'dev'], 'admin-ec2-role') });
   return { id: 'instance-stop-admin-slack', title: 'admin-tg unhealthy — the only admin instance was stopped via Slack control', category: 'instance-stop', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
 }
@@ -660,6 +689,12 @@ function stopCmsConsole(): Scenario {
   tr.add({
     t: -1, name: 'RebootInstances', source: EC2, who: viaConsole(iamUser(acct, 'intern-readonly'), '203.0.113.140', UA.consoleWin),
     req: { instancesSet: instSet(g.id('web1')) }, err: UNAUTH(`arn:aws:iam::${acct}:user/intern-readonly`, 'ec2:RebootInstances'),
+  });
+  // Connected, plausible: IMDSv2 required on the surviving web server. / 연결됐고 그럴듯함: 남은 웹 서버에 IMDSv2 강제.
+  tr.add({
+    t: -8, name: 'ModifyInstanceMetadataOptions', source: EC2, who: viaCli(kenta, '203.0.113.212', 'ec2.modify-instance-metadata-options'),
+    req: { instanceId: g.id('web1'), httpTokens: 'required', httpEndpoint: 'enabled', httpPutResponseHopLimit: 2 },
+    resp: { requestId: uuid('cms-imds'), instanceId: g.id('web1'), instanceMetadataOptions: { state: 'pending', httpTokens: 'required', httpPutResponseHopLimit: 2, httpEndpoint: 'enabled' } },
   });
   tr.noise({ count: 6, from: -55, to: 3, instances: ssmOf(g, ['web1', 'web2'], 'cms-web-role') });
   return { id: 'instance-stop-cms-console', title: 'cms-tg below 2 healthy — cms-web-02 was stopped in the console', category: 'instance-stop', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
@@ -736,6 +771,12 @@ function listenerMallCanary(): Scenario {
     req: { listenerArn: g.listener('lb', 443), certificates: [{ certificateArn: `arn:aws:acm:${region}:${acct}:certificate/${uuid('mall-cert')}` }] },
     err: ['CertificateNotFound', `Certificate 'arn:aws:acm:${region}:${acct}:certificate/${uuid('mall-cert')}' not found`],
   });
+  // Connected, harmless: drop invalid header fields on the target ALB. / 연결됐지만 무해: 잘못된 헤더 버리기 설정.
+  tr.add({
+    t: -9, name: 'ModifyLoadBalancerAttributes', source: ELB, who: viaConsole(sso(acct, 'minji.lee@example.com'), '203.0.113.24'),
+    req: { loadBalancerArn: g.arn('lb'), attributes: [{ key: 'routing.http.drop_invalid_header_fields.enabled', value: 'true' }] },
+    resp: { attributes: [{ key: 'routing.http.drop_invalid_header_fields.enabled', value: 'true' }] },
+  });
   tr.noise({ count: 6, from: -50, to: 4, instances: ssmOf(g, ['web1', 'web2', 'worker'], 'mall-ssm-role') });
   return { id: 'listener-mall-forward-canary', title: 'mall-alb 503 — HTTPS default action now forwards to the empty canary TG', category: 'listener-rule', accountId: acct, region, targetArn: g.arn('lb'), startedAt: start, graphs: [snap, snap2], events: tr.events, answer };
 }
@@ -768,6 +809,12 @@ function ruleGatewayGreen(): Scenario {
   tr.add({
     t: -8, name: 'DeleteRule', source: ELB, who: viaConsole(iamUser(acct, 'intern-readonly'), '203.0.113.140', UA.consoleWin),
     req: { ruleArn: g.rule('lb', 443, 2) }, err: ACCESS_DENIED(`arn:aws:iam::${acct}:user/intern-readonly`, 'elasticloadbalancing:DeleteRule'),
+  });
+  // Connected, plausible: health-check matcher widened on the blue TG. / 연결됐고 그럴듯함: blue 헬스 체크 응답 코드 범위 확대.
+  tr.add({
+    t: -11, name: 'ModifyTargetGroup', source: ELB, who: viaConsole(seojun, '203.0.113.61'),
+    req: { targetGroupArn: g.arn('tg'), healthCheckPath: '/healthz', matcher: { httpCode: '200-299' } },
+    resp: { targetGroups: [{ targetGroupArn: g.arn('tg'), targetGroupName: 'gw-blue-tg', healthCheckPath: '/healthz', matcher: { httpCode: '200-299' } }] },
   });
   tr.noise({ count: 7, from: -45, to: 4, instances: ssmOf(g, ['web1', 'web2', 'green1'], 'gw-ec2-role') });
   return { id: 'rule-gw-weighted-green', title: 'gw-alb 5xx — /v2/* rule shifted 100% to the empty green TG', category: 'listener-rule', accountId: acct, region, targetArn: g.arn('lb'), startedAt: start, graphs: [snap], events: tr.events, answer };
@@ -841,6 +888,11 @@ function lambdaNotifyTimeout(): Scenario {
     req: { functionName: g.arn('sender'), publish: false, dryRun: false, s3Bucket: `notify-artifacts-${acct}`, s3Key: 'notify-sender/7f3c2a1.zip' },
     err: ['ResourceConflictException', `The operation cannot be performed at this time. An update is in progress for resource: ${g.arn('sender')}`],
   });
+  // Connected, harmless: versioning on the template bucket the function reads. / 연결됐지만 무해: 템플릿 버킷 버전 관리.
+  tr.add({
+    t: -7, name: 'PutBucketVersioning', source: S3, who: gha(acct, 's3#1.65.0'),
+    req: { bucketName: `notify-templates-${acct}`, Host: `notify-templates-${acct}.s3.${region}.amazonaws.com`, versioning: '', VersioningConfiguration: { Status: 'Enabled', xmlns: 'http://s3.amazonaws.com/doc/2006-03-01/' } },
+  });
   tr.noise({ count: 10, from: -55, to: 4, lambdas: [['notify-sender', 'notify-sender-role'], ['notify-digest', 'notify-digest-role']] });
   return { id: 'lambda-notify-sender-timeout', title: 'notify-alb 502 — notify-sender timeout cut from 30 s to 3 s', category: 'lambda-config', accountId: acct, region, targetArn: g.arn('lb'), startedAt: start, graphs: [snap], events: tr.events, answer };
 }
@@ -892,6 +944,12 @@ function lambdaOrderVpcSg(): Scenario {
     t: -1, name: 'PutBucketVersioning', source: S3, who: gha(acct, 's3#1.65.0'),
     req: { bucketName: `orders-exports-${acct}`, Host: `orders-exports-${acct}.s3.${region}.amazonaws.com`, versioning: '', VersioningConfiguration: { Status: 'Enabled', xmlns: 'http://s3.amazonaws.com/doc/2006-03-01/' } },
   });
+  // Connected, harmless: maintenance window on the DB the function uses. / 연결됐지만 무해: 함수가 쓰는 DB의 점검 시간대.
+  tr.add({
+    t: -14, name: 'ModifyDBInstance', source: RDS, who: gha(acct, 'rds#1.88.0'),
+    req: { dBInstanceIdentifier: 'orders-pg', preferredMaintenanceWindow: 'sun:18:00-sun:18:30', applyImmediately: false },
+    resp: { dBInstanceIdentifier: 'orders-pg', dBInstanceClass: 'db.r6g.xlarge', engine: 'postgres', dBInstanceStatus: 'available', preferredMaintenanceWindow: 'sun:18:00-sun:18:30', dBInstanceArn: g.arn('db') },
+  });
   tr.noise({ count: 9, from: -56, to: 4, lambdas: [['order-consumer', 'order-consumer-role']] });
   return { id: 'lambda-order-consumer-vpc-sg', title: 'order-consumer Errors alarm — VPC SG swapped to one the DB does not allow', category: 'lambda-config', accountId: acct, region, targetArn: g.arn('fn'), startedAt: start, graphs: [before, after], events: tr.events, answer };
 }
@@ -935,6 +993,11 @@ function lambdaThumbMemory(): Scenario {
     req: { functionName: 'thumbnail-maker', publish: true, zipFile: 'HIDDEN_DUE_TO_SECURITY_REASONS' },
     err: ['CodeStorageExceededException', 'Code storage limit exceeded.'],
   });
+  // Connected, harmless: lifecycle on the output bucket. / 연결됐지만 무해: 출력 버킷 수명 주기.
+  tr.add({
+    t: -9, name: 'PutBucketLifecycle', source: S3, who: script,
+    req: { bucketName: `media-thumbs-${acct}`, Host: `media-thumbs-${acct}.s3.${region}.amazonaws.com`, lifecycle: '', LifecycleConfiguration: { Rule: { ID: 'ia-after-30d', Status: 'Enabled', Filter: { Prefix: '' }, Transition: { Days: 30, StorageClass: 'STANDARD_IA' } } } },
+  });
   tr.noise({ count: 10, from: -50, to: 4, lambdas: [['thumbnail-maker', 'thumbnail-maker-role'], ['thumbnail-maker-dev', 'thumbnail-maker-dev-role']] });
   return { id: 'lambda-thumbnail-memory-cut', title: 'thumbnail-maker Errors alarm — memory cut from 1024 MB to 128 MB by a cost script', category: 'lambda-config', accountId: acct, region, targetArn: g.arn('thumb'), startedAt: start, graphs: [snap], events: tr.events, answer };
 }
@@ -969,6 +1032,11 @@ function iamDetachImg(): Scenario {
     t: -12, name: 'PutBucketPolicy', source: S3, who: viaCli(iamUser(acct, 'jaehyun.park'), '198.51.100.77', 's3api.put-bucket-policy'),
     req: { bucketName: `img-originals-${acct}`, Host: `img-originals-${acct}.s3.${region}.amazonaws.com`, policy: '', bucketPolicy: { Version: '2012-10-17', Statement: [{ Effect: 'Allow', Principal: { AWS: g.arn('role') }, Action: 's3:GetObject', Resource: `arn:aws:s3:::img-originals-${acct}/*` }] } },
     err: ['AccessDenied', 'Access Denied'],
+  });
+  // Connected, harmless: an extra managed policy attached to the same role. / 연결됐지만 무해: 같은 역할에 관리형 정책 추가.
+  tr.add({
+    t: -9, name: 'AttachRolePolicy', source: IAM, who: viaTf(iamUser(acct, 'ci-terraform'), '192.0.2.18', 'iam#1.37.2'),
+    req: { roleName: 'img-api-role', policyArn: 'arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy' },
   });
   tr.noise({ count: 8, from: -55, to: 4, instances: ssmOf(g, ['web1', 'web2'], 'img-api-role') });
   return { id: 'iam-detach-img-originals', title: 'img-alb 5xx — img-api-role lost its img-originals-rw policy', category: 'iam-detach', accountId: acct, region, targetArn: g.arn('lb'), startedAt: start, graphs: [before, after], events: tr.events, answer };
@@ -1006,6 +1074,11 @@ function iamDetachSettlement(): Scenario {
     req: { functionName: 'settlement-batch', timeout: 900 },
     err: ['ResourceConflictException', `The operation cannot be performed at this time. An update is in progress for resource: ${g.arn('fn')}`],
   });
+  // Connected, harmless: lifecycle on the reports bucket the role can write. / 연결됐지만 무해: 리포트 버킷 수명 주기.
+  tr.add({
+    t: -14, name: 'PutBucketLifecycle', source: S3, who: cfn(acct),
+    req: { bucketName: `settlement-reports-${acct}`, Host: `settlement-reports-${acct}.s3.${region}.amazonaws.com`, lifecycle: '', LifecycleConfiguration: { Rule: { ID: 'glacier-after-365d', Status: 'Enabled', Filter: { Prefix: 'monthly/' }, Transition: { Days: 365, StorageClass: 'GLACIER' } } } },
+  });
   tr.noise({ count: 9, from: -58, to: 4, lambdas: [['settlement-batch', 'settlement-batch-role']] });
   return { id: 'iam-detach-settlement-vpc-access', title: 'settlement-batch Errors alarm — VPC access policy detached by a CDK deploy', category: 'iam-detach', accountId: acct, region, targetArn: g.arn('fn'), startedAt: start, graphs: [snap, snap2], events: tr.events, answer };
 }
@@ -1041,6 +1114,11 @@ function rdsBookingClass(): Scenario {
   tr.add({
     t: -14, name: 'RebootDBInstance', source: RDS, who: viaCli(iamUser(acct, 'dohyun.kim'), '192.0.2.140', 'rds.reboot-db-instance'),
     req: { dBInstanceIdentifier: 'booking-pg', forceFailover: false }, err: ['InvalidDBInstanceState', 'Instance booking-pg is not currently in the available state.'],
+  });
+  // Connected, harmless: BI CIDR added to the DB SG. / 연결됐지만 무해: DB SG에 BI 대역 추가.
+  tr.add({
+    t: -11, name: 'AuthorizeSecurityGroupIngress', source: EC2, who: viaCli(iamUser(acct, 'dohyun.kim'), '192.0.2.140', 'ec2.authorize-security-group-ingress'),
+    req: { groupId: g.id('sg-db'), ipPermissions: items([sgPerm(5432, { cidr: '10.99.4.0/24', desc: 'bi read-only via vpn' })]) },
   });
   tr.noise({ count: 8, from: -50, to: 3, instances: ssmOf(g, ['web1', 'web2'], 'booking-ec2-role') });
   return { id: 'rds-booking-class-downsize', title: 'booking-alb 5xx — booking-pg downsized with applyImmediately', category: 'rds-modify', accountId: acct, region, targetArn: g.arn('lb'), startedAt: start, graphs: [before, after], events: tr.events, answer };
@@ -1087,39 +1165,54 @@ function rdsLedgerSg(): Scenario {
 
 // ---------- scenarios: SG swapped on an ENI / ENI 보안그룹 바꿔 끼우기 ----------
 
-// chat-ws-01's ENI gets only a temporary debug SG; the old app SG link is gone from the newer graph.
-// chat-ws-01 ENI에 임시 디버그 SG만 남아, 새 그래프에서는 기존 앱 SG 연결이 사라졌다.
+// Moves an instance and its primary ENI from one SG to another. / 인스턴스와 기본 ENI의 SG를 바꾼다.
+function swapSg(g: Topo, inst: string, from: string, to: string): void {
+  g.unedge(`${inst}.eni`, from, 'uses_sg');
+  g.unedge(inst, from, 'uses_sg');
+  g.edge(`${inst}.eni`, to, 'uses_sg');
+  g.edge(inst, to, 'uses_sg');
+}
+
+// The presence backend (not a TG target; the web tier reaches it through its SG rule) gets only a
+// temporary debug SG. The newer graph no longer links its ENI to the web tier at all.
+// 프레즌스 백엔드(대상 그룹 밖, 웹 계층이 SG 규칙으로만 닿음) ENI에 임시 디버그 SG만 남아,
+// 새 그래프에서는 그 ENI와 웹 계층의 연결이 아예 사라졌다.
 function eniSwapChat(): Scenario {
   const acct = ACC.commerce, region = SEOUL, start = '2026-10-25T07:55:00.000Z';
   const g = new Topo(acct, region);
   webTier(g, { prefix: 'chat', octet: 14, count: 2, port: 8081, role: 'chat-ws-role' });
+  g.sg('sg-presence', 'vpc', 'chat-presence-sg');
+  g.allow('sg-presence', 'sg-app');
+  g.role('presence-role', 'chat-presence-role');
+  g.instance('presence', 'app-b', ['sg-presence'], { name: 'chat-presence-01', type: 'r7g.large', role: 'presence-role' });
   g.sg('sg-debug', 'vpc', 'chat-temp-debug');
   g.sg('sg-ops', 'vpc', 'chat-ops-tools-sg');
   g.instance('ops', 'app-b', ['sg-ops'], { name: 'chat-ops-01', type: 't4g.small' });
   const before = g.snapshot(rel(start, -24));
-  g.unedge('web1.eni', 'sg-app', 'uses_sg');
-  g.unedge('web1', 'sg-app', 'uses_sg');
-  g.edge('web1.eni', 'sg-debug', 'uses_sg');
-  g.edge('web1', 'sg-debug', 'uses_sg');
+  swapSg(g, 'presence', 'sg-presence', 'sg-debug');
   const after = g.snapshot(rel(start, -9));
 
   const tr = new Trail('eni-swap-chat', acct, region, start);
   const jaehyun = iamUser(acct, 'jaehyun.park');
   const answer = tr.add({
     t: -13, name: 'ModifyNetworkInterfaceAttribute', source: EC2, who: viaConsole(jaehyun, '198.51.100.77'),
-    req: { networkInterfaceId: g.id('web1.eni'), groupSet: items([{ groupId: g.id('sg-debug') }]) },
+    req: { networkInterfaceId: g.id('presence.eni'), groupSet: items([{ groupId: g.id('sg-debug') }]) },
   });
-  tr.add({ t: -4, name: 'CreateTags', source: EC2, who: viaConsole(jaehyun, '198.51.100.77'), req: tagSet([g.id('web1')], { debug: 'ws-handshake' }) });
+  tr.add({ t: -4, name: 'CreateTags', source: EC2, who: viaConsole(jaehyun, '198.51.100.77'), req: tagSet([g.id('presence')], { debug: 'ws-presence-timeout' }) });
   tr.add({
     t: -7, name: 'RevokeSecurityGroupIngress', source: EC2, who: viaConsole(sso(acct, 'minji.lee@example.com'), '203.0.113.24'),
     req: { groupId: g.id('sg-ops'), ipPermissions: items([sgPerm(3389, { cidr: '10.14.0.0/16' })]) },
   });
   tr.add({
     t: -15, name: 'ModifyInstanceAttribute', source: EC2, who: viaConsole(iamUser(acct, 'intern-readonly'), '203.0.113.140', UA.consoleWin),
-    req: { instanceId: g.id('web1'), groupSet: items([{ groupId: g.id('sg-debug') }]) }, err: UNAUTH(`arn:aws:iam::${acct}:user/intern-readonly`, 'ec2:ModifyInstanceAttribute'),
+    req: { instanceId: g.id('presence'), groupSet: items([{ groupId: g.id('sg-debug') }]) }, err: UNAUTH(`arn:aws:iam::${acct}:user/intern-readonly`, 'ec2:ModifyInstanceAttribute'),
   });
-  tr.noise({ count: 7, from: -50, to: 3, instances: ssmOf(g, ['web1', 'web2', 'ops'], 'chat-ws-role') });
-  return { id: 'eni-swap-chat-debug-sg', title: 'chat-tg unhealthy — chat-web-01 ENI left with only a debug SG', category: 'eni-sg-swap', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
+  tr.add({
+    t: -6, name: 'AuthorizeSecurityGroupIngress', source: EC2, who: viaCli(jaehyun, '198.51.100.77', 'ec2.authorize-security-group-ingress'),
+    req: { groupId: g.id('sg-app'), ipPermissions: items([sgPerm(9100, { cidr: '10.14.11.0/24', desc: 'node exporter scrape' })]) },
+  });
+  tr.noise({ count: 7, from: -50, to: 3, instances: [...ssmOf(g, ['web1', 'web2'], 'chat-ws-role'), ...ssmOf(g, ['presence'], 'chat-presence-role')] });
+  return { id: 'eni-swap-chat-debug-sg', title: 'chat-tg unhealthy — chat-presence-01 ENI left with only a debug SG', category: 'eni-sg-swap', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
 }
 
 // Merges two single-account snapshots taken at the same time (aggregator view). / 같은 시각 두 계정 스냅샷 합치기.
@@ -1127,43 +1220,52 @@ function combine(a: GraphSnapshot, b: GraphSnapshot): GraphSnapshot {
   return { builtAt: a.builtAt, data: { nodes: [...a.data.nodes, ...b.data.nodes], edges: [...a.data.edges, ...b.data.edges], dropped: 0 } };
 }
 
-// The MQTT broker ENI is switched to the VPC default SG. The aggregator graph also holds a staging
-// account with the same names (default SG, mqtt-web-01), which must not be confused with prod.
-// MQTT 브로커 ENI가 VPC 기본 SG로 바뀌었다. 같은 이름의 스테이징 계정 노드도 그래프에 있다.
+// The broker's auth backend (reached only through mqtt-auth-sg's rule from the broker SG) is switched
+// to the VPC default SG. The aggregator graph also holds a staging account with the same names
+// (default SG, mqtt-auth-01), which must not be confused with prod.
+// 브로커의 인증 백엔드(브로커 SG 규칙으로만 닿음) ENI가 VPC 기본 SG로 바뀌었다. 같은 이름의 스테이징 계정 노드도 있다.
 function eniSwapMqtt(): Scenario {
   const acct = ACC.platform, region = SEOUL, start = '2026-10-26T03:20:00.000Z';
   const g = new Topo(acct, region);
   webTier(g, { prefix: 'mqtt', octet: 26, count: 1, port: 8883, kind: 'net', role: 'mqtt-broker-role' });
+  g.sg('sg-auth', 'vpc', 'mqtt-auth-sg');
+  g.allow('sg-auth', 'sg-app');
+  g.instance('auth', 'app-b', ['sg-auth'], { name: 'mqtt-auth-01', type: 'c7g.large' });
   g.sg('sg-default', 'vpc', 'default');
   const twin = new Topo(ACC.staging, region);
   twin.vpc('vpc', 'mqtt-staging-vpc', '10.126.0.0/16');
   twin.subnet('app-a', 'vpc', 'mqtt-staging-private-a', '10.126.10.0/24', `${region}a`);
   twin.sg('sg-default', 'vpc', 'default');
-  twin.instance('web1', 'app-a', ['sg-default'], { name: 'mqtt-web-01', type: 't4g.small' });
+  twin.sg('sg-app', 'vpc', 'mqtt-app-sg');
+  twin.allow('sg-default', 'sg-app');
+  twin.instance('web1', 'app-a', ['sg-app'], { name: 'mqtt-web-01', type: 't4g.small' });
+  twin.instance('auth', 'app-a', ['sg-default'], { name: 'mqtt-auth-01', type: 't4g.small' });
   const before = combine(g.snapshot(rel(start, -15)), twin.snapshot(rel(start, -15)));
-  g.unedge('web1.eni', 'sg-app', 'uses_sg');
-  g.unedge('web1', 'sg-app', 'uses_sg');
-  g.edge('web1.eni', 'sg-default', 'uses_sg');
-  g.edge('web1', 'sg-default', 'uses_sg');
+  swapSg(g, 'auth', 'sg-auth', 'sg-default');
   const after = combine(g.snapshot(rel(start, -1)), twin.snapshot(rel(start, -1)));
 
   const tr = new Trail('eni-swap-mqtt', acct, region, start);
   const seojun = sso(acct, 'seojun.choi@example.com');
   const answer = tr.add({
     t: -4, name: 'ModifyNetworkInterfaceAttribute', source: EC2, who: viaCli(seojun, '203.0.113.61', 'ec2.modify-network-interface-attribute'),
-    req: { networkInterfaceId: g.id('web1.eni'), groupSet: items([{ groupId: g.id('sg-default') }]) },
+    req: { networkInterfaceId: g.id('auth.eni'), groupSet: items([{ groupId: g.id('sg-default') }]) },
   });
   tr.add({
     t: -2, name: 'AuthorizeSecurityGroupIngress', source: EC2, who: viaCli(seojun, '203.0.113.61', 'ec2.authorize-security-group-ingress'),
-    req: { groupId: g.id('sg-app'), ipPermissions: items([sgPerm(8883, { cidr: '10.26.0.0/16', desc: 'mqtt from vpc' })]) },
+    req: { groupId: g.id('sg-auth'), ipPermissions: items([sgPerm(8443, { cidr: '10.26.0.0/16', desc: 'auth api from vpc' })]) },
   });
   tr.add({ t: -9, name: 'AddTags', source: ELB, who: viaConsole(sso(acct, 'hana.jung@example.com'), '203.0.113.5'), req: elbTags([g.arn('tg')], { Protocol: 'mqtts' }) });
   tr.add({
     t: -3, name: 'ModifyInstanceAttribute', source: EC2, who: viaCli(seojun, '203.0.113.61', 'ec2.modify-instance-attribute'),
-    req: { instanceId: g.id('web1'), disableApiTermination: { value: true } }, err: UNAUTH(String(seojun.arn), 'ec2:ModifyInstanceAttribute'),
+    req: { instanceId: g.id('auth'), disableApiTermination: { value: true } }, err: UNAUTH(String(seojun.arn), 'ec2:ModifyInstanceAttribute'),
   });
-  tr.noise({ count: 6, from: -45, to: 4, instances: ssmOf(g, ['web1'], 'mqtt-broker-role') });
-  return { id: 'eni-swap-mqtt-default-sg', title: 'mqtt-tg unhealthy — broker ENI switched to the VPC default SG', category: 'eni-sg-swap', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
+  tr.add({
+    t: -11, name: 'ModifyTargetGroupAttributes', source: ELB, who: viaCli(seojun, '203.0.113.61', 'elbv2.modify-target-group-attributes'),
+    req: { targetGroupArn: g.arn('tg'), attributes: [{ key: 'deregistration_delay.timeout_seconds', value: '60' }] },
+    resp: { attributes: [{ key: 'deregistration_delay.timeout_seconds', value: '60' }, { key: 'proxy_protocol_v2.enabled', value: 'false' }] },
+  });
+  tr.noise({ count: 6, from: -45, to: 4, instances: [...ssmOf(g, ['web1'], 'mqtt-broker-role'), ...ssmOf(g, ['auth'], 'mqtt-auth-role')] });
+  return { id: 'eni-swap-mqtt-default-sg', title: 'mqtt-tg unhealthy — auth backend ENI switched to the VPC default SG', category: 'eni-sg-swap', accountId: acct, region, targetArn: g.arn('tg'), startedAt: start, graphs: [before, after], events: tr.events, answer };
 }
 
 // ---------- scenarios: noise-heavy / 잡음만 많은 경우 ----------
@@ -1202,6 +1304,12 @@ function noiseEventSg(): Scenario {
   tr.add({
     t: -5, name: L_CONFIG, source: LAMBDA, who: gha(acct, 'lambda#1.64.0'),
     req: { functionName: g.arn('fanout'), timeout: 30 }, resp: lambdaConfig(g, 'fanout', at5, { timeout: 30, memorySize: 512, role: g.arn('fanout-role') }),
+  });
+  // Connected, harmless: idle timeout on the target ALB. / 연결됐지만 무해: ALB 유휴 시간 변경.
+  tr.add({
+    t: -15, name: 'ModifyLoadBalancerAttributes', source: ELB, who: gha(acct, 'elasticloadbalancingv2#1.40.1'),
+    req: { loadBalancerArn: g.arn('lb'), attributes: [{ key: 'idle_timeout.timeout_seconds', value: '120' }] },
+    resp: { attributes: [{ key: 'idle_timeout.timeout_seconds', value: '120' }] },
   });
   tr.noise({
     count: 36, from: -58, to: 5, instances: ssmOf(g, ['web1', 'web2', 'web3', 'web4'], 'event-web-role'),
@@ -1271,6 +1379,12 @@ function noiseCheckoutRule(): Scenario {
   tr.add({
     t: -6, name: L_CONFIG, source: LAMBDA, who: gha(acct, 'lambda#1.64.0'),
     req: { functionName: g.arn('events'), memorySize: 1024 }, resp: lambdaConfig(g, 'events', at6, { timeout: 30, memorySize: 1024, role: g.arn('ev-role') }),
+  });
+  // Connected, harmless: shorter deregistration delay on the target TG. / 연결됐지만 무해: 등록 해제 지연 단축.
+  tr.add({
+    t: -9, name: 'ModifyTargetGroupAttributes', source: ELB, who: gha(acct, 'elasticloadbalancingv2#1.40.1'),
+    req: { targetGroupArn: g.arn('tg'), attributes: [{ key: 'deregistration_delay.timeout_seconds', value: '30' }] },
+    resp: { attributes: [{ key: 'deregistration_delay.timeout_seconds', value: '30' }] },
   });
   tr.noise({
     count: 34, from: -57, to: 5, instances: ssmOf(g, ['web1', 'web2', 'web3'], 'checkout-ec2-role'),

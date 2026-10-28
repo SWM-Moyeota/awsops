@@ -2,11 +2,55 @@
 // 재현 시험 시나리오 데이터 모양 검사 — 순위 자체는 eval.test.ts가 잰다.
 import { describe, it, expect } from 'vitest';
 import { SCENARIOS } from '../eval/scenarios';
+import type { GraphData, GraphNode } from '@/lib/dep-graph/types';
 import type { Scenario } from '../types';
 
 type Obj = Record<string, unknown>;
 const NOISE = new Set(['UpdateInstanceInformation', 'CreateLogStream']);
 const MIN = 60_000;
+
+// Undirected reachability from `from`, never entering vpc/subnet nodes (they join everything).
+// 방향 무시 도달 가능 노드 집합 — vpc/subnet은 모든 것을 잇기 때문에 들어가지 않는다.
+function reachable(data: GraphData, from: string): Set<string> {
+  const type = new Map(data.nodes.map(n => [n.arn, n.type]));
+  const adj = new Map<string, string[]>();
+  for (const e of data.edges) {
+    adj.set(e.src, [...(adj.get(e.src) ?? []), e.dst]);
+    adj.set(e.dst, [...(adj.get(e.dst) ?? []), e.src]);
+  }
+  const seen = new Set([from]);
+  const queue = [from];
+  while (queue.length) {
+    for (const next of adj.get(queue.shift()!) ?? []) {
+      const t = type.get(next);
+      if (seen.has(next) || t === 'vpc' || t === 'subnet') continue;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+  return seen;
+}
+
+// Graph nodes named anywhere in requestParameters (by id or ARN, scenario account only).
+// requestParameters 어디든 id·ARN으로 언급된 그래프 노드 (시나리오 계정만).
+function namedNodes(req: unknown, data: GraphData, accountId: string): GraphNode[] {
+  const strings = new Set<string>();
+  // Listener / rule ARNs name their load balancer. / 리스너·규칙 ARN은 그 로드밸런서를 가리킨다.
+  const LISTENER = /^(arn:aws:elasticloadbalancing:[^:]+:\d{12}:)listener(?:-rule)?\/((?:app|net)\/[^/]+\/[0-9a-f]+)\//;
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') {
+      strings.add(v);
+      const m = LISTENER.exec(v);
+      if (m) strings.add(`${m[1]}loadbalancer/${m[2]}`);
+    }
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(req);
+  return data.nodes.filter(n => n.accountId === accountId && (strings.has(n.id) || strings.has(n.arn)));
+}
+const byTime = (s: Scenario) => [...s.graphs].sort((a, b) => Date.parse(a.builtAt) - Date.parse(b.builtAt));
+const isTag = (name: string) => /Tag/.test(name);
 
 const answerOf = (s: Scenario): Obj => {
   const hits = s.events.filter(e => e.eventID === s.answer);
@@ -140,6 +184,41 @@ describe('SCENARIOS', () => {
       const first = sgEdges(0), last = sgEdges(sorted.length - 1);
       expect(Array.from(first).some(dst => !last.has(dst)), s.id).toBe(true);
     }
+  });
+
+  // Review Focus #1: the swapped ENI is linked to the target only through the old SG, so only the
+  // pre-change snapshot connects it. / 바뀐 ENI는 옛 SG로만 대상에 이어져, 변경 전 스냅샷에서만 닿는다.
+  it('ENI swap scenarios: answer resources reachable from the target only in the earliest snapshot', () => {
+    for (const s of SCENARIOS.filter(x => x.category === 'eni-sg-swap')) {
+      const graphs = byTime(s);
+      const first = graphs[0].data, last = graphs[graphs.length - 1].data;
+      const req = answerOf(s).requestParameters as Obj;
+      const eni = first.nodes.find(n => n.type === 'eni' && n.id === req.networkInterfaceId && n.accountId === s.accountId);
+      expect(eni, s.id).toBeDefined();
+      expect(reachable(first, s.targetArn!).has(eni!.arn), `${s.id}: eni reachable before`).toBe(true);
+      const nowReach = reachable(last, s.targetArn!);
+      const named = namedNodes(req, last, s.accountId);
+      expect(named.length, s.id).toBeGreaterThanOrEqual(2);
+      for (const n of named) expect(nowReach.has(n.arn), `${s.id}: ${n.type} ${n.id} unreachable after`).toBe(false);
+    }
+  });
+
+  // Controller ruling: a connected, successful, non-tag distractor in (nearly) every scored scenario.
+  // 대상과 연결된, 성공한, 태그가 아닌 함정을 채점 시나리오 대부분에 둔다.
+  it('scored scenarios carry a connected, successful, non-tag, non-noise distractor', () => {
+    const missing: string[] = [];
+    for (const s of SCENARIOS.filter(x => !x.knownLimit)) {
+      const ok = s.events.some(e => {
+        const name = String(e.eventName);
+        if (e.eventID === s.answer || e.errorCode || NOISE.has(name) || isTag(name)) return false;
+        return s.graphs.some(g => {
+          const reach = reachable(g.data, s.targetArn!);
+          return namedNodes(e.requestParameters, g.data, s.accountId).some(n => reach.has(n.arn));
+        });
+      });
+      if (!ok) missing.push(s.id);
+    }
+    expect(missing).toEqual([]);
   });
 
   it('known-limit answers are not graph resources', () => {
