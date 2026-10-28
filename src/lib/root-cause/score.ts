@@ -2,11 +2,13 @@
 // 용의자 점수의 세 요소 — 시간 근접도 × 그래프 거리 × 변경 종류(스펙 §2).
 import type { Distance } from './types';
 
+// Additive verbs (Authorize/Register/Attach/Associate/Enable) sit in the 0.5 tier: they add capacity, rarely break things (ADR-013 tuning).
+// 용량·권한만 더하는 동사는 0.5 단계 — 거의 장애를 내지 않는다(ADR-013 조정).
 const TAG_EVENTS: ReadonlySet<string> = new Set(['CreateTags', 'DeleteTags', 'TagResource', 'UntagResource', 'AddTags', 'RemoveTags', 'TagRole', 'UntagRole']);
 const PREFIXES: ReadonlyArray<readonly [number, readonly string[]]> = [
   [1.0, ['Revoke', 'Delete', 'Detach', 'Disassociate', 'Deregister', 'Remove', 'Replace', 'Stop', 'Terminate', 'Reboot']],
-  [0.8, ['Modify', 'Update', 'Put', 'Set', 'Change', 'Attach', 'Associate', 'Register', 'Authorize', 'Apply', 'Enable', 'Disable', 'Reset']],
-  [0.5, ['Create', 'Run', 'Start', 'Import', 'Copy']],
+  [0.8, ['Modify', 'Update', 'Put', 'Set', 'Change', 'Apply', 'Disable', 'Reset']],
+  [0.5, ['Create', 'Run', 'Start', 'Import', 'Copy', 'Authorize', 'Register', 'Attach', 'Associate', 'Enable']],
 ];
 
 /** exp(-minutes before start / 20); after start 0.3. / 시작 전 지수 감쇠, 시작 뒤 0.3. */

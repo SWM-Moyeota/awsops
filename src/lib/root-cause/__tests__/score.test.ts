@@ -34,6 +34,7 @@ describe('kindWeight', () => {
     expect(kindWeight('CreateSecurityGroup')).toBe(0.5);
     expect(kindWeight('BatchSomething')).toBe(0.6);
     expect(kindWeight('UpdateFunctionConfiguration')).toBe(0.8);
+    for (const n of ['AuthorizeSecurityGroupIngress', 'RegisterTargets', 'AttachRolePolicy', 'AssociateAddress', 'EnableX']) expect(kindWeight(n)).toBe(0.5);
   });
 });
 
