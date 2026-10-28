@@ -163,8 +163,11 @@ describe('actionCard', () => {
     const snapshot = { 'sg-1': { type: 'security-group' as const, id: 'sg-1', name: 'sg-web', tags: {}, eniCount: 2, attachedInstances: [] } };
     const sgChange = { index: 2, step: { action: 'sg.ingress.add' as const, target: { type: 'security-group' as const, id: 'sg-1', name: 'sg-web' } }, before: '(없음)', after: 'x', noop: false };
     const builtAt = new Date(Date.now() - 5 * 60000).toISOString();
-    const withG = actionCard(base({ snapshot, changes: [sgChange], graphImpact: { 'sg-1': { count: 4, sample: ['a', 'b', 'c'], builtAt } } }), cfg);
+    const withG = actionCard(base({ snapshot, changes: [sgChange], graphImpact: { 'sg-1': { count: 4, sample: ['a', 'b', 'c'], builtAt, truncated: false } } }), cfg);
     expect(json(withG)).toContain('그래프로 본 영향(5분 전 기준): 이 보안그룹을 쓰는 리소스 4개 — a, b, c 외 1개');
+    // A capped walk shows "+". / 상한에 걸리면 "+"를 붙인다.
+    const capped = actionCard(base({ snapshot, changes: [sgChange], graphImpact: { 'sg-1': { count: 300, sample: ['a', 'b', 'c'], builtAt, truncated: true } } }), cfg);
+    expect(json(capped)).toContain('이 보안그룹을 쓰는 리소스 300+개 — a, b, c 외 297+개');
     const without = actionCard(base({ snapshot, changes: [sgChange] }), cfg);
     expect(json(without)).not.toContain('그래프로 본 영향');
   });

@@ -90,7 +90,9 @@ function blastLines(req: ActionRequest): string[] {
     if (g) {
       const minutes = Math.max(0, Math.round((Date.now() - Date.parse(g.builtAt)) / 60000));
       const sample = g.sample.map(x => safeName(x));
-      out.push(`• 그래프로 본 영향(${minutes}분 전 기준): 이 보안그룹을 쓰는 리소스 ${g.count}개${sample.length ? ` — ${sample.join(', ')}` : ''}${g.count > sample.length ? ` 외 ${g.count - sample.length}개` : ''}`);
+      // "+" when the walk hit its cap. / 상한에 걸렸으면 "+".
+      const plus = g.truncated ? '+' : '';
+      out.push(`• 그래프로 본 영향(${minutes}분 전 기준): 이 보안그룹을 쓰는 리소스 ${g.count}${plus}개${sample.length ? ` — ${sample.join(', ')}` : ''}${g.count > sample.length ? ` 외 ${g.count - sample.length}${plus}개` : ''}`);
     }
   }
   return out;

@@ -1,9 +1,12 @@
 // In-memory PGlite graph store: nodes/edges tables + recursive-CTE walks.
 // 메모리 PGlite 그래프 저장소 — 빌드마다 새로 적재하고 포인터만 바꿔 끼운다.
 import { PGlite } from '@electric-sql/pglite';
-import type { BuildStats, GraphData, GraphEdge, GraphNode, Neighborhood, NodeType, WalkNode, WalkResult } from './types';
+import type { BuildStats, EdgeType, GraphData, GraphEdge, GraphNode, Neighborhood, NodeType, WalkNode, WalkResult } from './types';
 
 export const WALK_CAP = 300;
+// Per-side budget in a neighborhood; a side's unused budget goes to the other side.
+// 주변 그래프의 한쪽 예산 — 남는 예산은 반대쪽이 쓴다.
+export const SIDE_CAP = 150;
 const SEARCH_MAX = 20;
 const HUBS_DEFAULT = 10;
 const HUBS_MAX = 100;
@@ -13,13 +16,16 @@ export interface GraphStore {
   data(): GraphData;
   node(arn: string): Promise<GraphNode | null>;
   nodeById(id: string, type?: NodeType): Promise<GraphNode | null>;
-  search(q: string, opts?: { limit?: number; accountId?: string }): Promise<GraphNode[]>;
+  search(q: string, opts?: { limit?: number; accountId?: string; type?: NodeType }): Promise<GraphNode[]>;
   hubs(opts?: { limit?: number; accountId?: string }): Promise<Array<GraphNode & { dependents: number }>>;
-  impact(arn: string, depth?: number): Promise<WalkResult>;
-  dependencies(arn: string, depth?: number): Promise<WalkResult>;
+  impact(arn: string, depth?: number, opts?: WalkOptions): Promise<WalkResult>;
+  dependencies(arn: string, depth?: number, opts?: WalkOptions): Promise<WalkResult>;
   neighborhood(arn: string, depth?: number): Promise<Neighborhood | null>;
   close(): Promise<void>;
 }
+
+/** Only follow these edge types (all when omitted). / 이 간선 종류만 따라간다(없으면 전부). */
+export interface WalkOptions { edgeTypes?: EdgeType[] }
 
 /** Integer within 1..max, otherwise the default. / 1..max 정수가 아니면 기본값. */
 export function clampDepth(v: unknown, def: number, max: number): number {
@@ -59,7 +65,8 @@ function walkSql(from: 'src_arn' | 'dst_arn', to: 'src_arn' | 'dst_arn'): string
   return `with recursive walk(arn, depth) as (
     select $1::text, 0
     union
-    select e.${from}, w.depth + 1 from edges e join walk w on e.${to} = w.arn where w.depth < $2
+    select e.${from}, w.depth + 1 from edges e join walk w on e.${to} = w.arn
+    where w.depth < $2 and ($3::text[] is null or e.type = any($3))
   )
   select n.*, min(w.depth) as depth from walk w join nodes n on n.arn = w.arn
   where w.arn <> $1 group by n.arn order by depth, n.type, n.name, n.arn limit ${WALK_CAP + 1}`;
@@ -112,8 +119,9 @@ export async function createGraphStore(data: GraphData, stats: BuildStats): Prom
     }
   }
 
-  async function walk(sql: string, arn: string, depth: number): Promise<WalkResult> {
-    const rows = await q<NodeRow & { depth: number }>(sql, [arn, depth]);
+  async function walk(sql: string, arn: string, depth: number, opts?: WalkOptions): Promise<WalkResult> {
+    const types = opts?.edgeTypes && opts.edgeTypes.length ? opts.edgeTypes : null;
+    const rows = await q<NodeRow & { depth: number }>(sql, [arn, depth, types]);
     const nodes: WalkNode[] = rows.slice(0, WALK_CAP).map((r) => ({ ...toNode(r), depth: Number(r.depth) }));
     return { nodes, truncated: rows.length > WALK_CAP };
   }
@@ -144,9 +152,10 @@ export async function createGraphStore(data: GraphData, stats: BuildStats): Prom
         `select * from nodes
          where (name ilike $1 escape '\\' or id ilike $1 escape '\\' or arn ilike $1 escape '\\')
            and ($3::text is null or account_id = $3)
+           and ($5::text is null or type = $5)
          order by case when lower(id) = lower($2) or lower(name) = lower($2) then 0 else 1 end, name, arn
          limit $4`,
-        [likePattern(term), term, opts.accountId ?? null, limit],
+        [likePattern(term), term, opts.accountId ?? null, limit, opts.type ?? null],
       );
       return rows.map(toNode);
     },
@@ -162,8 +171,8 @@ export async function createGraphStore(data: GraphData, stats: BuildStats): Prom
       return rows.map((r) => ({ ...toNode(r), dependents: Number(r.dependents) }));
     },
 
-    impact: (arn, depth) => walk(IMPACT_SQL, arn, clampDepth(depth, 3, 6)),
-    dependencies: (arn, depth) => walk(DEPENDENCIES_SQL, arn, clampDepth(depth, 3, 6)),
+    impact: (arn, depth, opts) => walk(IMPACT_SQL, arn, clampDepth(depth, 3, 6), opts),
+    dependencies: (arn, depth, opts) => walk(DEPENDENCIES_SQL, arn, clampDepth(depth, 3, 6), opts),
 
     async neighborhood(arn, depth) {
       const center = await node(arn);
@@ -179,15 +188,21 @@ export async function createGraphStore(data: GraphData, stats: BuildStats): Prom
         const prev = side.get(n.arn);
         if (!prev || n.depth < prev.n.depth) side.set(n.arn, { n, side: 'dependency' });
       }
-      // Dependents first, then dependencies, each by depth (stable sort keeps walk order).
-      // dependent 먼저, 그다음 dependency — 각각 깊이 순.
-      const rank = (x: { side: string }) => (x.side === 'dependent' ? 0 : 1);
-      const ordered = Array.from(side.values()).sort((a, b) => rank(a) - rank(b) || a.n.depth - b.n.depth);
-      const items: Neighborhood['nodes'] = [
+      // Each side by depth (stable sort keeps walk order).
+      // 쪽마다 깊이 순(안정 정렬이라 walk 순서 유지).
+      const all = Array.from(side.values());
+      const byDepth = (a: { n: WalkNode }, b: { n: WalkNode }) => a.n.depth - b.n.depth;
+      const dependents = all.filter((x) => x.side === 'dependent').sort(byDepth);
+      const dependencies = all.filter((x) => x.side === 'dependency').sort(byDepth);
+      // Up to SIDE_CAP per side; a side's unused budget goes to the other; total ≤ WALK_CAP.
+      // 쪽마다 SIDE_CAP까지, 남는 예산은 반대쪽으로 — 합계는 WALK_CAP 이하(중심 제외).
+      const upKeep = Math.min(dependents.length, Math.max(SIDE_CAP, WALK_CAP - dependencies.length));
+      const downKeep = Math.min(dependencies.length, WALK_CAP - upKeep);
+      const nodes: Neighborhood['nodes'] = [
         { ...center, depth: 0, side: 'center' },
-        ...ordered.map((x) => ({ ...x.n, side: x.side })),
+        ...dependents.slice(0, upKeep).map((x) => ({ ...x.n, side: x.side })),
+        ...dependencies.slice(0, downKeep).map((x) => ({ ...x.n, side: x.side })),
       ];
-      const nodes = items.slice(0, WALK_CAP);
       const ids = JSON.stringify(nodes.map((n) => n.arn));
       const edgeRows = await q<{ src_arn: string; dst_arn: string; type: string }>(
         `with ids as (select json_array_elements_text($1::json) as arn)
@@ -197,7 +212,8 @@ export async function createGraphStore(data: GraphData, stats: BuildStats): Prom
         [ids],
       );
       const edges: GraphEdge[] = edgeRows.map((r) => ({ src: r.src_arn, dst: r.dst_arn, type: r.type as GraphEdge['type'] }));
-      return { center, nodes, edges, truncated: up.truncated || down.truncated || items.length > WALK_CAP };
+      const cut = upKeep < dependents.length || downKeep < dependencies.length;
+      return { center, nodes, edges, truncated: up.truncated || down.truncated || cut };
     },
 
     async close() {

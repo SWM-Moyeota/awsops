@@ -105,6 +105,22 @@ describe('chain + cycle store', () => {
     expect(nb.edges).toHaveLength(3); // A→B, B→A, instance→A
   });
 
+  it('edgeTypes filter limits the recursive step', async () => {
+    // allows_from is not followed, so sg-b (and what reaches it) drops out.
+    // allows_from을 따라가지 않으므로 sg-b는 빠진다.
+    const r = await s.impact(sgA.arn, 6, { edgeTypes: ['uses_sg'] });
+    expect(r.nodes.map((x) => x.id)).toEqual(['i-1']);
+    const d = await s.dependencies(lb.arn, 6, { edgeTypes: ['forwards_to', 'targets'] });
+    expect(d.nodes.map((x) => [x.id, x.depth])).toEqual([['tg-1', 1], ['i-1', 2]]);
+    // No filter keeps the old behaviour. / 필터가 없으면 그대로.
+    expect((await s.impact(sgA.arn, 6, {})).nodes).toHaveLength(4);
+  });
+
+  it('search filters by type', async () => {
+    expect((await s.search('web', { type: 'instance' })).map((x) => x.id)).toEqual(['i-1']);
+    expect(await s.search('web', { type: 'vpc' })).toEqual([]);
+  });
+
   it('search is case-insensitive and escapes LIKE wildcards', async () => {
     expect((await s.search('WEB')).map((x) => x.id)).toEqual(['i-1']);
     const pctHits = await s.search('100%');
@@ -139,16 +155,18 @@ describe('star store', () => {
 
   it('neighborhood is capped too', async () => {
     const nb = (await s.neighborhood(hub.arn, 2))!;
-    expect(nb.nodes.length).toBeLessThanOrEqual(WALK_CAP);
+    // One side may use the other side's unused budget: 300 plus the center.
+    // 한쪽이 비면 다른 쪽이 예산을 넘겨받는다 — 300개 + 중심.
+    expect(nb.nodes.length).toBeLessThanOrEqual(WALK_CAP + 1);
     expect(nb.truncated).toBe(true);
     expect(nb.nodes[0].side).toBe('center');
   });
 
   it('neighborhood edges only join nodes in the capped set', async () => {
     const nb = (await s.neighborhood(hub.arn, 2))!;
-    expect(nb.nodes).toHaveLength(WALK_CAP);
+    expect(nb.nodes).toHaveLength(WALK_CAP + 1);
     const inSet = new Set(nb.nodes.map((x) => x.arn));
-    expect(nb.edges).toHaveLength(WALK_CAP - 1); // one leaf → hub edge per returned leaf
+    expect(nb.edges).toHaveLength(WALK_CAP); // one leaf → hub edge per returned leaf
     for (const ed of nb.edges) {
       expect(inSet.has(ed.src)).toBe(true);
       expect(inSet.has(ed.dst)).toBe(true);
@@ -180,6 +198,49 @@ describe('star store', () => {
     expect(await s.search('subnet')).toHaveLength(20);
     expect(await s.search('subnet', { limit: 5 })).toHaveLength(5);
     expect(await s.search('subnet', { accountId: '999999999999' })).toEqual([]);
+  });
+});
+
+describe('two-sided neighborhood cap', () => {
+  it('both sides over 150 give 150 each and truncated', async () => {
+    const c = n('sg', 'sg-center');
+    const users = Array.from({ length: 200 }, (_, i) => n('instance', `u-${String(i).padStart(3, '0')}`));
+    const used = Array.from({ length: 200 }, (_, i) => n('sg', `d-${String(i).padStart(3, '0')}`));
+    const g: GraphData = {
+      nodes: [c, ...users, ...used],
+      edges: [...users.map((u) => e(u, c, 'uses_sg')), ...used.map((d) => e(c, d, 'allows_from'))],
+      dropped: 0,
+    };
+    const s = await createGraphStore(g, stats(g));
+    try {
+      const nb = (await s.neighborhood(c.arn, 1))!;
+      expect(nb.nodes.filter((x) => x.side === 'dependent')).toHaveLength(150);
+      expect(nb.nodes.filter((x) => x.side === 'dependency')).toHaveLength(150);
+      expect(nb.nodes).toHaveLength(301);
+      expect(nb.truncated).toBe(true);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('a small side hands its unused budget to the other side', async () => {
+    const c = n('sg', 'sg-c2');
+    const users = Array.from({ length: 250 }, (_, i) => n('instance', `w-${String(i).padStart(3, '0')}`));
+    const used = Array.from({ length: 20 }, (_, i) => n('sg', `x-${String(i).padStart(3, '0')}`));
+    const g: GraphData = {
+      nodes: [c, ...users, ...used],
+      edges: [...users.map((u) => e(u, c, 'uses_sg')), ...used.map((d) => e(c, d, 'allows_from'))],
+      dropped: 0,
+    };
+    const s = await createGraphStore(g, stats(g));
+    try {
+      const nb = (await s.neighborhood(c.arn, 1))!;
+      expect(nb.nodes.filter((x) => x.side === 'dependent')).toHaveLength(250);
+      expect(nb.nodes.filter((x) => x.side === 'dependency')).toHaveLength(20);
+      expect(nb.truncated).toBe(false);
+    } finally {
+      await s.close();
+    }
   });
 });
 

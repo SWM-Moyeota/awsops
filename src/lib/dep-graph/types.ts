@@ -18,4 +18,4 @@ export interface Neighborhood { center: GraphNode; nodes: Array<WalkNode & { sid
 
 // Informational impact line for SG preview cards (Slack safe AI actions).
 // 보안그룹 미리보기 카드용 영향 요약 — 안내만 하며 정책 판단에는 쓰지 않는다.
-export interface GraphImpact { count: number; sample: string[]; builtAt: string }
+export interface GraphImpact { count: number; sample: string[]; builtAt: string; truncated: boolean }
