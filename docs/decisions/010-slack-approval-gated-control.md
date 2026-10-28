@@ -50,7 +50,7 @@ the follow-up if this boundary must be stronger. Turning off `/vscode` in produc
 
 ## Consequences / 결과
 
-- The AI tools stay read-only; this path is the only way AWSops changes AWS from Slack.
+- The AI tools stay read-only; this path is the only rule-based write path from Slack (see ADR-011 for AI-planned actions).
 - A server is controllable only when an admin lists its ID in `16-setup-slack-control.sh` and it is tagged `awsops:control=allow`.
 - Off by default: nothing works until `slackControl.approverIds` is set and `scripts/16-setup-slack-control.sh` has run.
 - Tag and security-group changes use an LLM as a plan *proposer* only — see ADR-011 (`011-ai-planned-deterministic-execution.md`), which keeps this trust boundary.

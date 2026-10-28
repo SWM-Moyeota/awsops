@@ -23,7 +23,7 @@ Slack에서 태그, 보안그룹 인바운드 규칙, EC2 켜기·끄기를 바�
 - `cards.ts` — 요청 하나에 카드 하나, 상태가 바뀔 때마다 다시 그린다. 버튼 `action_id`는 `AP.*`(접두사 `awsops_ap_`), 값은 요청 ID다.
 - `handle.ts` — `maybeHandleActionMention(event, deps)`(실행 요청이면 true → AI로 보내지 않음), `handleActionClick(payload, deps)`(확인·취소·승인·거절·되돌리기). 실행은 요청 하나당 1회, 되돌리기도 실행 하나당 1회.
 - 연결: `slack-chatops/bot.ts`가 `ActionDeps`를 만든다. 승인 저장소는 `slack-control/requests.ts`의 `createApprovalStore<ActionRequest>()`(같은 2단계 규칙). 멘션은 `tryControl` 다음 `tryActionPlan`, `interactive` 이벤트 중 `awsops_ap_*`는 `handleActionClick`으로 보낸다(제어 버튼처럼 중복 제거 없음).
-- IAM: `scripts/17-setup-action-executor.sh i-... sg-...`. 인자로 받은 ID **그리고** 태그 `awsops:control=allow`인 리소스에만 6개 액션을 허용하고, `awsops:*` 태그 키를 건드리는 CreateTags/DeleteTags는 Deny. 신뢰 정책은 16번과 같다(`awsops-ec2-role`만, `sts:SourceIdentity`가 `slack-*`). ID 없이 실행하면 권한을 모두 지운다.
+- IAM: `scripts/17-setup-action-executor.sh i-... sg-...`. 인자로 받은 ID **그리고** 태그 `awsops:control=allow`인 리소스에만 6개 액션을 허용하고, `awsops:*` 태그 키를 건드리는 CreateTags/DeleteTags와 태그 목록 없는 DeleteTags(전체 삭제)는 Deny. 신뢰 정책은 16번과 같다(`awsops-ec2-role`만, `sts:SourceIdentity`가 `slack-*`). ID 없이 실행하면 권한을 모두 지운다.
 
 ## 규칙
 - 플래너 입력에 메시지·작업 목록·별칭 이름 말고는 아무것도 넣지 않는다 (스레드, 리소스 이름·태그, SG 설명, CIDR, 로그 금지).
@@ -58,7 +58,7 @@ mention → `detect` → (one-line notice when off) → `planner` → `validate`
 - `audit.ts` — Append-only, hash-chained `data/action-plan/audit.jsonl`; `verifyAuditChain`; never throws.
 - `cards.ts` / `handle.ts` — One card per request (`awsops_ap_*` buttons); mention and click entry points.
 - Wiring: `slack-chatops/bot.ts` builds `ActionDeps` with `createApprovalStore<ActionRequest>()` from `slack-control/requests.ts`. Mentions go `tryControl` → `tryActionPlan`; `awsops_ap_*` clicks go to `handleActionClick` without dedupe.
-- IAM: `scripts/17-setup-action-executor.sh i-... sg-...` — the 6 actions only on listed IDs **and** tagged `awsops:control=allow`, explicit Deny on `awsops:*` tag keys, same trust as script 16. No IDs removes all permissions.
+- IAM: `scripts/17-setup-action-executor.sh i-... sg-...` — the 6 actions only on listed IDs **and** tagged `awsops:control=allow`, explicit Deny on `awsops:*` tag keys and on DeleteTags without a Tags list (delete-all), same trust as script 16. No IDs removes all permissions.
 
 ## Rules
 - The planner gets nothing beyond the message, the catalog and alias names.

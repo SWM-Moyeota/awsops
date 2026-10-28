@@ -121,6 +121,14 @@ statements.append({
     "Resource": "*",
     "Condition": {"ForAnyValue:StringLike": {"aws:TagKeys": ["awsops:*"]}},
 })
+# DeleteTags without a Tags list deletes every tag (awsops:control included), and aws:TagKeys is then absent,
+# so the ForAnyValue Deny above does not match. Deny that form outright. 태그 목록 없는 DeleteTags(전체 삭제)도 거부.
+statements.append({
+    "Sid": "DenyDeleteAllTags", "Effect": "Deny",
+    "Action": "ec2:DeleteTags",
+    "Resource": "*",
+    "Condition": {"Null": {"aws:TagKeys": "true"}},
+})
 json.dump({"Version": "2012-10-17", "Statement": statements}, open(out, "w"), indent=2)
 PYEOF
 fi
