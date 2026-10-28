@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createGraphStore, getCurrentStore, setCurrentStore, clampDepth, WALK_CAP, type GraphStore } from '../store';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { createGraphStore, getCurrentStore, setCurrentStore, clampDepth, clampLimit, WALK_CAP, type GraphStore } from '../store';
 import type { BuildStats, GraphData, GraphEdge, GraphNode, NodeType } from '../types';
 
 const A = '111111111111';
@@ -120,7 +120,11 @@ describe('chain + cycle store', () => {
 // VPC 하나에 서브넷 350개.
 const hub = n('vpc', 'vpc-hub', 'hub');
 const leaves = Array.from({ length: 350 }, (_, i) => n('subnet', `subnet-${String(i).padStart(3, '0')}`));
-const star: GraphData = { nodes: [hub, ...leaves], edges: leaves.map((l) => e(l, hub, 'in_vpc')), dropped: 0 };
+// Plus two unconnected nodes for the exact-match-first search check.
+// 정확 일치 우선 검색 확인용 노드 두 개.
+const aWeb = n('role', 'role-a-web', 'a-web');
+const web = n('role', 'role-web', 'web');
+const star: GraphData = { nodes: [hub, ...leaves, aWeb, web], edges: leaves.map((l) => e(l, hub, 'in_vpc')), dropped: 0 };
 
 describe('star store', () => {
   let s: GraphStore;
@@ -140,6 +144,31 @@ describe('star store', () => {
     expect(nb.nodes[0].side).toBe('center');
   });
 
+  it('neighborhood edges only join nodes in the capped set', async () => {
+    const nb = (await s.neighborhood(hub.arn, 2))!;
+    expect(nb.nodes).toHaveLength(WALK_CAP);
+    const inSet = new Set(nb.nodes.map((x) => x.arn));
+    expect(nb.edges).toHaveLength(WALK_CAP - 1); // one leaf → hub edge per returned leaf
+    for (const ed of nb.edges) {
+      expect(inSet.has(ed.src)).toBe(true);
+      expect(inSet.has(ed.dst)).toBe(true);
+    }
+  });
+
+  it('search puts an exact name match first', async () => {
+    const hits = await s.search('web');
+    expect(hits.map((x) => x.name)).toEqual(['web', 'a-web']);
+  });
+
+  it('hubs limit is clamped to the max', async () => {
+    expect(await s.hubs({ limit: 150 })).toHaveLength(1);
+    expect(clampLimit(150, 10, 100)).toBe(100);
+    expect(clampLimit('5', 10, 100)).toBe(5);
+    expect(clampLimit(0, 10, 100)).toBe(10);
+    expect(clampLimit(2.5, 10, 100)).toBe(10);
+    expect(clampLimit(undefined, 10, 100)).toBe(10);
+  });
+
   it('hubs ranks by incoming edges', async () => {
     const h = await s.hubs();
     expect(h[0]).toMatchObject({ arn: hub.arn, dependents: 350 });
@@ -154,6 +183,22 @@ describe('star store', () => {
   });
 });
 
+describe('exactly-at-cap star', () => {
+  it('300 leaves is not truncated; duplicate ARNs do not fail the load', async () => {
+    const h = n('vpc', 'vpc-300');
+    const ls = Array.from({ length: WALK_CAP }, (_, i) => n('subnet', `s300-${String(i).padStart(3, '0')}`));
+    const g: GraphData = { nodes: [h, ...ls, ls[0]], edges: ls.map((l) => e(l, h, 'in_vpc')), dropped: 0 };
+    const s = await createGraphStore(g, stats(g));
+    try {
+      const r = await s.impact(h.arn, 1);
+      expect(r.nodes).toHaveLength(WALK_CAP);
+      expect(r.truncated).toBe(false);
+    } finally {
+      await s.close();
+    }
+  });
+});
+
 describe('clampDepth', () => {
   it('accepts only integers within range', () => {
     expect(clampDepth('7', 3, 6)).toBe(3);
@@ -162,6 +207,12 @@ describe('clampDepth', () => {
     expect(clampDepth(0, 3, 6)).toBe(3);
     expect(clampDepth(7, 3, 6)).toBe(3);
     expect(clampDepth(undefined, 2, 3)).toBe(2);
+    // Digit-only strings (query params) are accepted.
+    // 숫자만 있는 문자열(쿼리 파라미터)은 받아들인다.
+    expect(clampDepth('2', 3, 6)).toBe(2);
+    expect(clampDepth('2.5', 3, 6)).toBe(3);
+    expect(clampDepth('', 3, 6)).toBe(3);
+    expect(clampDepth(' 2', 3, 6)).toBe(3);
   });
 });
 
@@ -170,12 +221,15 @@ describe('current store holder', () => {
     const small: GraphData = { nodes: [vpc], edges: [], dropped: 0 };
     const a = await createGraphStore(small, stats(small));
     const b = await createGraphStore(small, stats(small));
-    setCurrentStore(a);
+    setCurrentStore(a, 0);
     expect(getCurrentStore()).toBe(a);
-    setCurrentStore(b);
+    setCurrentStore(b, 0);
     expect(getCurrentStore()).toBe(b);
-    // A later query on a must reject.
-    // 이전 저장소는 닫혀서 질의가 실패해야 한다.
+    // The previous store closes after the delay; a later query on a must reject.
+    // 지연 뒤 이전 저장소가 닫혀서 질의가 실패해야 한다.
+    await vi.waitFor(async () => {
+      await expect(a.node(vpc.arn)).rejects.toBeTruthy();
+    });
     await expect(a.node(vpc.arn)).rejects.toBeTruthy();
     expect(await b.node(vpc.arn)).toEqual(vpc);
     await b.close();

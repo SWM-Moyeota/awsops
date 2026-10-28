@@ -23,7 +23,21 @@ export interface GraphStore {
 
 /** Integer within 1..max, otherwise the default. / 1..max 정수가 아니면 기본값. */
 export function clampDepth(v: unknown, def: number, max: number): number {
-  return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= max ? v : def;
+  const n = toInt(v);
+  return n !== null && n >= 1 && n <= max ? n : def;
+}
+
+/** Positive integer capped at max, otherwise the default. / 양의 정수면 max까지 자르고, 아니면 기본값. */
+export function clampLimit(v: unknown, def: number, max: number): number {
+  const n = toInt(v);
+  return n !== null && n >= 1 ? Math.min(n, max) : def;
+}
+
+// Integers, or digit-only strings such as query params.
+// 정수, 또는 숫자만 있는 문자열(쿼리 파라미터).
+function toInt(v: unknown): number | null {
+  const n = typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v;
+  return typeof n === 'number' && Number.isInteger(n) ? n : null;
 }
 
 const SCHEMA = `
@@ -35,7 +49,7 @@ create index on edges(dst_arn); create index on edges(src_arn);
 `;
 
 const INSERT_NODES = `insert into nodes select * from json_to_recordset($1::json)
-  as x(arn text, type text, id text, name text, account_id text, region text, attrs jsonb)`;
+  as x(arn text, type text, id text, name text, account_id text, region text, attrs jsonb) on conflict (arn) do nothing`;
 const INSERT_EDGES = `insert into edges select * from json_to_recordset($1::json)
   as x(src_arn text, dst_arn text, type text) on conflict do nothing`;
 
@@ -48,7 +62,7 @@ function walkSql(from: 'src_arn' | 'dst_arn', to: 'src_arn' | 'dst_arn'): string
     select e.${from}, w.depth + 1 from edges e join walk w on e.${to} = w.arn where w.depth < $2
   )
   select n.*, min(w.depth) as depth from walk w join nodes n on n.arn = w.arn
-  where w.arn <> $1 group by n.arn order by depth, n.type, n.name limit ${WALK_CAP + 1}`;
+  where w.arn <> $1 group by n.arn order by depth, n.type, n.name, n.arn limit ${WALK_CAP + 1}`;
 }
 const IMPACT_SQL = walkSql('src_arn', 'dst_arn');
 const DEPENDENCIES_SQL = walkSql('dst_arn', 'src_arn');
@@ -125,7 +139,7 @@ export async function createGraphStore(data: GraphData, stats: BuildStats): Prom
     async search(text, opts = {}) {
       const term = text.trim();
       if (!term) return [];
-      const limit = clampDepth(opts.limit, SEARCH_MAX, SEARCH_MAX);
+      const limit = clampLimit(opts.limit, SEARCH_MAX, SEARCH_MAX);
       const rows = await q<NodeRow>(
         `select * from nodes
          where (name ilike $1 escape '\\' or id ilike $1 escape '\\' or arn ilike $1 escape '\\')
@@ -138,7 +152,7 @@ export async function createGraphStore(data: GraphData, stats: BuildStats): Prom
     },
 
     async hubs(opts = {}) {
-      const limit = clampDepth(opts.limit, HUBS_DEFAULT, HUBS_MAX);
+      const limit = clampLimit(opts.limit, HUBS_DEFAULT, HUBS_MAX);
       const rows = await q<NodeRow & { dependents: number }>(
         `select n.*, count(*)::int as dependents from edges e join nodes n on n.arn = e.dst_arn
          where ($2::text is null or n.account_id = $2)
@@ -209,10 +223,15 @@ export function getCurrentStore(): GraphStore | null {
   return holder().current;
 }
 
-/** Swap the pointer, then close the previous store (errors swallowed). / 포인터 교체 후 이전 저장소를 닫는다. */
-export function setCurrentStore(next: GraphStore): void {
+/**
+ * Swap the pointer, then close the previous store after closeDelayMs so in-flight requests can finish.
+ * 포인터 교체 후, 진행 중인 요청이 끝나도록 closeDelayMs 뒤에 이전 저장소를 닫는다(오류는 삼킨다).
+ */
+export function setCurrentStore(next: GraphStore, closeDelayMs = 60_000): void {
   const h = holder();
   const prev = h.current;
   h.current = next;
-  if (prev && prev !== next) void prev.close().catch(() => undefined);
+  if (!prev || prev === next) return;
+  const t = setTimeout(() => { void prev.close().catch(() => undefined); }, closeDelayMs);
+  t.unref?.();
 }
