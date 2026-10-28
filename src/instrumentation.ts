@@ -24,5 +24,13 @@ export async function register() {
     } catch (e) {
       console.error('[dep-graph] start failed:', e instanceof Error ? e.name : 'Error');
     }
+    // Root-cause analysis: CloudWatch detection loop (production only, never throws).
+    // 장애 원인 분석: CloudWatch 감지 루프 (프로덕션 전용).
+    try {
+      const { ensureRootCauseStarted } = await import('./lib/root-cause/loop');
+      ensureRootCauseStarted();
+    } catch (e) {
+      console.error('[root-cause] start failed:', e instanceof Error ? e.name : 'Error');
+    }
   }
 }

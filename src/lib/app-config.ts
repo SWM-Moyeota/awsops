@@ -100,6 +100,10 @@ export interface AppConfig {
     undoHours?: number;               // default 24 / 되돌리기 가능 시간
     sourceAliases?: Record<string, string[]>; // admin-maintained source names → CIDRs (e.g. {"사무실": ["203.0.113.0/24"]}) / 출처 별칭
   };
+  rootCause?: {                     // Incident root-cause analysis (src/lib/root-cause); both default true / 장애 원인 분석, 둘 다 기본 true
+    autoDetect?: boolean;             // false: no CloudWatch detection loop (manual analysis still works) / false면 자동 감지 끔(수동 분석은 됨)
+    slackAlerts?: boolean;            // false: no Slack post for new auto incidents / false면 새 자동 사건 Slack 알림 끔
+  };
 }
 
 const DEFAULT_CONFIG: AppConfig = {
