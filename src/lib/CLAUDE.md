@@ -25,6 +25,7 @@
 - `cost-radar/` — 비용 레이더 (수집·가격 추정·정리 추천·생성자 조회·일별 이력, 안내만) — 상세는 `cost-radar/CLAUDE.md`
 - `slack-chatops/` — Slack ChatOps 봇 (Socket Mode, `@AWSops` 멘션 → `/api/ai` → 스레드 답글, `src/instrumentation.ts`에서 기동) — 상세는 `slack-chatops/CLAUDE.md`
 - `slack-control/` — Slack 2단계 승인 EC2 시작/정지/재부팅 (규칙 기반 해석, 메모리 상태 머신, 태그 조건 IAM 역할) — 상세는 `slack-control/CLAUDE.md`
+- `action-plan/` — 안전한 AI 실행 (Slack에서 태그·보안그룹 인바운드·켜기/끄기: AI는 계획만, 대상 확정·규칙 검사·세션 정책 실행은 코드, 2단계 승인, 해시 체인 감사, 되돌리기) — 상세는 `action-plan/CLAUDE.md`
 - `change-timeline/` — 변경 기록 (CloudTrail 생성·삭제 수집, 월별 JSON 저장, 조회, Slack 질문·아침 요약) — 상세는 `change-timeline/CLAUDE.md`
 - `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 초당 1회(1 request/s, 공유 limiter), globalThis) + 교차 계정 자격 증명 캐시 (변경 기록·비용 레이더 생성자 조회가 공유)
 - `queries/*.ts` — 26개 SQL 쿼리 파일 (idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock 포함)
@@ -67,6 +68,7 @@ Core libraries: Steampipe database connection, SQL query definitions, inventory,
 - `cost-radar/` — Cost Radar (collection, price estimate, cleanup recommendations, creator lookup, daily history; guidance only) — see `cost-radar/CLAUDE.md`
 - `slack-chatops/` — Slack ChatOps bot (Socket Mode, `@AWSops` mention → `/api/ai` → thread reply, started from `src/instrumentation.ts`) — see `slack-chatops/CLAUDE.md`
 - `slack-control/` — Two-step-approved EC2 start/stop/reboot from Slack (rule-based parsing, in-memory state machine, tag-conditioned IAM role) — see `slack-control/CLAUDE.md`
+- `action-plan/` — Safe AI actions (tags, SG inbound, start/stop from Slack: the AI only plans; code resolves targets, checks rules and executes with a session policy; two-step approval, hash-chained audit, undo) — see `action-plan/CLAUDE.md`
 - `change-timeline/` — Change timeline (CloudTrail create/delete ingest, monthly JSON store, queries, Slack question + morning summary) — see `change-timeline/CLAUDE.md`
 - `cloudtrail-access.ts` — Shared CloudTrail pacing (1 request/s per account+region, shared limiter, globalThis) + cross-account credential cache (change timeline and Cost Radar creators)
 - `queries/*.ts` — 26 SQL query files (incl. idle-resources, ebs, msk, opensearch, container-cost, eks-container-cost, bedrock)

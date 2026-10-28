@@ -63,6 +63,40 @@ AWSops: 🛠 AWS 제어 요청 — 끄기 (정지) · k8s-practice (i-...) · �
 - **기록**: `data/slack-control/audit.jsonl`에 남고, CloudTrail에는 `SourceIdentity=slack-<승인자ID>`로 남습니다.
 - 서버를 재시작하면 승인 대기 중인 요청은 사라집니다. 다시 요청하면 됩니다.
 
+## AI 실행 (태그·보안그룹을 2단계 승인으로 바꾸기)
+
+```
+팀원 A: @AWSops web-dev에 owner 태그를 jiwoo로 붙여줘
+AWSops: 🛠 AWS 실행 요청 · 요청자 A
+        바뀌는 내용: web-dev (i-...) · 태그 owner: (없음) → jiwoo
+        규칙 검사 ✅ 통과 · 권한 미리 확인 ✅ 실행 권한이 있어요 · ↩️ 되돌릴 수 있어요 (24시간 안)
+        1단계: [✅ 맞아요, 승인 요청] [취소]   ← A만 누를 수 있음
+        2단계: [✅ 최종 승인] [❌ 거절]         ← 승인자 중 A가 아닌 사람, "정말 실행할까요?" 한 번 더
+        ✅ 실행 완료 → [↩️ 되돌리기]
+```
+
+- **할 수 있는 일**: 태그 붙이기·지우기, 보안그룹 인바운드 규칙 추가·삭제, 서버 켜기·끄기. 리소스를 만들거나 지우지는 않습니다.
+- **어떻게 안전한가요** (ADR-011)
+  - AI는 계획만 짭니다. AI가 보는 것은 이번 메시지와 정해진 작업 목록, 출처 별칭 이름뿐입니다. 리소스 정보나 스레드 내용은 보지 않습니다.
+  - 어떤 리소스를 바꿀지는 코드가 정합니다. 태그 `awsops:control=allow`가 있는 리소스만 고릅니다.
+  - 규칙에 하나라도 걸리면 계획 전체를 실행하지 않습니다. 예: 운영(`env=prod`) 리소스, `awsops:`로 시작하는 태그, 80·443이 아닌 포트를 전체 공개, 포트 1000개 넘는 범위, 서버 5대(ENI 5개)보다 많이 쓰는 보안그룹.
+  - 실행 직전에 다시 읽어서, 미리 보기와 달라졌으면 실행하지 않습니다.
+- **명령 예시**: "web-dev에 owner 태그를 jiwoo로 붙여줘", "sg-web에 사무실에서 8080 열어줘", "web-dev 끄고 22번 포트 닫아줘". "포트 여는 방법 알려줘" 같은 질문은 평소처럼 AI가 답합니다.
+- **켜는 방법** (전부 관리자가 승인한 뒤에 합니다. 공유 계정이라 IAM 변경이 들어갑니다)
+  1. 대상에 태그: `aws ec2 create-tags --resources i-xxxx sg-yyyy --tags Key=awsops:control,Value=allow`
+  2. 허용 목록 등록 (관리자 Mac): `bash scripts/17-setup-action-executor.sh i-xxxx sg-yyyy` — 실행 전용 역할 `AWSopsActionExecutorRole`을 만들고 목록을 정합니다. 매번 전체 목록을 넘기고, ID 없이 실행하면 모두 해제됩니다. 태그만으로는 안 됩니다.
+  3. `data/config.json`에 추가합니다. 승인자는 `slackControl.approverIds`를 같이 씁니다(비어 있으면 꺼짐).
+     ```json
+     "actionPlan": { "enabled": true, "maxSteps": 5, "maxResources": 3, "maxBlastRadius": 5, "undoHours": 24,
+                     "sourceAliases": { "사무실": ["203.0.113.0/24"] } }
+     ```
+     - `sourceAliases`의 이름만 AI에게 보이고, CIDR은 코드가 채웁니다.
+  4. 서버를 재시작합니다.
+- **끄는 방법**: `"enabled": false`로 바꾸고 재시작합니다. 꺼져 있으면 실행 요청에 "AI 실행 기능이 꺼져 있어요"라고만 답하고 AI는 부르지 않습니다. 켜기·끄기만 있는 말("web-dev 꺼줘")은 계속 위의 Slack 제어가 처리합니다.
+- **"실행 권한이 없어요"**: 그 리소스가 17번 스크립트 목록에 없습니다. 2단계를 다시 실행합니다.
+- **기록**: `data/action-plan/audit.jsonl`(줄마다 해시가 이어져 있어 고치면 드러납니다), 실행 기록은 `data/action-plan/executions/`. CloudTrail에는 `SourceIdentity=slack-<승인자ID>`로 남습니다.
+- **신뢰 경계**: Slack 제어와 같습니다. 서버 셸에 접근할 수 있는 사람은 목록의 리소스를 직접 바꿀 수 있습니다.
+
 ## 설정 (처음 한 번)
 
 1. **Slack 앱 만들기**: api.slack.com/apps → **Create New App** → **From a manifest** → 워크스페이스 선택 → `docs/runbooks/slack-chatops-manifest.yaml` 내용 붙여넣기 → Create.

@@ -28,7 +28,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 | 컴포넌트 | 31 (changes 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 19 (등록표 `src/lib/ai/registry.ts`의 라우트 수 — 아래 우선순위 표는 그중 대표 11개) |
-| ADR | 10 (001-010) |
+| ADR | 11 (001-011) |
 
 ## 필수 규칙
 
@@ -112,6 +112,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `ai/` — `/api/ai` 본체: 등록표(19 라우트), 의도 분류, 공유 처리기 단계(`steps/`), JSON·SSE 파이프라인, Bedrock/AgentCore 호출 — `src/lib/ai/CLAUDE.md`
 - `slack-chatops/` — Slack에서 `@AWSops`로 AI에게 묻기 (Socket Mode, 공개 URL 불필요) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Slack 2단계 승인으로 EC2 켜기/끄기/재부팅 (AI 미경유, 태그 조건 IAM) — `src/lib/slack-control/CLAUDE.md`
+- `action-plan/` — 안전한 AI 실행: Slack에서 태그·보안그룹 인바운드·켜기/끄기 변경 (AI는 계획만, 대상·규칙·실행은 코드, 2단계 승인, 세션 정책, 해시 체인 감사, 되돌리기, 기본 꺼짐 — ADR-011) — `src/lib/action-plan/CLAUDE.md`
 - `change-timeline/` — 변경 기록: 누가 어떤 리소스를 만들고 지웠는지 (CloudTrail 90일 백필 + 10분 증분, `/changes`·만든 사람 배지·Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 600ms) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
@@ -184,6 +185,7 @@ Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd 유닛 등록 (Restar
 Step 14: 14-setup-health-alerts.sh        헬스 알림 워치독 (Lambda + EventBridge 3규칙 + SSM + IAM, 관리자 Mac에서 실행)
 Step 15: 15-setup-slack-chatops.sh        Slack ChatOps 토큰 2개 SSM 저장 + 서버 재시작 (Slack 앱 생성 후, 관리자 Mac에서 실행 — docs/runbooks/slack-chatops.md)
 Step 16: 16-setup-slack-control.sh        Slack 승인 기반 EC2 제어 전용 IAM 역할 (태그 awsops:control=allow만, 관리자 Mac에서 실행 — ADR-010)
+Step 17: 17-setup-action-executor.sh      AI 실행 전용 IAM 역할 (인자로 준 i-/sg- ID + 태그 awsops:control=allow만, awsops:* 태그 Deny, 관리자 Mac에서 실행 — ADR-011)
 ```
 ※ Step 13 적용 후 Steampipe는 반드시 `sudo systemctl {start|stop|restart} steampipe`로 관리 — CLI `steampipe service stop`은 Restart=always가 자동으로 되돌림.
 
@@ -243,7 +245,7 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 | Components | 31 (incl. 6 changes components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 19 (routes in the registry, `src/lib/ai/registry.ts` — the priority table below shows the main 11) |
-| ADRs | 10 (001-010) |
+| ADRs | 11 (001-011) |
 
 ## Critical Rules
 
@@ -325,6 +327,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `ai/` — the `/api/ai` engine: route registry (19 routes), intent classification, shared handler steps (`steps/`), JSON and SSE pipelines, Bedrock/AgentCore calls — `src/lib/ai/CLAUDE.md`
 - `slack-chatops/` — Ask the AI from Slack via `@AWSops` (Socket Mode, no public URL) — `src/lib/slack-chatops/CLAUDE.md`
 - `slack-control/` — Two-step-approved EC2 start/stop/reboot from Slack (no AI, tag-conditioned IAM) — `src/lib/slack-control/CLAUDE.md`
+- `action-plan/` — Safe AI actions: tag, SG inbound and start/stop changes from Slack (the AI only plans; targets, rules and execution are code; two-step approval, session policy, hash-chained audit, undo; off by default — ADR-011) — `src/lib/action-plan/CLAUDE.md`
 - `change-timeline/` — Change timeline: who created/deleted which resource (CloudTrail 90-day backfill + 10-min incremental; `/changes`, creator badges, Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `cloudtrail-access.ts` — Shared CloudTrail pacing (600 ms per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
@@ -397,6 +400,7 @@ Step 13: 13-setup-steampipe-systemd.sh   Steampipe systemd unit (Restart=always,
 Step 14: 14-setup-health-alerts.sh        Health-alert watchdog (Lambda + 3 EventBridge rules + SSM + IAM, run from admin Mac)
 Step 15: 15-setup-slack-chatops.sh        Slack ChatOps: store 2 tokens in SSM + restart (after creating the Slack app, run from admin Mac — docs/runbooks/slack-chatops.md)
 Step 16: 16-setup-slack-control.sh        Slack approval-gated EC2 control IAM role (tag awsops:control=allow only, run from admin Mac — ADR-010)
+Step 17: 17-setup-action-executor.sh      Safe AI actions executor IAM role (listed i-/sg- IDs + tag awsops:control=allow only, Deny on awsops:* tags, run from admin Mac — ADR-011)
 ```
 Note: after Step 13, manage Steampipe only via `sudo systemctl {start|stop|restart} steampipe` — a bare CLI `steampipe service stop` is auto-undone by Restart=always.
 

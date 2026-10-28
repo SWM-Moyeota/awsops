@@ -1,16 +1,16 @@
 # Slack Control 모듈
 
 ## 역할
-Slack에서 EC2 시작/정지/재부팅을 **2단계 승인**으로 실행한다. AI를 거치지 않는 유일한 쓰기 경로다. 결정 배경: `docs/decisions/010-slack-approval-gated-control.md`. 운영 안내: `docs/runbooks/slack-chatops.md` "Slack 제어" 절.
+Slack에서 EC2 시작/정지/재부팅을 **2단계 승인**으로 실행한다. AI를 거치지 않는 쓰기 경로다 (태그·보안그룹 변경은 AI가 계획만 짜는 `action-plan/`, ADR-011). 결정 배경: `docs/decisions/010-slack-approval-gated-control.md`. 운영 안내: `docs/runbooks/slack-chatops.md` "Slack 제어" 절.
 
 ## 주요 파일
 - `parse.ts` — `detectAction(text)`(명령형만: 꺼줘/켜줘/재시작/stop/start/reboot — "켜진/켜져" 같은 상태 질문은 매칭 안 됨), `parseControlRequest(text, instances)` → none / request / no-target / ambiguous. 인스턴스 이름은 단어 단위로, ID는 `i-...`로 찾는다. **LLM 미사용**.
-- `requests.ts` — `createRequestStore()`: 메모리 상태 머신. proposed →(요청자 `confirm`)→ pending →(다른 승인자 `beginApproval`)→ executing → executed/failed, 그 밖에 cancelled/rejected/expired. 동기 전이라 1회만 실행되고, TTL이 지나면 만료된다. 요청자 본인은 승인할 수 없다(`allowSelfApproval`이면 가능). 서버를 재시작하면 대기 중인 요청은 사라진다.
+- `requests.ts` — `createApprovalStore<R>()`(공유 2단계 저장소 — `action-plan`도 같은 규칙으로 쓴다), `createRequestStore()`(제어용): 메모리 상태 머신. proposed →(요청자 `confirm`)→ pending →(다른 승인자 `beginApproval`)→ executing → executed/failed, 그 밖에 cancelled/rejected/expired. 동기 전이라 1회만 실행되고, TTL이 지나면 만료된다. 요청자 본인은 승인할 수 없다(`allowSelfApproval`이면 가능). 서버를 재시작하면 대기 중인 요청은 사라진다.
 - `ec2.ts` — `listControllableInstances()`(태그 `awsops:control=allow`), `describeControllable(id)`(실행 직전 재조회), `executeControl(action, id, approverId)`: `AWSopsSlackControlRole`을 `SourceIdentity=slack-<승인자>`로 AssumeRole한 뒤 Start/Stop/Reboot를 실행한다. `ALLOWED_FROM`은 작업별로 실행 가능한 현재 상태다.
 - `cards.ts` — `controlCard(req, cfg)`: 상태별 카드(1단계 확인 버튼, 2단계 최종 승인 + Slack confirm 대화상자, 결과). 버튼 `action_id`는 `CTL.*`(접두사 `awsops_ctl_`), 값은 요청 ID다.
-- `handle.ts` — `maybeHandleControlMention(event, deps)`(제어 명령이면 true → AI로 보내지 않음), `handleControlAction(payload, deps)`(버튼 처리, 권한이 없으면 ephemeral 안내, 실행 직전 태그와 상태 재확인), `getControlConfig()`(`config.slackControl`, 승인자가 없으면 null = 꺼짐).
+- `handle.ts` — `maybeHandleControlMention(event, deps)`(제어 명령이면 true → AI로 보내지 않음. `deps.skip(text)`가 true면 맨 먼저 false를 돌려준다 — `bot.ts`가 `isActionPlanEnabled() && detectActionIntent(text)`로 설정해서, 켜기·끄기가 태그·보안그룹 작업과 섞인 말은 action-plan이 받는다. action-plan이 꺼져 있으면 동작이 이전과 같다), `handleControlAction(payload, deps)`(버튼 처리, 권한이 없으면 ephemeral 안내, 실행 직전 태그와 상태 재확인), `getControlConfig()`(`config.slackControl`, 승인자가 없으면 null = 꺼짐).
 - `audit.ts` — `appendAudit(req)`: `data/slack-control/audit.jsonl`에 추가만 한다(예외 없음, `SLACK_CONTROL_DATA_DIR`로 경로 변경 가능).
-- 연결: `slack-chatops/bot.ts`가 `ControlDeps`를 만들고, 멘션은 `tryControl`, `interactive` 이벤트 중 `awsops_ctl_*`는 `handleControlAction`으로 보낸다.
+- 연결: `slack-chatops/bot.ts`가 `ControlDeps`를 만들고, 멘션은 `tryControl`, `interactive` 이벤트 중 `awsops_ctl_*`는 `handleControlAction`으로 보낸다. 태그·보안그룹 변경은 `action-plan/`(ADR-011)이 같은 2단계 저장소로 처리한다.
 - IAM: `scripts/16-setup-slack-control.sh`. 역할의 신뢰 정책은 `awsops-ec2-role`만 허용하고 `sts:SourceIdentity`가 `slack-*`여야 한다. 권한은 **인자로 받은 인스턴스 ID 목록 + 태그 조건**이 걸린 Start/Stop/Reboot뿐이다(태그는 공유 계정의 누구나 붙일 수 있어서 목록이 필요하다). 호스트 셸 접근은 제어 권한과 같다(ADR-010 신뢰 경계).
 
 ## 규칙
@@ -25,14 +25,14 @@ Slack에서 EC2 시작/정지/재부팅을 **2단계 승인**으로 실행한다
 # Slack Control Module (English)
 
 ## Role
-Runs EC2 start/stop/reboot from Slack behind a **two-step approval**. It is the only write path, and it never goes through the AI. Why it exists: `docs/decisions/010-slack-approval-gated-control.md`.
+Runs EC2 start/stop/reboot from Slack behind a **two-step approval**. It is a write path that never goes through the AI (tag/SG changes go through `action-plan/`, where the AI only plans — ADR-011). Why it exists: `docs/decisions/010-slack-approval-gated-control.md`.
 
 ## Key Files
 - `parse.ts` — `detectAction` matches command forms only. `parseControlRequest` finds the target by whole-word name or `i-...` ID. No LLM.
-- `requests.ts` — In-memory state machine: requester `confirm` (step 1), then a different approver `beginApproval` (step 2), which executes exactly once. Requests expire after a TTL and are lost on restart.
+- `requests.ts` — In-memory state machine: requester `confirm` (step 1), then a different approver `beginApproval` (step 2), which executes exactly once. Requests expire after a TTL and are lost on restart. `createApprovalStore<R>()` is the shared generic store; `action-plan` uses it with the same rules.
 - `ec2.ts` — Lists tagged instances and re-reads one right before execution. `executeControl` assumes `AWSopsSlackControlRole` with `SourceIdentity=slack-<approver>`.
 - `cards.ts` — One card per request, redrawn on every state change. The final-approve button uses Slack's confirm dialog.
-- `handle.ts` — Mention and button entry points. Unauthorized clicks get an ephemeral notice. Tag and state are re-checked before executing. `getControlConfig()` returns null (off) until approvers are set.
+- `handle.ts` — Mention and button entry points. Optional `skip(text)` dep: when it returns true the mention is left alone (set in `bot.ts` to `isActionPlanEnabled() && detectActionIntent(text)`, so mixed start/stop + tag/SG requests go to action-plan; no change while action-plan is off). Unauthorized clicks get an ephemeral notice. Tag and state are re-checked before executing. `getControlConfig()` returns null (off) until approvers are set.
 - `audit.ts` — Appends to `data/slack-control/audit.jsonl`.
 - IAM: `scripts/16-setup-slack-control.sh i-...`. Only Start/Stop/Reboot, only on the instance IDs passed as arguments **and** tagged `awsops:control=allow`. Only `awsops-ec2-role` may assume the role, and only with a `slack-*` SourceIdentity. Shell access to the host is equivalent to control authority (see ADR-010).
 
