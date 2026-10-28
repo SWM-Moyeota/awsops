@@ -36,6 +36,8 @@ export interface HandleDeps {
   allowedChannels?: () => string[] | undefined;
   /** Approval-gated control commands (src/lib/slack-control); true = handled, skip the AI. */
   tryControl?: (event: MentionEvent) => Promise<boolean>;
+  /** AI-planned, approval-gated tag/SG/start/stop requests (src/lib/action-plan); true = handled, skip the AI. */
+  tryActionPlan?: (event: MentionEvent) => Promise<boolean>;
   /** Rule-based change-timeline answers ("누가 만들었어?"); true = handled, skip the AI. */
   tryChangeQuestion?: (event: MentionEvent) => Promise<boolean>;
   /** Rule-based cost-change answers ("비용 왜 늘었어?"); true = handled, skip the AI. */
@@ -79,6 +81,9 @@ export async function handleMention(event: MentionEvent, deps: HandleDeps): Prom
   // Control commands ("k8s-practice 꺼줘") never reach the AI — they go through the two-step approval.
   // 제어 명령은 AI로 보내지 않고 2단계 승인 흐름으로 처리한다.
   if (deps.tryControl && await deps.tryControl(event)) return;
+  // Tag / security-group requests: the AI only proposes a plan; code checks it and two people approve.
+  // 태그·보안그룹 변경 요청: AI는 계획만 제안하고, 코드가 검사하고, 사람 2명이 승인한다.
+  if (deps.tryActionPlan && await deps.tryActionPlan(event)) return;
   // "누가 만들었어?" is answered from CloudTrail records, never by the AI.
   // 생성자 질문은 기록으로만 답한다 (AI 추측 금지).
   if (deps.tryChangeQuestion && await deps.tryChangeQuestion(event)) return;

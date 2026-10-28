@@ -204,3 +204,21 @@ describe('handleMention cost question', () => {
     expect(slack.calls.post).toHaveLength(0);
   });
 });
+
+describe('handleMention action plan', () => {
+  it('actionPlanRunsAfterControlBeforeChange', async () => {
+    const slack = fakeSlack();
+    const order: string[] = [];
+    const d = {
+      ...deps(slack),
+      tryControl: vi.fn(async () => { order.push('control'); return false; }),
+      tryActionPlan: vi.fn(async () => { order.push('action'); return true; }),
+      tryChangeQuestion: vi.fn(async () => { order.push('change'); return false; }),
+      tryCostQuestion: vi.fn(async () => { order.push('cost'); return false; }),
+    };
+    await handleMention(ev({ text: '<@U0BOT> web-dev에 owner 태그를 jiwoo로 붙여줘' }), d);
+    expect(order).toEqual(['control', 'action']);
+    expect(d.ask).not.toHaveBeenCalled();
+    expect(slack.calls.post).toHaveLength(0);
+  });
+});

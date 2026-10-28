@@ -25,6 +25,8 @@ export interface ControlDeps {
   };
   audit: (req: ControlRequest) => void;
   teamId?: string;
+  /** True = leave this mention to another handler (action-plan takes mixed start/stop + tag/SG requests). */
+  skip?: (text: string) => boolean;
 }
 
 export const CONTROL_DISABLED_TEXT = 'Slack 제어가 아직 설정되지 않았어요 (승인자 미지정). 관리자에게 문의해 주세요.';
@@ -55,6 +57,8 @@ export async function maybeHandleControlMention(
   event: { user?: string; text: string; ts: string; thread_ts?: string; channel: string },
   deps: ControlDeps,
 ): Promise<boolean> {
+  // Checked first, so a skipped mention costs nothing here. / 건너뛸 문장이면 아무것도 하지 않는다.
+  if (deps.skip?.(event.text)) return false;
   if (!event.user || !detectAction(event.text)) return false;
   const channel = event.channel;
   const threadTs = event.thread_ts ?? event.ts;

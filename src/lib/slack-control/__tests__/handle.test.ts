@@ -64,6 +64,21 @@ describe('maybeHandleControlMention', () => {
     expect(posts[0].text).toBe(CONTROL_DISABLED_TEXT);
   });
 
+  it('controlSkipsWhenSkipReturnsTrue', async () => {
+    const skip = vi.fn(() => true);
+    const { deps, posts } = setup({ skip });
+    expect(await maybeHandleControlMention(mention('web-dev 꺼주고 sg 포트 22 닫아줘'), deps)).toBe(false);
+    expect(skip).toHaveBeenCalledWith('<@UBOT> web-dev 꺼주고 sg 포트 22 닫아줘');
+    expect(deps.ec2.list).not.toHaveBeenCalled();
+    expect(posts).toHaveLength(0);
+  });
+
+  it('controlRunsWhenSkipReturnsFalse', async () => {
+    const { deps, posts } = setup({ skip: () => false });
+    expect(await maybeHandleControlMention(mention('k8s-practice 꺼줘'), deps)).toBe(true);
+    expect(posts).toHaveLength(1);
+  });
+
   it('listsControllableServersForUnknownTarget', async () => {
     const { deps, posts } = setup();
     await maybeHandleControlMention(mention('moyeota-backend-prod-a 꺼줘'), deps);

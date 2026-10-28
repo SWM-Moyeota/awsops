@@ -2,6 +2,7 @@
 // Slack ChatOps 봇 — 서버 프로세스당 1회 Socket Mode 연결 (src/instrumentation.ts에서 기동).
 // Tokens live only in SSM SecureString and are never logged. / 토큰은 SSM SecureString에만 있고 로그에 남기지 않는다.
 import { SSMClient, GetParametersCommand } from '@aws-sdk/client-ssm';
+import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 import { SocketModeClient, LogLevel } from '@slack/socket-mode';
 import { WebClient } from '@slack/web-api';
 import { getConfig } from '@/lib/app-config';
@@ -9,11 +10,20 @@ import { askAwsops } from './ask';
 import { createLimiter, createRecentSet } from './concurrency';
 import { handleMention, handleAnalyzeClick, type AnalyzeClick, type MentionEvent, type SlackApi } from './handle';
 import { setBotHandle } from './alert';
-import { createRequestStore } from '@/lib/slack-control/requests';
+import { createRequestStore, createApprovalStore } from '@/lib/slack-control/requests';
 import { maybeHandleControlMention, handleControlAction, getControlConfig, type ControlDeps } from '@/lib/slack-control/handle';
 import { listControllableInstances, describeControllable, executeControl } from '@/lib/slack-control/ec2';
 import { appendAudit } from '@/lib/slack-control/audit';
 import { CTL_PREFIX } from '@/lib/slack-control/cards';
+import { maybeHandleActionMention, handleActionClick, type ActionDeps } from '@/lib/action-plan/handle';
+import { getActionPlanConfig, isActionPlanEnabled } from '@/lib/action-plan/config';
+import { detectActionIntent } from '@/lib/action-plan/detect';
+import { createEc2Reader, createWriterFactory } from '@/lib/action-plan/aws';
+import { callPlanner, bedrockInvoke } from '@/lib/action-plan/planner';
+import { appendActionAudit, auditEntryFor } from '@/lib/action-plan/audit';
+import { saveExecution, loadExecution } from '@/lib/action-plan/executions';
+import { AP_PREFIX } from '@/lib/action-plan/cards';
+import type { ActionRequest } from '@/lib/action-plan/types';
 import { maybeHandleChangeQuestion, maybeSendDailySummary } from '@/lib/change-timeline/slack';
 import { setDailySummaryHook } from '@/lib/change-timeline/loop';
 import { maybeHandleCostQuestion, costSummaryLine, type ExplainFn } from '@/lib/cost-radar/slack';
@@ -36,6 +46,22 @@ const MAX_CONCURRENT_ANSWERS = 2;
 const DEFAULT_DASHBOARD_URL = 'https://awsops.moyeota.co.kr/';
 const RETRY_DELAYS_MS = [30_000, 60_000, 120_000, 300_000, 600_000];
 const FATAL_SLACK_ERRORS = new Set(['invalid_auth', 'not_authed', 'account_inactive', 'token_revoked', 'not_allowed_token_type']);
+
+const STS_TIMEOUT_MS = 15_000;
+
+// Host account for session-policy ARNs — looked up once; a failed lookup is retried on the next request.
+// 세션 정책 ARN에 쓰는 호스트 계정 — 한 번만 조회하고, 실패하면 다음 요청에서 다시 조회한다.
+let hostAccount: Promise<string> | null = null;
+function hostAccountId(): Promise<string> {
+  hostAccount ??= new STSClient({ region: SSM_REGION })
+    .send(new GetCallerIdentityCommand({}), { abortSignal: AbortSignal.timeout(STS_TIMEOUT_MS) })
+    .then(r => {
+      if (!r.Account) throw new Error('no account');
+      return r.Account;
+    })
+    .catch(e => { hostAccount = null; throw e; });
+  return hostAccount;
+}
 
 let started = false;
 let status: { connected: boolean; reason?: string } = { connected: false, reason: 'not started' };
@@ -112,9 +138,29 @@ async function connect(): Promise<void> {
     ec2: { list: listControllableInstances, describe: describeControllable, execute: executeControl },
     audit: req => appendAudit(req),
     teamId: auth.team_id,
+    // Mixed requests ("web-dev 꺼주고 22번 포트 닫아줘") belong to action-plan, but only while it is on.
+    // 켜기·끄기가 태그·보안그룹 작업과 섞인 말은 action-plan이 켜져 있을 때만 그쪽으로 넘긴다.
+    skip: text => isActionPlanEnabled() && detectActionIntent(text),
+  };
+  // Safe AI actions: the planner only proposes; code resolves targets, checks rules and executes
+  // with a session-policy-scoped AWSopsActionExecutorRole after two approvals.
+  // AI는 계획만 제안 — 대상 확정·규칙 검사·실행은 코드가, 승인은 사람 2명이 한다.
+  const action: ActionDeps = {
+    slack: control.slack,
+    store: createApprovalStore<ActionRequest>(),
+    config: getActionPlanConfig,
+    enabled: isActionPlanEnabled,
+    planner: (message, aliasNames) => callPlanner(message, aliasNames, bedrockInvoke),
+    reader: createEc2Reader(),
+    writers: createWriterFactory(),
+    account: hostAccountId,
+    audit: req => appendActionAudit(auditEntryFor(req)),
+    executions: { save: saveExecution, load: loadExecution },
+    teamId: auth.team_id,
   };
   const deps = {
     tryControl: (event: MentionEvent) => maybeHandleControlMention(event, control),
+    tryActionPlan: (event: MentionEvent) => maybeHandleActionMention(event, action),
     tryChangeQuestion: (event: MentionEvent) => maybeHandleChangeQuestion(event, {
       reply: async text => { await slackApi(web).postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text }); },
     }),
@@ -154,6 +200,14 @@ async function connect(): Promise<void> {
     if (body.type === 'block_actions' && ctl.actions?.some(a => a.action_id?.startsWith(CTL_PREFIX))) {
       handleControlAction(ctl, control).catch(e => {
         console.warn(`[slack-control] action failed (${errName(e)})`);
+      });
+      return;
+    }
+    // Action-plan buttons: same rule — the shared approval store guarantees single execution.
+    // AI 실행 버튼도 같은 규칙 — 1회 실행은 공유 승인 저장소가 보장한다.
+    if (body.type === 'block_actions' && ctl.actions?.some(a => a.action_id?.startsWith(AP_PREFIX))) {
+      handleActionClick(ctl, action).catch(e => {
+        console.warn(`[action-plan] action failed (${errName(e)})`);
       });
       return;
     }
