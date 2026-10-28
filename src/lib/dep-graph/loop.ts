@@ -24,7 +24,10 @@ export async function tick(): Promise<void> {
   try {
     // If another build is running this joins it instead of starting a second one.
     // 다른 빌드가 돌고 있으면 새로 시작하지 않고 그 결과를 기다린다.
-    const st = await runBuildOnce(() => rebuildGraph());
+    let st = await runBuildOnce(() => rebuildGraph());
+    // Joined a snapshot load instead of a build: run the real build now.
+    // 스냅샷 적재에 합류했다면 이번 회차 빌드를 바로 이어서 한다.
+    if (!isStats(st)) st = await runBuildOnce(() => rebuildGraph());
     if (isStats(st)) {
       const nodes = Object.values(st.nodeCounts).reduce((a: number, n) => a + (n ?? 0), 0);
       console.log(`[dep-graph] built: ${nodes} nodes, ${st.edgeCount} edges`);

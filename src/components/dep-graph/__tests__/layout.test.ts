@@ -79,7 +79,7 @@ describe('depGraph i18n parity', () => {
   it('has depGraph keys in ko.json', () => {
     expect(keys.length).toBeGreaterThan(20);
     expect(ko['depGraph.project.notice']).toBe('안내만 해요 — 실제로 지우지 않아요');
-    expect(ko['depGraph.project.managed']).toBe('AWS가 관리하는 연결 (연결된 서비스를 지우면 같이 정리돼요)');
+    expect(ko['depGraph.project.managed']).toBe('AWS가 관리하는 연결 (연결된 서비스를 먼저 지워야 같이 사라져요 — 그 전엔 정리를 막아요)');
     expect(ko['depGraph.project.coverage']).toBe('15종 밖(ECS·EKS·IAM 사용자 등)에서 쓰는 것은 보이지 않아요');
     expect(ko['depGraph.warnings']).toBe('일부 종류를 못 읽었어요: {names}');
     expect(ko['depGraph.project.warnings']).toBe('일부 종류를 못 읽어서 결과가 틀릴 수 있어요: {names}');
