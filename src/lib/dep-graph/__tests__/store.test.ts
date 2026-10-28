@@ -278,6 +278,19 @@ describe('clampDepth', () => {
 });
 
 describe('current store holder', () => {
+  it('refuses to swap in an older build: closes it and keeps the current one', async () => {
+    const small: GraphData = { nodes: [vpc], edges: [], dropped: 0 };
+    const newer = await createGraphStore(small, { ...stats(small), builtAt: '2026-10-28T02:00:00.000Z' });
+    const older = await createGraphStore(small, { ...stats(small), builtAt: '2026-10-28T01:00:00.000Z' });
+    expect(setCurrentStore(newer, 0)).toBe(true);
+    expect(setCurrentStore(older, 0)).toBe(false);
+    expect(getCurrentStore()).toBe(newer);
+    await vi.waitFor(async () => { await expect(older.node(vpc.arn)).rejects.toBeTruthy(); });
+    expect(await newer.node(vpc.arn)).toEqual(vpc);
+    await newer.close();
+    (globalThis as { __awsopsDepGraph?: unknown }).__awsopsDepGraph = undefined;
+  });
+
   it('swaps the pointer and closes the previous store', async () => {
     const small: GraphData = { nodes: [vpc], edges: [], dropped: 0 };
     const a = await createGraphStore(small, stats(small));

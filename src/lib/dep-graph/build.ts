@@ -14,6 +14,35 @@ export const SNAPSHOT_PATH = path.join(process.cwd(), 'data/graph/latest.json');
 
 const defaultRun: BatchRunner = (q) => batchQuery(q);
 
+/** After a failed build, ensureGraph waits this long before trying again. / 빌드 실패 뒤 ensureGraph 재시도 대기. */
+export const REBUILD_COOLDOWN_MS = 60_000;
+
+interface BuildLock { inflight: Promise<unknown> | null; lastFailureAt: number | null }
+declare global {
+  // eslint-disable-next-line no-var
+  var __awsopsDepGraphBuild: BuildLock | undefined;
+}
+
+function lock(): BuildLock {
+  return (globalThis.__awsopsDepGraphBuild ??= { inflight: null, lastFailureAt: null });
+}
+
+/**
+ * One build (or snapshot load) at a time for the whole process: a second caller gets the same promise.
+ * A rejection records lastFailureAt (used by ensureGraph's cooldown) and is passed on to callers.
+ * 프로세스 전체에서 빌드(스냅샷 적재 포함)는 한 번에 하나 — 두 번째 호출은 같은 promise를 받는다.
+ */
+export function runBuildOnce(fn: () => Promise<unknown>): Promise<unknown> {
+  const l = lock();
+  if (l.inflight) return l.inflight;
+  const p: Promise<unknown> = Promise.resolve()
+    .then(fn)
+    .catch((e) => { l.lastFailureAt = Date.now(); throw e; })
+    .finally(() => { if (l.inflight === p) l.inflight = null; });
+  l.inflight = p;
+  return p;
+}
+
 /** Run all graph queries; failed ones become warnings. / 실패한 쿼리는 경고로만 남긴다. */
 export async function collectRows(run: BatchRunner = defaultRun): Promise<{ rows: Rows; warnings: string[] }> {
   const res = await run(GRAPH_QUERIES);
@@ -52,7 +81,9 @@ export async function rebuildGraph(deps: { run?: BatchRunner; snapshotPath?: str
   const data = extractGraph(rows);
   const stats = statsFor(data, warnings, deps.now);
   const store = await createGraphStore(data, stats);
-  setCurrentStore(store);
+  // A newer graph is already live (should not happen under the lock): keep it, skip the snapshot.
+  // 더 새 그래프가 이미 있으면(잠금 아래에선 없어야 함) 그대로 두고 스냅샷도 쓰지 않는다.
+  if (!setCurrentStore(store)) return stats;
   try {
     await writeSnapshot(deps.snapshotPath ?? SNAPSHOT_PATH, stats, data);
   } catch (e) {
@@ -63,30 +94,33 @@ export async function rebuildGraph(deps: { run?: BatchRunner; snapshotPath?: str
   return stats;
 }
 
+/** True when the snapshot became the current store (false if missing, malformed or older). / 스냅샷이 현재 저장소가 됐으면 true. */
 export async function loadSnapshot(file: string = SNAPSHOT_PATH): Promise<boolean> {
   try {
     const j = JSON.parse(await fs.readFile(file, 'utf8'));
     if (!j || j.version !== 1 || !j.stats || !j.data || !Array.isArray(j.data.nodes) || !Array.isArray(j.data.edges)) return false;
-    setCurrentStore(await createGraphStore(j.data as GraphData, j.stats as BuildStats));
-    return true;
+    return setCurrentStore(await createGraphStore(j.data as GraphData, j.stats as BuildStats));
   } catch {
     return false;
   }
 }
 
-let inflight: Promise<unknown> | null = null;
-
-/** Current store, else snapshot, else kick off one rebuild and return null. / 현재 → 스냅샷 → 빌드 시작 후 null. */
+/**
+ * Current store, else snapshot, else kick off one rebuild and return null. Both go through runBuildOnce;
+ * while a build is in flight it returns null at once, and for 60 s after a failed build it does not start one.
+ * 현재 → 스냅샷 → 빌드 시작 후 null. 둘 다 runBuildOnce를 거친다. 빌드 중이면 바로 null, 실패 뒤 60초는 다시 시작하지 않는다.
+ */
 export async function ensureGraph(deps: { snapshotPath?: string; rebuild?: () => Promise<unknown> } = {}): Promise<GraphStore | null> {
   const cur = getCurrentStore();
   if (cur) return cur;
-  if (await loadSnapshot(deps.snapshotPath)) return getCurrentStore();
-  if (!inflight) {
-    const start = deps.rebuild ?? (() => rebuildGraph({ snapshotPath: deps.snapshotPath }));
-    inflight = Promise.resolve()
-      .then(start)
-      .catch((e) => console.error('[dep-graph] build failed:', e instanceof Error ? e.name : 'Error'))
-      .finally(() => { inflight = null; });
-  }
+  const l = lock();
+  if (l.inflight) return null;
+  await runBuildOnce(() => loadSnapshot(deps.snapshotPath)).catch(() => false);
+  const loaded = getCurrentStore();
+  if (loaded) return loaded;
+  if (l.inflight) return null;
+  if (l.lastFailureAt !== null && Date.now() - l.lastFailureAt < REBUILD_COOLDOWN_MS) return null;
+  const start = deps.rebuild ?? (() => rebuildGraph({ snapshotPath: deps.snapshotPath }));
+  runBuildOnce(start).catch((e) => console.error('[dep-graph] build failed:', e instanceof Error ? e.name : 'Error'));
   return null;
 }

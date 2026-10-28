@@ -241,13 +241,20 @@ export function getCurrentStore(): GraphStore | null {
 
 /**
  * Swap the pointer, then close the previous store after closeDelayMs so in-flight requests can finish.
+ * Never rolls back: if the current store was built later than `next`, `next` is closed and false is returned.
  * 포인터 교체 후, 진행 중인 요청이 끝나도록 closeDelayMs 뒤에 이전 저장소를 닫는다(오류는 삼킨다).
+ * 되돌리지 않는다 — 지금 저장소가 더 새 빌드면 next를 닫고 false.
  */
-export function setCurrentStore(next: GraphStore, closeDelayMs = 60_000): void {
+export function setCurrentStore(next: GraphStore, closeDelayMs = 60_000): boolean {
   const h = holder();
   const prev = h.current;
+  if (prev && prev !== next && Date.parse(prev.stats().builtAt) > Date.parse(next.stats().builtAt)) {
+    void next.close().catch(() => undefined);
+    return false;
+  }
   h.current = next;
-  if (!prev || prev === next) return;
+  if (!prev || prev === next) return true;
   const t = setTimeout(() => { void prev.close().catch(() => undefined); }, closeDelayMs);
   t.unref?.();
+  return true;
 }

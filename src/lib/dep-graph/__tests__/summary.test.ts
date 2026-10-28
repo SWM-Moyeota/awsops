@@ -51,20 +51,17 @@ describe('impactSummary edge cases', () => {
   });
 
   it('returns null when a kind the count depends on failed to load', async () => {
-    for (const w of ['sg', 'eni', 'instance', 'alb', 'nlb', 'clb', 'rds', 'lambda', 'nat']) {
-      const s = await createGraphStore(data, stats([w]));
-      try {
-        expect(await impactSummary('sg-1', s), w).toBeNull();
-      } finally {
-        await s.close();
-      }
-    }
-    // Other kinds failing does not affect the count. / 상관없는 종류 실패는 괜찮다.
-    const ok = await createGraphStore(data, stats(['s3', 'rolePolicy']));
+    const s = await createGraphStore(data, stats());
+    // Same store, different build warnings. / 같은 저장소에 경고만 바꿔 본다.
+    const withWarnings = (w: string[]): GraphStore => ({ ...s, stats: () => stats(w) });
     try {
-      expect(await impactSummary('sg-1', ok)).toMatchObject({ count: 3 });
+      for (const w of ['sg', 'eni', 'instance', 'alb', 'nlb', 'clb', 'rds', 'lambda', 'nat']) {
+        expect(await impactSummary('sg-1', withWarnings([w])), w).toBeNull();
+      }
+      // Other kinds failing does not affect the count. / 상관없는 종류 실패는 괜찮다.
+      expect(await impactSummary('sg-1', withWarnings(['s3', 'rolePolicy']))).toMatchObject({ count: 3 });
     } finally {
-      await ok.close();
+      await s.close();
     }
   });
 });

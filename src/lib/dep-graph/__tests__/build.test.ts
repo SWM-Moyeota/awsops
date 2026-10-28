@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
-import { rebuildGraph, loadSnapshot, ensureGraph, collectRows, statsFor } from '../build';
+import { rebuildGraph, loadSnapshot, ensureGraph, collectRows, statsFor, runBuildOnce, REBUILD_COOLDOWN_MS } from '../build';
 import { getCurrentStore } from '../store';
 
 const A = '111111111111';
@@ -25,6 +25,7 @@ afterEach(async () => {
   const s = getCurrentStore();
   if (s) await s.close();
   (globalThis as { __awsopsDepGraph?: unknown }).__awsopsDepGraph = undefined;
+  (globalThis as { __awsopsDepGraphBuild?: unknown }).__awsopsDepGraphBuild = undefined;
   await fs.rm(dir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -68,6 +69,56 @@ describe('build', () => {
     expect(await ensureGraph({ snapshotPath, rebuild })).toBeNull();
     expect(await ensureGraph({ snapshotPath, rebuild })).toBeNull();
     expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
+  it('runBuildOnce hands a second caller the same promise', async () => {
+    let release!: (v: string) => void;
+    const fn = vi.fn(() => new Promise<string>((r) => { release = r; }));
+    const a = runBuildOnce(fn);
+    const b = runBuildOnce(async () => 'other');
+    expect(b).toBe(a);
+    await Promise.resolve();
+    release('done');
+    expect(await a).toBe('done');
+    expect(fn).toHaveBeenCalledTimes(1);
+    // Free again once settled. / 끝나면 다시 비어 있다.
+    expect(await runBuildOnce(async () => 'next')).toBe('next');
+  });
+
+  it('ensureGraph skips a rebuild for 60 s after a failed build', async () => {
+    let t = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => t);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const rebuild = vi.fn(async () => { throw new Error('x'); });
+    const snapshotPath = path.join(dir, 'none.json');
+    expect(await ensureGraph({ snapshotPath, rebuild })).toBeNull();
+    await vi.waitFor(() => expect((globalThis as { __awsopsDepGraphBuild?: { inflight: unknown } }).__awsopsDepGraphBuild?.inflight).toBeNull());
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    t += REBUILD_COOLDOWN_MS - 1;
+    expect(await ensureGraph({ snapshotPath, rebuild })).toBeNull();
+    await Promise.resolve();
+    expect(rebuild).toHaveBeenCalledTimes(1);
+    t += 1;
+    expect(await ensureGraph({ snapshotPath, rebuild })).toBeNull();
+    await vi.waitFor(() => expect(rebuild).toHaveBeenCalledTimes(2));
+  });
+
+  it('ensureGraph does not start a build while one is in flight', async () => {
+    let release!: () => void;
+    void runBuildOnce(() => new Promise<void>((r) => { release = r; }));
+    const rebuild = vi.fn(async () => undefined);
+    expect(await ensureGraph({ snapshotPath: path.join(dir, 'none.json'), rebuild })).toBeNull();
+    expect(rebuild).not.toHaveBeenCalled();
+    release();
+  });
+
+  it('an older snapshot never replaces a newer store', async () => {
+    const oldSnap = path.join(dir, 'old.json');
+    await rebuildGraph({ run, snapshotPath: oldSnap, now: new Date('2026-10-28T01:00:00.000Z') });
+    await rebuildGraph({ run, snapshotPath: path.join(dir, 'new.json'), now: new Date('2026-10-28T02:00:00.000Z') });
+    expect(getCurrentStore()?.stats().builtAt).toBe('2026-10-28T02:00:00.000Z');
+    expect(await loadSnapshot(oldSnap)).toBe(false);
+    expect(getCurrentStore()?.stats().builtAt).toBe('2026-10-28T02:00:00.000Z');
   });
 
   it('rebuildGraph rejects when run rejects', async () => {
