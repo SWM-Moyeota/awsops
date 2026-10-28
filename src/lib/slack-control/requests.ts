@@ -2,34 +2,36 @@
 // and single-use execution. Kept in memory on purpose: a server restart drops pending requests (safe default).
 // 2단계 승인과 1회 실행을 강제하는 유일한 곳. 서버 재시작 시 대기 요청은 사라진다 (안전한 기본값).
 import { randomUUID } from 'node:crypto';
-import type { ControlAction, ControlConfig, ControlRequest, ControllableInstance } from './types';
+import type { ApprovalRecord, ControlConfig, ControlRequest } from './types';
 
-export type Transition = { ok: true; req: ControlRequest } | { ok: false; reason: string };
+export type Transition<R extends ApprovalRecord = ControlRequest> = { ok: true; req: R } | { ok: false; reason: string };
 
 const DEFAULT_TTL_MS = 15 * 60_000;
 const MAX_KEPT = 200;
 const FINAL = new Set(['executed', 'failed', 'cancelled', 'rejected', 'expired']);
 
-export interface RequestStore {
-  create(input: { action: ControlAction; instance: ControllableInstance; requesterId: string; channel: string; threadTs: string }): ControlRequest;
-  get(id: string): ControlRequest | undefined;
+export interface ApprovalStore<R extends ApprovalRecord> {
+  create(input: Omit<R, keyof ApprovalRecord> & Pick<ApprovalRecord, 'requesterId' | 'channel' | 'threadTs'>): R;
+  get(id: string): R | undefined;
   setCardTs(id: string, ts: string): void;
   /** Step 1: the requester confirms the parsed target. proposed → pending */
-  confirm(id: string, userId: string, ttlMs?: number): Transition;
+  confirm(id: string, userId: string, ttlMs?: number): Transition<R>;
   /** Step 2: an approver (not the requester unless allowed) approves. pending → executing, exactly once. */
-  beginApproval(id: string, userId: string, cfg: ControlConfig): Transition;
+  beginApproval(id: string, userId: string, cfg: ControlConfig): Transition<R>;
   finish(id: string, status: 'executed' | 'failed', result: string): void;
-  reject(id: string, userId: string, cfg: ControlConfig): Transition;
-  cancel(id: string, userId: string, cfg: ControlConfig): Transition;
+  reject(id: string, userId: string, cfg: ControlConfig): Transition<R>;
+  cancel(id: string, userId: string, cfg: ControlConfig): Transition<R>;
 }
 
-const fail = (reason: string): Transition => ({ ok: false, reason });
+export type RequestStore = ApprovalStore<ControlRequest>;
 
-export function createRequestStore(opts: { now?: () => number } = {}): RequestStore {
+const fail = (reason: string): { ok: false; reason: string } => ({ ok: false, reason });
+
+export function createApprovalStore<R extends ApprovalRecord>(opts: { now?: () => number } = {}): ApprovalStore<R> {
   const now = opts.now ?? Date.now;
-  const requests = new Map<string, ControlRequest>();
+  const requests = new Map<string, R>();
 
-  function load(id: string, ttlMs: number): ControlRequest | string {
+  function load(id: string, ttlMs: number): R | string {
     const req = requests.get(id);
     if (!req) return '요청을 찾을 수 없어요. 서버가 재시작됐거나 오래된 요청이에요.';
     if ((req.status === 'proposed' || req.status === 'pending') && now() - req.createdAt > ttlMs) {
@@ -43,7 +45,7 @@ export function createRequestStore(opts: { now?: () => number } = {}): RequestSt
 
   return {
     create(input) {
-      const req: ControlRequest = { ...input, id: randomUUID(), status: 'proposed', createdAt: now() };
+      const req = { ...input, id: randomUUID(), status: 'proposed', createdAt: now() } as unknown as R;
       requests.set(req.id, req);
       // Bound memory: drop the oldest *finished* request — never one that is still pending or executing.
       // 메모리 상한: 끝난 요청만 오래된 순으로 정리한다 (진행 중인 요청은 절대 지우지 않는다)
@@ -70,11 +72,12 @@ export function createRequestStore(opts: { now?: () => number } = {}): RequestSt
     beginApproval(id, userId, cfg) {
       const req = load(id, cfg.ttlMs);
       if (typeof req === 'string') return fail(req);
-      if (req.status === 'proposed') return fail('요청자가 먼저 1단계 확인을 해야 해요.');
-      if (req.status !== 'pending') return fail('이미 처리된 요청이에요.');
+      // Self-approval is refused at every stage, including before step 1. / 1단계 전에도 본인 승인은 거절
       if (!cfg.allowSelfApproval && userId === req.requesterId) {
         return fail('요청한 본인은 최종 승인할 수 없어요. 다른 승인자가 승인해야 해요.');
       }
+      if (req.status === 'proposed') return fail('요청자가 먼저 1단계 확인을 해야 해요.');
+      if (req.status !== 'pending') return fail('이미 처리된 요청이에요.');
       if (!isApprover(userId, cfg)) return fail('최종 승인 권한이 없어요. 지정된 승인자만 승인할 수 있어요.');
       // Synchronous check-and-set: a second click can never see 'pending' again. / 동기 전이라 두 번 실행 불가
       req.status = 'executing';
@@ -109,4 +112,8 @@ export function createRequestStore(opts: { now?: () => number } = {}): RequestSt
       return { ok: true, req };
     },
   };
+}
+
+export function createRequestStore(opts: { now?: () => number } = {}): RequestStore {
+  return createApprovalStore<ControlRequest>(opts);
 }
