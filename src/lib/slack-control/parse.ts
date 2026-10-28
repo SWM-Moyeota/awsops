@@ -35,7 +35,7 @@ function escapeRe(s: string): string {
 }
 
 /** Whole-token name match — `api-dev` must not match inside `api-dev-2`. */
-function mentionsName(text: string, name: string): boolean {
+export function mentionsName(text: string, name: string): boolean {
   if (!name) return false;
   return new RegExp(`(^|[^A-Za-z0-9_-])${escapeRe(name)}(?![A-Za-z0-9_-])`, 'i').test(text);
 }
