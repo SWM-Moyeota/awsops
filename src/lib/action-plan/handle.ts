@@ -6,6 +6,8 @@ import { detectActionIntent } from './detect';
 import { validatePlannerOutput } from './validate';
 import { resolveSteps, type ResolveResult } from './resolve';
 import { takeSnapshot, SnapshotError } from './snapshot';
+import { impactSummary } from '@/lib/dep-graph/summary';
+import type { GraphImpact } from '@/lib/dep-graph/types';
 import { computeChanges } from './changes';
 import { evaluatePolicy } from './policy';
 import { buildSessionPolicy, findDrift } from './session-policy';
@@ -98,6 +100,18 @@ async function planAndPost(input: PlanInput, cfg: ActionPlanConfig, deps: Action
     return;
   }
 
+  // Informational only: graph impact per SG, read from memory; any failure leaves it undefined.
+  // 안내용 — 그래프 영향 요약. 실패해도 흐름에 영향 없음.
+  let graphImpact: Record<string, GraphImpact> | undefined;
+  if (!input.undoOf) {
+    try {
+      const ids = Array.from(new Set(input.steps.filter(st => st.action.startsWith('sg.')).map(st => st.target.id)));
+      const found: Record<string, GraphImpact> = {};
+      for (const id of ids) { const g = await impactSummary(id); if (g) found[id] = g; }
+      if (Object.keys(found).length) graphImpact = found;
+    } catch { graphImpact = undefined; }
+  }
+
   const { changes, errors } = computeChanges(input.steps, snapshot);
   if (errors.length) {
     await reply(`계획대로 바꿀 수 없어요: ${errors.map(safeName).join(', ')}`);
@@ -130,6 +144,7 @@ async function planAndPost(input: PlanInput, cfg: ActionPlanConfig, deps: Action
     snapshot,
     policy,
     permission,
+    ...(graphImpact ? { graphImpact } : {}),
     ...(input.undoOf ? { undoOf: input.undoOf, skippedForDrift: input.skippedForDrift ?? [] } : {}),
     requesterId: input.requesterId,
     channel: input.channel,

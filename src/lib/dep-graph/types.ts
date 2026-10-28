@@ -15,3 +15,7 @@ export interface BuildStats { builtAt: string; nodeCounts: Partial<Record<NodeTy
 export interface WalkNode extends GraphNode { depth: number }
 export interface WalkResult { nodes: WalkNode[]; truncated: boolean }
 export interface Neighborhood { center: GraphNode; nodes: Array<WalkNode & { side: 'center'|'dependent'|'dependency' }>; edges: GraphEdge[]; truncated: boolean }
+
+// Informational impact line for SG preview cards (Slack safe AI actions).
+// 보안그룹 미리보기 카드용 영향 요약 — 안내만 하며 정책 판단에는 쓰지 않는다.
+export interface GraphImpact { count: number; sample: string[]; builtAt: string }

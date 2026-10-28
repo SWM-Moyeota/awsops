@@ -2,6 +2,7 @@
 // (resolve, snapshot, policy, preview, approval, scoped execution, audit, undo) is deterministic code.
 // 안전한 AI 실행 공용 타입. LLM은 계획만 제안하고, 그 뒤는 모두 결정적인 코드가 처리한다.
 import type { ApprovalRecord, ControlConfig } from '@/lib/slack-control/types';
+import type { GraphImpact } from '@/lib/dep-graph/types';
 
 export type ActionKind = 'ec2.start' | 'ec2.stop' | 'tag.set' | 'tag.remove' | 'sg.ingress.add' | 'sg.ingress.remove';
 export type ResourceType = 'instance' | 'security-group';
@@ -124,6 +125,8 @@ export interface ActionRequest extends ApprovalRecord {
   /** Plan-time snapshot. */
   snapshot: Snapshot;
   policy: PolicyResult;
+  /** Informational graph impact per security-group id (never used by policy). */
+  graphImpact?: Record<string, GraphImpact>;
   permission: { ok: boolean; error?: string };
   /** Execution id this request undoes. */
   undoOf?: string;

@@ -86,6 +86,12 @@ function blastLines(req: ActionRequest): string[] {
     out.push(list.length
       ? `• \`${name}\` 보안그룹을 쓰는 서버 ${all.length}대: ${list.join(', ')}`
       : `• \`${name}\` 보안그룹을 쓰는 네트워크 인터페이스 ${n}개`);
+    const g = req.graphImpact?.[id];
+    if (g) {
+      const minutes = Math.max(0, Math.round((Date.now() - Date.parse(g.builtAt)) / 60000));
+      const sample = g.sample.map(x => safeName(x));
+      out.push(`• 그래프로 본 영향(${minutes}분 전 기준): 이 보안그룹을 쓰는 리소스 ${g.count}개${sample.length ? ` — ${sample.join(', ')}` : ''}${g.count > sample.length ? ` 외 ${g.count - sample.length}개` : ''}`);
+    }
   }
   return out;
 }

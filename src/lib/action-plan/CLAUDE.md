@@ -68,3 +68,5 @@ mention → `detect` → (one-line notice when off) → `planner` → `validate`
 - Errors carry the name only; never log credentials or tokens.
 - Never widen or remove the IAM ID list, tag condition or `awsops:*` Deny. Keep the session policy and script 17 resource scope in step.
 - The AI answer tools stay read-only and separate from this pipeline.
+
+- `graphImpact` (informational): at plan time `handle.ts` reads `dep-graph/summary.impactSummary` per SG; `cards.ts` shows one extra line. Not used by policy/approval/execution.
