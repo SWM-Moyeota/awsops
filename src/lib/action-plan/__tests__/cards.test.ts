@@ -12,7 +12,7 @@ const base = (o: Partial<ActionRequest> = {}): ActionRequest => ({
   prompt: 'web-dev owner 태그를 jiwoo로', summary: '태그 설정',
   plannerRaw: null,
   changes: [
-    { index: 0, step: { action: 'tag.set', target: { type: 'instance', id: 'i-0abc', name: 'web-dev' }, key: 'owner', value: 'jiwoo' }, before: '태그 owner: (없음)', after: 'jiwoo', noop: false, inverse: inv },
+    { index: 0, step: { action: 'tag.set', target: { type: 'instance', id: 'i-0abc', name: 'web-dev' }, key: 'owner', value: 'jiwoo' }, before: '태그 owner: (없음)', after: 'jiwoo', noop: false, inverse: inv, previous: null },
     { index: 1, step: { action: 'ec2.stop', target: { type: 'instance', id: 'i-0def', name: 'old' }, }, before: 'stopped', after: 'stopped', noop: true },
   ],
   snapshot: {},
@@ -30,7 +30,7 @@ describe('actionCard', () => {
     const sgChange = { index: 2, step: { action: 'sg.ingress.add' as const, target: { type: 'security-group' as const, id: 'sg-1', name: 'sg-web' } }, before: '(없음)', after: '인바운드 추가 tcp 8080 ← 203.0.113.0/24', noop: false };
     const p = actionCard(base({ snapshot, changes: [...base().changes, sgChange] }), cfg);
     const s = json(p);
-    expect(s).toContain('(없음) → jiwoo');
+    expect(s).toContain('태그 `owner`: (없음) → `jiwoo`');
     expect(s).toContain('이미 되어 있어요');
     expect(s).toContain('서버 2대: a, b');
     expect(s).toContain('24시간 안');
@@ -79,7 +79,7 @@ describe('actionCard', () => {
     const evil = '*evil*`<@U1>`';
     const req = base({
       prompt: evil, summary: evil,
-      changes: [{ index: 0, step: { action: 'tag.set', target: { type: 'instance', id: 'i-1', name: evil }, key: 'k', value: evil }, before: evil, after: evil, noop: false }],
+      changes: [{ index: 0, step: { action: 'ec2.stop', target: { type: 'instance', id: 'i-1', name: evil } }, before: evil, after: evil, noop: false }],
     });
     const p = actionCard(req, cfg);
     const text = JSON.stringify([p.text, ...(p.blocks as any[]).map(b => b.text?.text ?? b.elements?.map((e: any) => e.text))]);
@@ -87,6 +87,36 @@ describe('actionCard', () => {
     for (const ch of ['*evil*', '<@U1>', '`<', '>`']) expect(body).not.toContain(ch);
     // only our own formatting characters remain; user content has none of them
     expect(body).toContain('evil@U1');
+  });
+
+  it('executedValuesAreShownVerbatimInCodeSpans', () => {
+    const G = { type: 'security-group' as const, id: 'sg-1', name: 'web-sg' };
+    const longValue = 'v_'.repeat(128); // 256 chars, past the old 120 cut
+    const desc = 'office_vpn *temp* ~ok~ a&b <x>';
+    const req = base({
+      changes: [
+        { index: 0, step: { action: 'tag.set', target: { type: 'instance', id: 'i-1', name: 'web-dev' }, key: 'cost_center', value: 'a*b_c~d' },
+          before: '', after: '', noop: false, previous: 'team_platform' },
+        { index: 1, step: { action: 'tag.set', target: { type: 'instance', id: 'i-1', name: 'web-dev' }, key: 'note', value: longValue },
+          before: '', after: '', noop: false, previous: null },
+        { index: 2, step: { action: 'sg.ingress.add', target: G, rule: { protocol: 'tcp', fromPort: 8080, toPort: 8080, source: '2001:db8::/32', description: desc } },
+          before: '', after: '', noop: false },
+        { index: 3, step: { action: 'sg.ingress.add', target: G, rule: { protocol: 'tcp', fromPort: 443, toPort: 443, source: 'sg-0123456789abcdef0' } },
+          before: '', after: '', noop: false },
+        { index: 4, step: { action: 'sg.ingress.remove', target: G, rule: { protocol: 'tcp', fromPort: 22, toPort: 22, source: '10.0.0.0/8' }, ruleId: 'sgr-9' },
+          before: '', after: '', noop: false,
+          inverse: { action: 'sg.ingress.add', target: G, rule: { protocol: 'tcp', fromPort: 22, toPort: 22, source: '10.0.0.0/8', description: 'ssh_from_vpn' } } },
+      ],
+    });
+    const text = (actionCard(req, cfg).blocks[0] as any).text.text as string;
+    expect(text).toContain('태그 `cost_center`: `team_platform` → `a*b_c~d`');
+    expect(text).toContain(`\`${longValue}\``);
+    expect(text).toContain('← `2001:db8::/32` · 설명 `office_vpn *temp* ~ok~ a&amp;b &lt;x&gt;` 추가');
+    expect(text).toContain('← `sg-0123456789abcdef0` · 설명 (없음) 추가');
+    expect(text).toContain('← `10.0.0.0/8` · 설명 `ssh_from_vpn` (`sgr-9`) 삭제');
+    // a value that could break the code span is escaped visibly, not dropped
+    const odd = actionCard(base({ changes: [{ ...base().changes[0], step: { ...base().changes[0].step, value: 'a`b\nc' } }] }), cfg);
+    expect(json(odd)).toContain('`a[U+0060]b[U+000A]c`');
   });
 
   it('undoButtonOnlyWhenSomethingCanBeUndone', () => {

@@ -42,6 +42,7 @@ describe('computeChanges', () => {
     expect(changes[1].inverse).toEqual({ action: 'tag.remove', target: I, key: 'new' });
     expect(changes[2].inverse).toEqual({ action: 'tag.set', target: I, key: 'owner', value: 'old' });
     expect(changes[2].after).toBe('태그 owner: old → jiwoo');
+    expect([changes[1].previous, changes[2].previous, changes[3].previous]).toEqual([null, 'old', 'dev']);
     expect(changes[3].inverse).toEqual({ action: 'tag.set', target: I, key: 'env', value: 'dev' });
     expect(changes[4].step.ruleId).toBe('sgr-9');
     expect(changes[4].inverse).toEqual({ action: 'sg.ingress.add', target: G, rule: { ...rule(22, '10.0.0.0/8'), description: 'ssh' } });

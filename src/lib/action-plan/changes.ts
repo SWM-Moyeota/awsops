@@ -32,8 +32,12 @@ export function computeChanges(steps: ResolvedStep[], s: Snapshot): { changes: S
       errors.push(`스냅샷에 없는 대상이에요: ${step.target.id}`);
       return;
     }
-    const mk = (before: string, after: string, noop: boolean, inverse?: ResolvedStep, patch?: Partial<ResolvedStep>) =>
-      changes.push({ index, step: { ...step, ...patch }, before, after, noop, ...(inverse && !noop ? { inverse } : {}) });
+    const mk = (before: string, after: string, noop: boolean, inverse?: ResolvedStep, patch?: Partial<ResolvedStep>, previous?: string | null) =>
+      changes.push({
+        index, step: { ...step, ...patch }, before, after, noop,
+        ...(inverse && !noop ? { inverse } : {}),
+        ...(previous !== undefined ? { previous } : {}),
+      });
     const t = step.target;
 
     switch (step.action) {
@@ -56,7 +60,7 @@ export function computeChanges(steps: ResolvedStep[], s: Snapshot): { changes: S
         const noop = old === value;
         const inverse: ResolvedStep =
           old === undefined ? { action: 'tag.remove', target: t, key } : { action: 'tag.set', target: t, key, value: old };
-        mk(`태그 ${key}: ${old ?? '(없음)'}`, `태그 ${key}: ${old ?? '(없음)'} → ${value}`, noop, inverse);
+        mk(`태그 ${key}: ${old ?? '(없음)'}`, `태그 ${key}: ${old ?? '(없음)'} → ${value}`, noop, inverse, undefined, old ?? null);
         w.tags[key] = value;
         break;
       }
@@ -65,7 +69,7 @@ export function computeChanges(steps: ResolvedStep[], s: Snapshot): { changes: S
         const old = w.tags[key];
         const noop = old === undefined;
         mk(`태그 ${key}: ${old ?? '(없음)'}`, `태그 ${key}: ${old ?? '(없음)'} → (없음)`, noop,
-          noop ? undefined : { action: 'tag.set', target: t, key, value: old });
+          noop ? undefined : { action: 'tag.set', target: t, key, value: old }, undefined, old ?? null);
         delete w.tags[key];
         break;
       }

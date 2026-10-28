@@ -94,6 +94,8 @@ export interface StepChange {
   after: string;
   /** Already in the wanted state — dropped from execution, shown as "이미 되어 있음". */
   noop: boolean;
+  /** tag.set / tag.remove: the tag value before this step (null = the tag did not exist). Shown on the card. */
+  previous?: string | null;
   /** Known before execution (tag.*, ec2.*, sg.ingress.remove); sg.ingress.add gets it from the result. */
   inverse?: ResolvedStep;
 }

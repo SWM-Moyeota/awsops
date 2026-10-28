@@ -1,7 +1,7 @@
 // The one Slack card an action request lives in — redrawn on every state change (spec §3.6).
 // 실행 요청 카드 하나를 상태가 바뀔 때마다 다시 그린다.
 import { safeName } from '@/lib/slack-control/ec2';
-import type { ActionPlanConfig, ActionRequest, StepChange, StepResult } from './types';
+import type { ActionPlanConfig, ActionRequest, IngressRule, StepChange, StepResult } from './types';
 
 export const AP_PREFIX = 'awsops_ap_';
 export const AP = {
@@ -29,7 +29,47 @@ const section = (text: string) => ({ type: 'section', text: { type: 'mrkdwn', te
 const decider = (id?: string) => (id ? `<@${id}>` : '승인자');
 
 const target = (c: StepChange) => `\`${safeName(c.step.target.name) || safeName(c.step.target.id)}\` (\`${safeName(c.step.target.id)}\`)`;
-const stepLine = (c: StepChange) => `${target(c)} · ${clean(c.before, 120)} → ${clean(c.after, 120)}`;
+
+/**
+ * A value that is sent to AWS (tag key/value, CIDR/source, SG description), shown exactly as sent: inside a code
+ * span, nothing deleted, no length cut — only & < > become Slack entities. validate.ts rejects backticks and
+ * control characters in planner values; any that still arrive (e.g. an old value read from AWS) are shown as
+ * visible [U+XXXX] escapes rather than dropped, so the code span cannot be broken out of.
+ * AWS로 보내는 값은 코드 블록 안에 그대로 보여 준다. & < > 만 Slack 엔티티로 바꾸고, 지우거나 자르지 않는다.
+ */
+export function code(raw: string): string {
+  if (raw === '') return '(빈 값)';
+  const escaped = raw
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/[`\u0000-\u001f\u007f]/g, ch => `[U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}]`);
+  return `\`${escaped}\``;
+}
+
+const ports = (r: IngressRule) => (r.fromPort === r.toPort ? `${r.fromPort}` : `${r.fromPort}-${r.toPort}`);
+const ruleLine = (r: IngressRule) =>
+  `인바운드 ${clean(r.protocol, 8)} ${ports(r)} ← ${code(r.source)} · 설명 ${r.description === undefined ? '(없음)' : code(r.description)}`;
+const previous = (c: StepChange) => (c.previous === undefined ? '(알 수 없음)' : c.previous === null ? '(없음)' : code(c.previous));
+
+/** Tag and SG lines are drawn from the step itself (what executes); start/stop from the computed text. */
+function stepLine(c: StepChange): string {
+  const s = c.step;
+  switch (s.action) {
+    case 'tag.set':
+      return `${target(c)} · 태그 ${code(s.key ?? '')}: ${previous(c)} → ${code(s.value ?? '')}`;
+    case 'tag.remove':
+      return `${target(c)} · 태그 ${code(s.key ?? '')}: ${previous(c)} → (삭제)`;
+    case 'sg.ingress.add':
+      if (s.rule) return `${target(c)} · ${ruleLine(s.rule)} 추가`;
+      break;
+    case 'sg.ingress.remove': {
+      // The rule actually revoked is the snapshot rule (by id); its content is what the inverse re-adds.
+      const r = c.inverse?.rule ?? s.rule;
+      if (r) return `${target(c)} · ${ruleLine(r)}${s.ruleId ? ` (${code(s.ruleId)})` : ''} 삭제`;
+      break;
+    }
+  }
+  return `${target(c)} · ${clean(c.before, 120)} → ${clean(c.after, 120)}`;
+}
 
 function blastLines(req: ActionRequest): string[] {
   const out: string[] = [];
