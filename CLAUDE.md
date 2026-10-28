@@ -21,14 +21,14 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 ## 현황 (v1.8.0)
 | 항목 | 수치 |
 |------|------|
-| 페이지 | 45 (/dependency-graph 추가) |
-| 라우트 | 73 (페이지 45 + API 28) |
+| 페이지 | 46 (/root-cause 추가) |
+| 라우트 | 75 (페이지 46 + API 29) |
 | SQL 쿼리 파일 | 25 |
-| API 라우트 | 28 (graph 추가) |
-| 컴포넌트 | 36 (dep-graph 5종 추가) |
+| API 라우트 | 29 (root-cause 추가) |
+| 컴포넌트 | 43 (root-cause 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 19 (등록표 `src/lib/ai/registry.ts`의 라우트 수 — 아래 우선순위 표는 그중 대표 11개) |
-| ADR | 12 (001-012) |
+| ADR | 13 (001-013) |
 
 ## 필수 규칙
 
@@ -115,9 +115,10 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `action-plan/` — 안전한 AI 실행: Slack에서 태그·보안그룹 인바운드·켜기/끄기 변경 (AI는 계획만, 대상·규칙·실행은 코드, 2단계 승인, 세션 정책, 해시 체인 감사, 되돌리기, 기본 꺼짐 — ADR-011) — `src/lib/action-plan/CLAUDE.md`
 - `change-timeline/` — 변경 기록: 누가 어떤 리소스를 만들고 지웠는지 (CloudTrail 90일 백필 + 10분 증분, `/changes`·만든 사람 배지·Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `dep-graph/` — 의존성 그래프: 리소스 15종의 관계를 Steampipe에서 뽑아 PGlite(재귀 CTE)에 담고 "지우면 뭐가 영향 받는지" 안내 (15분 주기 재빌드, `data/graph/latest.json`, `/dependency-graph`·안전한 AI 실행 카드 참고 줄, 안내만 — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
-- `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 600ms) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
+- `root-cause/` — 장애 원인 분석: 5분마다 이상(ALB 5xx·비정상 대상·EC2 상태 검사·알람)을 감지하고 직전 CloudTrail 쓰기 이벤트에 시간×그래프 거리×변경 종류 점수로 용의자 순위를 매김. AI는 상위 용의자를 설명만 하고 인용을 검증함 (합친 그래프 이력, `/root-cause`·Slack 알림·질문, 조회만 — ADR-013) — `src/lib/root-cause/CLAUDE.md`
+- `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 초당 1회) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
-### API 라우트 (`src/app/api/`, 28개 — 전체 목록은 `src/app/CLAUDE.md`)
+### API 라우트 (`src/app/api/`, 29개 — 전체 목록은 `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI 라우팅 진입점 (얇은 파일: `GET`/`POST`만, 검증 후 `src/lib/ai/`의 JSON·SSE 파이프라인으로 넘김. 등록표 19 라우트, 멀티 라우트, SSE 스트리밍, 도구 추론)
 - `steampipe/route.ts` — Steampipe 쿼리 + Cost 가용성 + 인벤토리 (POST/GET/PUT)
 - `auth/route.ts` — 로그아웃 (HttpOnly 쿠키 서버 사이드 삭제)
@@ -140,6 +141,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `changes/route.ts` — 변경 기록 조회 (기간·종류·사람·서비스·검색 필터, 요약 문장용 숫자, 수집 상태)
 - `changes/creators/route.ts` — 리소스별 만든 사람 (`?ids=계정:리소스ID[|생성시각]`, 최대 200개)
 - `graph/route.ts` — 의존성 그래프 조회 (읽기 전용 GET: stats/search/hubs/neighborhood/impact/deps/project, 그래프 없으면 `{status:'building'}`)
+- `root-cause/route.ts` — 장애 원인 분석 (GET `?op=list|get`, POST `{op:'analyze'}` 수동 분석, 30초 제한·120초 넘으면 202, 오류 이름만, `no-store`)
 
 ### 인프라
 - `infra-cdk/lib/awsops-stack.ts` — CDK 인프라 (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
@@ -240,14 +242,14 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 ## Stats (v1.8.0)
 | Item | Count |
 |------|-------|
-| Pages | 45 (incl. /dependency-graph) |
-| Routes | 73 (45 pages + 28 APIs) |
+| Pages | 46 (incl. /root-cause) |
+| Routes | 75 (46 pages + 29 APIs) |
 | SQL Query Files | 25 |
-| API Routes | 28 (incl. graph) |
-| Components | 36 (incl. 5 dep-graph components) |
+| API Routes | 29 (incl. root-cause) |
+| Components | 43 (incl. 6 root-cause components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 19 (routes in the registry, `src/lib/ai/registry.ts` — the priority table below shows the main 11) |
-| ADRs | 12 (001-012) |
+| ADRs | 13 (001-013) |
 
 ## Critical Rules
 
@@ -332,9 +334,10 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `action-plan/` — Safe AI actions: tag, SG inbound and start/stop changes from Slack (the AI only plans; targets, rules and execution are code; two-step approval, session policy, hash-chained audit, undo; off by default — ADR-011) — `src/lib/action-plan/CLAUDE.md`
 - `change-timeline/` — Change timeline: who created/deleted which resource (CloudTrail 90-day backfill + 10-min incremental; `/changes`, creator badges, Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `dep-graph/` — Dependency graph: extracts relationships of 15 resource kinds from Steampipe into PGlite (recursive CTE) and shows what is affected if one is deleted (rebuilt every 15 min, `data/graph/latest.json`, `/dependency-graph` and a reference line on safe-AI-action cards, guidance only — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
-- `cloudtrail-access.ts` — Shared CloudTrail pacing (600 ms per account+region) + cross-account credentials (used by change timeline and Cost Radar)
+- `root-cause/` — Incident root cause: detects anomalies every 5 min (ALB 5xx, unhealthy targets, EC2 status checks, alarms) and ranks the preceding CloudTrail write events by time x graph distance x change kind; the AI only explains the top suspects and every citation is verified (merged graph history, `/root-cause`, Slack alert + question, read-only — ADR-013) — `src/lib/root-cause/CLAUDE.md`
+- `cloudtrail-access.ts` — Shared CloudTrail pacing (1 request/s per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
-### API Routes (`src/app/api/`, 28 routes — full list in `src/app/CLAUDE.md`)
+### API Routes (`src/app/api/`, 29 routes — full list in `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI routing entry point (thin: only `GET`/`POST`; validates, then hands off to the JSON/SSE pipelines in `src/lib/ai/`. 19 routes in the registry, multi-route, SSE streaming, tool inference)
 - `steampipe/route.ts` — Steampipe queries + Cost availability + Inventory (POST/GET/PUT)
 - `auth/route.ts` — Logout (server-side HttpOnly cookie deletion)
@@ -357,6 +360,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `changes/route.ts` — Change timeline (range/kind/actor/type/search filters, summary numbers, ingest status)
 - `changes/creators/route.ts` — Creator per resource (`?ids=account:resourceId[|createdAt]`, max 200)
 - `graph/route.ts` — Dependency graph queries (read-only GET: stats/search/hubs/neighborhood/impact/deps/project; `{status:'building'}` until a graph exists)
+- `root-cause/route.ts` — Incident root cause (GET `?op=list|get`, POST `{op:'analyze'}` manual analysis, 30 s rate limit, 202 after 120 s, error names only, `no-store`)
 
 ### Infrastructure
 - `infra-cdk/lib/awsops-stack.ts` — CDK infra (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
