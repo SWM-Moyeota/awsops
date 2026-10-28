@@ -188,6 +188,22 @@ describe('handleMention change question', () => {
   });
 });
 
+describe('handleMention root-cause question', () => {
+  it('rcaRunsBeforeChangeQuestion', async () => {
+    const slack = fakeSlack();
+    const order: string[] = [];
+    const d = {
+      ...deps(slack),
+      tryActionPlan: vi.fn(async () => { order.push('action'); return false; }),
+      tryRcaQuestion: vi.fn(async () => { order.push('rca'); return true; }),
+      tryChangeQuestion: vi.fn(async () => { order.push('change'); return false; }),
+    };
+    await handleMention(ev({ text: '<@U0BOT> 왜 고장났어 sg-1' }), d);
+    expect(order).toEqual(['action', 'rca']);
+    expect(d.ask).not.toHaveBeenCalled();
+  });
+});
+
 describe('handleMention cost question', () => {
   it('costQuestionSkipsAi', async () => {
     const slack = fakeSlack();

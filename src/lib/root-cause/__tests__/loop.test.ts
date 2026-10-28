@@ -132,3 +132,15 @@ describe('tick', () => {
     expect(d.fetch).toHaveBeenCalledWith(A, 'ap-northeast-2', graph, NOW);
   });
 });
+
+describe('default notifier', () => {
+  it('registers notifyIncident only when none is set', () => {
+    ensureRootCauseStarted();
+    const first = globalThis.__awsopsRootCause!.notifier;
+    expect(typeof first).toBe('function');
+    const mine = async () => true;
+    setIncidentNotifier(mine);
+    ensureRootCauseStarted();
+    expect(globalThis.__awsopsRootCause!.notifier).toBe(mine);
+  });
+});

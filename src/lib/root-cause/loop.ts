@@ -5,6 +5,7 @@ import { getCurrentStore } from '@/lib/dep-graph/store';
 import type { GraphData } from '@/lib/dep-graph/types';
 import { analyzeIncident, enqueueAnalysis } from './analyze';
 import { applySignals } from './incidents';
+import { notifyIncident } from './slack';
 import { fetchSignals } from './signals';
 import { rootCauseState, updateIncidents } from './store';
 import type { Analysis, Incident, Signal } from './types';
@@ -25,7 +26,7 @@ export interface LoopDeps {
   now?: () => Date;
 }
 
-/** Task 9 registers the Slack notifier here; truthy return marks the incident notified. / Slack 알림 훅 등록 — 참이면 notifiedAt 기록. */
+/** The Slack notifier is registered here (default: notifyIncident); truthy return marks the incident notified. / Slack 알림 훅 등록 — 참이면 notifiedAt 기록. */
 export function setIncidentNotifier(fn: (inc: Incident) => Promise<unknown>): void {
   rootCauseState().notifier = fn;
 }
@@ -93,6 +94,8 @@ export async function tick(deps: LoopDeps = {}): Promise<void> {
 /** Production only: first tick after 90 s, then every 300,000 ms; timers unref'd. / 프로덕션 전용, 타이머 unref. */
 export function ensureRootCauseStarted(deps: LoopDeps = {}): void {
   const s = rootCauseState();
+  // Default Slack notifier unless a test/caller already set one. / 이미 설정된 알림 훅이 없으면 기본 Slack 알림 등록
+  s.notifier ??= notifyIncident;
   if (s.started || process.env.NODE_ENV !== 'production') return;
   s.started = true;
   const first = setTimeout(() => {

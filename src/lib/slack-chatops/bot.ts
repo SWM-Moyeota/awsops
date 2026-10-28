@@ -25,6 +25,7 @@ import { saveExecution, loadExecution } from '@/lib/action-plan/executions';
 import { AP_PREFIX } from '@/lib/action-plan/cards';
 import type { ActionRequest } from '@/lib/action-plan/types';
 import { maybeHandleChangeQuestion, maybeSendDailySummary } from '@/lib/change-timeline/slack';
+import { maybeHandleRcaQuestion } from '@/lib/root-cause/slack';
 import { setDailySummaryHook } from '@/lib/change-timeline/loop';
 import { maybeHandleCostQuestion, costSummaryLine, type ExplainFn } from '@/lib/cost-radar/slack';
 import type { ThreadMessage } from './format';
@@ -161,6 +162,9 @@ async function connect(): Promise<void> {
   const deps = {
     tryControl: (event: MentionEvent) => maybeHandleControlMention(event, control),
     tryActionPlan: (event: MentionEvent) => maybeHandleActionMention(event, action),
+    tryRcaQuestion: (event: MentionEvent) => maybeHandleRcaQuestion(event, {
+      reply: async text => { await slackApi(web).postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text }); },
+    }),
     tryChangeQuestion: (event: MentionEvent) => maybeHandleChangeQuestion(event, {
       reply: async text => { await slackApi(web).postMessage({ channel: event.channel, thread_ts: event.thread_ts ?? event.ts, text }); },
     }),

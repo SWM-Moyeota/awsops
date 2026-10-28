@@ -38,6 +38,8 @@ export interface HandleDeps {
   tryControl?: (event: MentionEvent) => Promise<boolean>;
   /** AI-planned, approval-gated tag/SG/start/stop requests (src/lib/action-plan); true = handled, skip the AI. */
   tryActionPlan?: (event: MentionEvent) => Promise<boolean>;
+  /** Rule-based root-cause answers ("왜 고장났어 <리소스>"); true = handled, skip the AI. / 장애 원인 질문 */
+  tryRcaQuestion?: (event: MentionEvent) => Promise<boolean>;
   /** Rule-based change-timeline answers ("누가 만들었어?"); true = handled, skip the AI. */
   tryChangeQuestion?: (event: MentionEvent) => Promise<boolean>;
   /** Rule-based cost-change answers ("비용 왜 늘었어?"); true = handled, skip the AI. */
@@ -84,6 +86,9 @@ export async function handleMention(event: MentionEvent, deps: HandleDeps): Prom
   // Tag / security-group requests: the AI only proposes a plan; code checks it and two people approve.
   // 태그·보안그룹 변경 요청: AI는 계획만 제안하고, 코드가 검사하고, 사람 2명이 승인한다.
   if (deps.tryActionPlan && await deps.tryActionPlan(event)) return;
+  // Cause questions are answered from the cited root-cause analysis, never free-form AI.
+  // 장애 원인 질문은 인용 검증된 분석으로만 답한다.
+  if (deps.tryRcaQuestion && await deps.tryRcaQuestion(event)) return;
   // "누가 만들었어?" is answered from CloudTrail records, never by the AI.
   // 생성자 질문은 기록으로만 답한다 (AI 추측 금지).
   if (deps.tryChangeQuestion && await deps.tryChangeQuestion(event)) return;
