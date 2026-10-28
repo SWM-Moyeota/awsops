@@ -18,14 +18,14 @@ Rank suspects with a **deterministic score**; the LLM only **explains** the top 
 
 점수를 **결정적으로** 계산해 용의자 순위를 매기고, LLM은 상위 용의자를 **설명**만 한다. 인용은 **모두 검증**한다.
 
-1. **Detect** — every 5 minutes (production only, first tick after 90 s): ALB 5xx surge, unhealthy targets, EC2 status-check failure (CloudWatch `GetMetricData`), and CloudWatch alarms in `ALARM`. Manual analysis (screen, `POST /api/root-cause`, Slack question) works with detection off. Related signals within 2 hops are merged into one incident, so one alert and one AI call.
+1. **Detect** — every 5 minutes (production only, first tick after 90 s): ALB 5xx surge, unhealthy targets, EC2 status-check failure (CloudWatch `GetMetricData`), and CloudWatch alarms in `ALARM`. Manual analysis (screen, `POST /api/root-cause`, Slack question) works with detection off. Related signals within 2 hops are merged into one incident, so one alert and one AI call. The analysis runs **at least 10 minutes after the start** (CloudTrail delivers events about 5 minutes late, and the window ends at start+5 min), up to 3 attempts on later ticks; the alert goes out after the analysis, or after the third failed attempt without it, so an outage is never silent. A restarted process picks pending incidents up. CloudWatch and STS calls time out after 20 s and each account's signal fetch is capped at 60 s, so a hung call cannot stall detection.
 2. **Fetch** — `LookupEvents` with `ReadOnly=false`, window `[start-60 min, start+5 min]`; failed calls and a noise list are dropped; every CloudTrail call goes through `cloudTrailSlot` (1 request/s per account+region, shared with the change timeline and Cost Radar).
 3. **Score** — `score = time x graph x kind`, each 0..1, shown on screen. Time `exp(-dt/20 min)`; graph distance by undirected BFS (max 4 hops, no passing through vpc/subnet or nodes with more than 15 edges): 1.0 / 0.85 / 0.65 / 0.45 / 0.3, unconnected 0.08, not in graph 0.12, no target 0.5; kind by verb: destructive 1.0, modify-like 0.8, create/start 0.5, tags 0.1, other 0.6. Ties: closer to the start, then eventId.
 4. **Merged graph history** — a connection removed by the change is already gone from the current graph, so the graph builds keep snapshots (ADR-012, newest 12) and an analysis merges those inside the window plus the one just before it, and measures distance on that. The incident stores which snapshots were used.
 5. **Explain** — top 8 suspects become an evidence bundle (24,000 characters max; source IP, user agent, access key ids and parameters named password/secret/token/credential/privatekey are removed). The model answers one JSON; a cause whose `eventId` is not in the bundle is dropped, and with zero valid causes the AI text is hidden (`unverified`) and only the score ranking is shown. The AI never changes the ranking.
 6. **Read-only** — the feature calls only `cloudtrail:LookupEvents`, `cloudwatch:GetMetricData`, `cloudwatch:DescribeAlarms` and Bedrock `InvokeModel`. Logs carry error names only.
 
-- 감지: 5분마다(프로덕션만, 기동 90초 뒤 첫 tick) ALB 5xx 급증, 비정상 대상, EC2 상태 검사 실패(CloudWatch `GetMetricData`), `ALARM` 상태 알람. 감지를 꺼도 수동 분석(화면·`POST /api/root-cause`·Slack 질문)은 된다. 2단계 안의 관련 신호는 한 사건으로 합쳐 알림과 AI 호출이 하나다.
+- 감지: 5분마다(프로덕션만, 기동 90초 뒤 첫 tick) ALB 5xx 급증, 비정상 대상, EC2 상태 검사 실패(CloudWatch `GetMetricData`), `ALARM` 상태 알람. 감지를 꺼도 수동 분석(화면·`POST /api/root-cause`·Slack 질문)은 된다. 2단계 안의 관련 신호는 한 사건으로 합쳐 알림과 AI 호출이 하나다. 분석은 **시작 10분 뒤부터** 돈다(CloudTrail 이벤트가 약 5분 늦게 오고 창은 시작+5분까지라서). 실패하면 다음 tick에서 최대 3번까지 다시 하고, 알림은 분석이 끝난 뒤, 또는 세 번째 시도도 실패하면 분석 없이 보낸다. 장애가 조용히 묻히지 않는다. 재시작한 프로세스도 남은 사건을 이어 받는다. CloudWatch·STS 호출은 20초에 끊고, 계정별 신호 조회는 60초 상한이라 멈춘 호출이 감지를 막지 않는다.
 - 수집: `LookupEvents`를 `ReadOnly=false`로, 창은 `[시작-60분, 시작+5분]`. 실패한 호출과 잡음 목록은 버린다. CloudTrail 호출은 모두 `cloudTrailSlot`(계정·리전당 초당 1회, 변경 기록·비용 레이더와 공유)을 거친다.
 - 점수: `시간 × 그래프 × 종류`(각 0~1)이고 화면에 세 값을 모두 보여 준다. 같으면 시작에 더 가까운 것, 그다음 eventId.
 - 합친 그래프 이력: 변경이 끊어 버린 연결은 현재 그래프에 이미 없다. 그래서 그래프 빌드마다 스냅샷을 남기고(ADR-012, 최근 12개) 분석은 창 안 스냅샷과 바로 앞 하나를 합쳐 거리를 잰다. 어떤 스냅샷을 썼는지 사건에 저장한다.
@@ -38,7 +38,7 @@ Rank suspects with a **deterministic score**; the LLM only **explains** the top 
 |---|---|---|---|---|---|
 | Repeatability / 재현성 | Same input, same ranking; unit-testable | Varies per call | Varies per call | Deterministic | Deterministic |
 | Hallucination control / 지어냄 방지 | Citations checked against the bundle; unverified text hidden | None except a prompt rule | None | Not applicable | Not applicable |
-| Tokens per incident / 토큰 | 4-8k (top 8) | Large: hundreds of events | Largest | None | None |
+| Tokens per incident / 토큰 | about 4-8k, estimated from the 24,000-char bundle cap (top 8) / 약 4-8k(추정, 묶음 24,000자 상한 기준) | Large: hundreds of events | Largest | None | None |
 | Uses resource relationships / 관계 활용 | Yes, on the pre-change graph | Only if we paste the graph | No | No | Yes |
 | Handles a recent harmless change / 최근 무관 변경 | Down-weighted by distance and kind | Depends on the model | Depends on the model | Ranks it first | Ranks by distance only, so an old connected change beats a fresh one |
 | Measurable / 측정 가능 | Yes: top1/top3 on replayed scenarios | Costs money every run | Costs money every run | Yes | Yes |
@@ -78,13 +78,13 @@ Replayed scenarios, not real incidents: `src/lib/root-cause/eval/scenarios.ts` h
 ## Consequences / 결과
 
 - **Cost:** CloudWatch `GetMetricData` is about $2/month at the sandbox's size (about 22 metrics x 288 runs/day x 30 days); `rootCause.autoDetect: false` in `data/config.json` turns detection off, and manual analysis still works. One Bedrock call per incident (maxTokens 1200); a manual re-analysis is limited to once per 30 s per process.
-- **Limits:** only the 15 resource types of the dependency graph have a distance (others rank with the "not in graph" weight); no log analysis yet; CloudTrail delivery delay means a very recent change may not be visible yet (the window runs 5 minutes past the start); the merged graph can make a removed connection look slightly closer.
+- **Limits:** only the 15 resource types of the dependency graph have a distance (others rank with the "not in graph" weight); no log analysis yet; CloudTrail delivery delay can still hide a change that arrives later than usual (the analysis waits 10 minutes after the start and the window runs 5 minutes past it); the merged graph can make a removed connection look slightly closer.
 - Analyses run one at a time in the process because they share the CloudTrail slot with the change timeline.
 - If the AI fails or its citations are all invalid, the incident and the ranking are still kept; only the explanation is hidden.
 - The feature changes no AWS resource and has no undo button (undoing belongs to ADR-011).
 
 - 비용: CloudWatch `GetMetricData`가 샌드박스 규모에서 월 약 2달러(지표 약 22개 × 하루 288회 × 30일)다. `data/config.json`의 `rootCause.autoDetect: false`로 감지를 끌 수 있고 수동 분석은 계속 된다. Bedrock 호출은 사건당 한 번(maxTokens 1200), 다시 분석은 프로세스 전체에서 30초에 한 번이다.
-- 한계: 의존성 그래프 15종만 거리를 잰다(그 밖은 "그래프에 없음" 가중치). 로그 분석은 아직 없다. CloudTrail 전달 지연 때문에 아주 최근 변경은 안 보일 수 있다(창은 시작 뒤 5분까지). 합친 그래프는 끊어진 연결을 조금 가깝게 보이게 할 수 있다.
+- 한계: 의존성 그래프 15종만 거리를 잰다(그 밖은 "그래프에 없음" 가중치). 로그 분석은 아직 없다. CloudTrail 전달이 평소보다 늦으면 변경이 안 보일 수 있다(분석은 시작 10분 뒤, 창은 시작 뒤 5분까지). 합친 그래프는 끊어진 연결을 조금 가깝게 보이게 할 수 있다.
 - 분석은 CloudTrail 호출 칸을 변경 기록과 나누므로 프로세스 안에서 한 번에 하나씩 돈다.
 - AI가 실패하거나 인용이 모두 무효여도 사건과 순위는 남고 설명만 숨긴다.
 - AWS 리소스를 바꾸지 않고 되돌리기 버튼도 없다(되돌리기는 ADR-011의 몫).
@@ -94,12 +94,12 @@ Replayed scenarios, not real incidents: `src/lib/root-cause/eval/scenarios.ts` h
 1. Scoring research on a **separate held-out scenario set** (not these 24), so weights are tuned on one set and judged on another.
 2. Drain-style log templates once the sandbox has usable application logs.
 3. A real drill in the sandbox (create a test server and security group and break it on purpose). It creates AWS resources, so it needs explicit approval first.
-4. Timeouts on the CloudWatch fetch (a hung call can currently delay a detection tick).
+4. ~~Timeouts on the CloudWatch fetch~~ — done: 20 s per CloudWatch/STS call, 60 s per account fetch.
 
 1. 지금 24개가 아닌 **별도의 보류 시나리오 세트**로 점수 연구를 한다(한 세트로 조정하고 다른 세트로 판단).
 2. 샌드박스에 쓸 만한 애플리케이션 로그가 생기면 Drain 방식 로그 템플릿.
 3. 샌드박스에서 실제 훈련(시험용 서버와 보안그룹을 만들어 일부러 망가뜨리기). AWS 리소스를 만드는 일이라 먼저 승인을 받는다.
-4. CloudWatch 조회에 타임아웃(멈춘 호출이 감지 tick을 늦출 수 있다).
+4. ~~CloudWatch 조회에 타임아웃~~ — 완료: CloudWatch·STS 호출 20초, 계정별 조회 60초 상한.
 
 ## When to revisit / 다시 검토할 때
 

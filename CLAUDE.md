@@ -23,7 +23,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 |------|------|
 | 페이지 | 46 (/root-cause 추가) |
 | 라우트 | 75 (페이지 46 + API 29) |
-| SQL 쿼리 파일 | 25 |
+| SQL 쿼리 파일 | 27 |
 | API 라우트 | 29 (root-cause 추가) |
 | 컴포넌트 | 43 (root-cause 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
@@ -89,7 +89,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 
 ### 핵심 라이브러리 (`src/lib/`)
 - `steampipe.ts` — pg 풀 + 배치 쿼리 + 캐시 + Cost 가용성 probe + buildSearchPath + runCostQueriesPerAccount
-- `queries/*.ts` — 25개 SQL 쿼리 파일 (ebs, msk, opensearch, container-cost, eks-container-cost, bedrock 포함)
+- `queries/*.ts` — 27개 SQL 쿼리 파일 (ebs, msk, opensearch, container-cost, eks-container-cost, bedrock 포함)
 - `resource-inventory.ts` — 리소스 인벤토리 스냅샷 (data/inventory/, 추가 쿼리 0건)
 - `cost-snapshot.ts` — Cost 데이터 스냅샷 폴백 (data/cost/)
 - `app-config.ts` — 앱 설정 (costEnabled, agentRuntimeArn, codeInterpreterName, memoryId, accounts[], customerLogo, adminEmails)
@@ -244,7 +244,7 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 |------|-------|
 | Pages | 46 (incl. /root-cause) |
 | Routes | 75 (46 pages + 29 APIs) |
-| SQL Query Files | 25 |
+| SQL Query Files | 27 |
 | API Routes | 29 (incl. root-cause) |
 | Components | 43 (incl. 6 root-cause components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
@@ -308,7 +308,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 
 ### Core Libraries (`src/lib/`)
 - `steampipe.ts` — pg Pool + batchQuery + cache + checkCostAvailability + buildSearchPath + runCostQueriesPerAccount
-- `queries/*.ts` — 25 SQL query files (incl. ebs, msk, opensearch, container-cost, eks-container-cost, bedrock)
+- `queries/*.ts` — 27 SQL query files (incl. ebs, msk, opensearch, container-cost, eks-container-cost, bedrock)
 - `resource-inventory.ts` — Resource inventory snapshots (data/inventory/, zero extra queries)
 - `cost-snapshot.ts` — Cost data snapshot fallback (data/cost/)
 - `app-config.ts` — App config (costEnabled, agentRuntimeArn, codeInterpreterName, memoryId, accounts[])

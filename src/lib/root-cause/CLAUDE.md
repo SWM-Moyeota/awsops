@@ -5,7 +5,7 @@
 
 ## 주요 파일
 - `types.ts` — 공용 타입: `Signal`, `WriteEvent`, `Suspect`(점수 세 값), `Incident`, `Analysis`, `AiResult`.
-- `signals.ts` — 신호 4종 감지(ALB 5xx, 비정상 대상, EC2 상태 검사, 알람). `GetMetricData`는 계정당 묶음 호출, 감시 대상은 현재 그래프에서 가져온다.
+- `signals.ts` — 신호 4종 감지(ALB 5xx, 비정상 대상, EC2 상태 검사, 알람). `GetMetricData`는 계정당 묶음 호출, 감시 대상은 현재 그래프에서 가져온다. CloudWatch 호출마다 20초 타임아웃.
 - `incidents.ts` — 사건 묶기(순수 함수): 키 `(계정, 리소스, 신호)` 중복 제거, 2단계 안 관련 신호 합치기, 30분 조용하면 `resolved`, 최대 200건.
 - `events.ts` — CloudTrail 이벤트를 `WriteEvent`로: 실패 호출·잡음 목록 제거, 요청 파라미터 정리(비밀·IP 제거), 리소스 참조 추출.
 - `graph.ts` — 이력 스냅샷 합치기(`mergeGraphs`), 이벤트 리소스를 같은 계정 노드로 찾기, 방향 무시 BFS 거리(최대 4단계, vpc·subnet·연결 15개 초과 노드는 경유 금지).
@@ -15,9 +15,9 @@
 - `explain.ts` — Bedrock 호출과 `parseAiAnswer`: 묶음에 없는 eventId 인용은 버리고, 유효한 원인이 0개면 `unverified`로 숨긴다.
 - `analyze.ts` — `lookupWriteEvents`(`ReadOnly=false`, 창 `[시작-60분, 시작+5분]`, 리전당 최대 10페이지), `analyzeIncident`, 한 번에 하나씩 도는 큐 `enqueueAnalysis`, 수동 분석 `manualAnalyze`(30초 제한).
 - `store.ts` — `data/root-cause/incidents.json`(최근 200건, 원자적 쓰기, 쓰기 체인 직렬화, 깨진 파일은 `.corrupt-<ts>`). `ROOT_CAUSE_DATA_DIR`로 경로를 바꿀 수 있다.
-- `loop.ts` — `ensureRootCauseStarted()`: 90초 뒤 첫 tick, 이후 5분마다. 프로덕션에서만, 겹치지 않음. `rootCause.autoDetect: false`면 감지만 끈다.
+- `loop.ts` — `ensureRootCauseStarted()`: 90초 뒤 첫 tick, 이후 5분마다. 프로덕션에서만, 겹치지 않음. `rootCause.autoDetect: false`면 감지만 끈다. tick은 새 사건을 저장만 하고, 분석은 **시작 10분 뒤부터**(CloudTrail 이벤트가 약 5분 늦게 옴) 이후 tick에서 최대 3번(`analysisAttempts`) 시도한다. 성공하면 `saveAnalysis` 후 알림, 세 번째도 실패하면 분석 없이 알림(장애를 조용히 묻지 않음). 사건 하나에 알림 최대 하나, 재시작 뒤에도 남은 사건을 이어 받는다. 계정별 신호 조회는 60초 상한(`withCap`).
 - `api.ts` — `/api/root-cause` 처리기(목록·상세·수동 분석). 라우트 파일은 얇다.
-- `slack.ts` — 새 사건 알림(봇 채널 우선, 안 되면 헬스 웹훅), `detectRcaQuestion`/`maybeHandleRcaQuestion`(규칙으로 감지, 리소스를 못 찾으면 AI로 넘김).
+- `slack.ts` — 새 사건 알림(봇 채널 우선, 안 되면 헬스 웹훅), `detectRcaQuestion`/`maybeHandleRcaQuestion`(규칙으로 감지, 리소스를 못 찾으면 AI로 넘김, 비용 단어가 있으면 비용 처리기로 넘김).
 - `eval/scenarios.ts` + `__tests__/eval.test.ts` — 재현 시험 24개(+`knownLimit` 3개). 1위 ≥ 0.45, 3위 안 ≥ 0.9가 `npm test`의 관문이다.
 
 ## 규칙
@@ -38,7 +38,7 @@ Answers "who changed what just before it broke?". Detects anomalies from CloudWa
 
 ## Key Files
 - `types.ts` — shared types: `Signal`, `WriteEvent`, `Suspect` (three score parts), `Incident`, `Analysis`, `AiResult`.
-- `signals.ts` — the four signals (ALB 5xx, unhealthy targets, EC2 status checks, alarms). One batched `GetMetricData` per account; watch targets come from the current graph.
+- `signals.ts` — the four signals (ALB 5xx, unhealthy targets, EC2 status checks, alarms). One batched `GetMetricData` per account; watch targets come from the current graph. Every CloudWatch call times out after 20 s.
 - `incidents.ts` — incident grouping (pure): dedupe by `(account, resource, signal)`, join related signals within 2 hops, `resolved` after 30 quiet minutes, max 200.
 - `events.ts` — CloudTrail event to `WriteEvent`: drops failed calls and the noise list, sanitizes request parameters (secrets and IPs removed), extracts resource refs.
 - `graph.ts` — merge history snapshots (`mergeGraphs`), resolve event refs to same-account nodes, undirected BFS distance (max 4 hops, no passing through vpc/subnet or nodes with more than 15 edges).
@@ -48,9 +48,9 @@ Answers "who changed what just before it broke?". Detects anomalies from CloudWa
 - `explain.ts` — the Bedrock call and `parseAiAnswer`: citations of event IDs not in the bundle are dropped; zero valid causes hides the text as `unverified`.
 - `analyze.ts` — `lookupWriteEvents` (`ReadOnly=false`, window `[start-60 min, start+5 min]`, max 10 pages per region), `analyzeIncident`, the one-at-a-time queue `enqueueAnalysis`, and `manualAnalyze` (30 s rate limit).
 - `store.ts` — `data/root-cause/incidents.json` (newest 200, atomic writes, writes serialized on one chain, a broken file moves to `.corrupt-<ts>`; `ROOT_CAUSE_DATA_DIR` overrides the path).
-- `loop.ts` — `ensureRootCauseStarted()`: first tick after 90 s, then every 5 min. Production only, no overlap. `rootCause.autoDetect: false` turns off detection only.
+- `loop.ts` — `ensureRootCauseStarted()`: first tick after 90 s, then every 5 min. Production only, no overlap. `rootCause.autoDetect: false` turns off detection only. A tick only stores new incidents; the analysis runs on a later tick **from 10 minutes after the start** (CloudTrail delivers events about 5 minutes late), up to 3 attempts (`analysisAttempts`). Success saves via `saveAnalysis` then alerts; after the third failure the alert goes out without an analysis, so an outage is never silent. At most one alert per incident, and a restarted process picks pending incidents up. Each account's signal fetch is capped at 60 s (`withCap`).
 - `api.ts` — `/api/root-cause` handlers (list, get, manual analyze); the route file stays thin.
-- `slack.ts` — new-incident alert (bot channel first, health webhook as fallback), `detectRcaQuestion`/`maybeHandleRcaQuestion` (rule-based; if no resource is found it falls through to the AI).
+- `slack.ts` — new-incident alert (bot channel first, health webhook as fallback), `detectRcaQuestion`/`maybeHandleRcaQuestion` (rule-based; if no resource is found it falls through to the AI, and a cost word hands it to the cost handler).
 - `eval/scenarios.ts` + `__tests__/eval.test.ts` — 24 replayed scenarios (+3 `knownLimit`). top-1 >= 0.45 and top-3 >= 0.9 are the `npm test` gate.
 
 ## Rules
