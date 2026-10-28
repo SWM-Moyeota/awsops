@@ -36,6 +36,14 @@
 - `changes/format.ts` — 문장(받침에 맞춘 을/를·이/가), KST 시각, 날짜 묶음, 도구 이름 `toolLabel(tool, via?)`, 콘솔 링크 — 다른 화면·Slack이 재사용
 - `changes/CreatorBadge.tsx` + `useCreators.ts` + `creator-text.ts`/`creator-batch.ts` — S3·EC2·RDS 목록의 "○○님이 만들었어요" 배지 (50개씩 묶어 `/api/changes/creators` 조회, 깨진 시각은 날짜 없이 조회)
 
+### dep-graph/ — 의존성 그래프 (5 + 헬퍼) — 자세한 내용은 `dep-graph/CLAUDE.md`
+- `dep-graph/DepGraphView.tsx` — `/dependency-graph` 본문 (빌드 상태 "N분 전 기준", 검색, 탭: 관계 보기 · 프로젝트 정리 미리보기, 허브 카드)
+- `dep-graph/GraphCanvas.tsx` — React Flow 관계도 (노드 클릭 시 중심 이동, 종류별 색, 한국어 간선 라벨)
+- `dep-graph/ImpactPanel.tsx` — "이걸 바꾸거나 지우면 영향 받는 리소스 N개" · 쓰는 것 · 리소스 정보
+- `dep-graph/ProjectPreviewPanel.tsx` — 씨앗 입력과 정리 순서·막는 것·공유로 빠진 것 ("안내만 해요 — 실제로 지우지 않아요")
+- `dep-graph/SearchBox.tsx` — 이름·ID 검색
+- `dep-graph/layout.ts` — 열 배치 순수 함수 (중심 가운데, 나를 쓰는 쪽 왼쪽, 내가 쓰는 쪽 오른쪽)
+
 ### charts/ — Recharts 차트 래퍼 (3)
 - `charts/BarChartCard.tsx` — 바 차트
 - `charts/LineChartCard.tsx` — 라인 차트
@@ -94,6 +102,14 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 - `changes/ChangeTimelineView.tsx` — `/changes` body (summary sentence, pill filters, search, day-grouped rows, status line, empty/error/loading states)
 - `changes/ChangeSummary.tsx` · `ChangeFilters.tsx` · `ChangeRow.tsx` · `ChangeDetailPanel.tsx` — stat cards, chips + search, sentence row, detail panel (lazy same-resource history, console link)
 - `changes/format.ts` — sentences (을/를 · 이/가 by 받침), KST times, day grouping, `toolLabel(tool, via?)`, console links — reused by other views and Slack
+
+### dep-graph/ — Dependency graph (5 + helper) — see `dep-graph/CLAUDE.md`
+- `dep-graph/DepGraphView.tsx` — `/dependency-graph` body (build status "as of N min ago", search, tabs: relationship view / project cleanup preview, hub cards)
+- `dep-graph/GraphCanvas.tsx` — React Flow map (click a node to re-center, per-kind colors, Korean edge labels)
+- `dep-graph/ImpactPanel.tsx` — "N resources affected if changed or deleted", what it uses, resource info
+- `dep-graph/ProjectPreviewPanel.tsx` — seed input plus cleanup order, blockers and shared-and-excluded nodes ("guidance only — nothing is deleted")
+- `dep-graph/SearchBox.tsx` — name/ID search
+- `dep-graph/layout.ts` — pure column-layout function (center in the middle, dependents on the left, dependencies on the right)
 
 ### charts/ — Recharts Chart Wrappers (3)
 - `charts/BarChartCard.tsx` — Bar chart

@@ -3,7 +3,7 @@
 ## 역할
 Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 라우트 세그먼트.
 
-## 페이지 (44개)
+## 페이지 (45개)
 
 ### Overview (5)
 - `page.tsx` — 대시보드 홈 (20 StatsCards, Cost 가용성 감지, 인벤토리 스냅샷, 캐시 워머 상태 바)
@@ -23,12 +23,13 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 ### EKS 하위 (4)
 - `k8s/pods/page.tsx`, `k8s/nodes/page.tsx`, `k8s/deployments/page.tsx`, `k8s/services/page.tsx`
 
-### Network & CDN (6)
+### Network & CDN (7)
 - `vpc/page.tsx` — VPC/Subnet/SG/TGW/ELB/NAT/IGW + 리소스 맵
 - `cloudfront-cdn/page.tsx` — CloudFront 배포
 - `waf/page.tsx` — WAF Web ACL/규칙
 - `topology/page.tsx` — 인프라 맵 + K8s 맵 (React Flow)
 - `topology-view/page.tsx` — 편집 가능한 토폴로지 뷰 + 자연어 채팅 편집
+- `dependency-graph/page.tsx` — 의존성 그래프 (리소스 검색 → React Flow 관계도, 영향 받는 리소스 패널, 프로젝트 정리 미리보기, 안내만)
 - `diagram/page.tsx` — 2D 보고서 스타일 다이어그램 (PNG) + 자연어 채팅
 
 ### Storage & DB (7)
@@ -64,7 +65,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `security/page.tsx` — Public S3, Open SG, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 벤치마크
 
-## API 라우트 (27개)
+## API 라우트 (28개)
 
 | API | 설명 |
 |-----|------|
@@ -91,6 +92,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 | `api/cost-radar/explain/route.ts` | 돈 탐정 — 월 예상 비용이 왜 바뀌었는지 설명 (`?accountId=<12자리\|__all__>&days=1\|7\|30`, 스냅샷 + 변경 기록 기반, 새 CloudTrail/Steampipe 호출 없음, 잘못된 입력 400, 500은 오류 이름만, `no-store`) |
 | `api/changes/creators/route.ts` | 리소스별 만든 사람 (`?ids=계정:리소스ID[|생성시각ISO],...` 최대 200개, 잘못된 형식 400) — S3·EC2·RDS 목록 배지용 |
 | `api/changes/route.ts` | 변경 기록 조회 (`?accountId=<12자리\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`, 잘못된 계정·기간·종류·서비스 400, 500은 오류 이름만, `no-store`) |
+| `api/graph/route.ts` | 의존성 그래프 (읽기 전용 GET: `?op=stats\|search\|hubs\|neighborhood\|impact\|deps\|project`, `arn`(`arn:` 시작, 1024자 이하)·`depth`(범위 밖은 기본값)·`q`/`prefix`(100자 이하)·`tag=키=값`·`vpc=<arn>`, 응답에 `builtAt`, 그래프 없으면 `200 {status:'building'}`, 모르는 arn 404, 잘못된 입력 400, 500은 오류 이름만) |
 | `api/inventory/export/route.ts` | 인벤토리 XLSX 내보내기 (리소스별 시트 + Summary) |
 | `api/diagram/route.ts` | 2D 다이어그램 PNG 생성 (라이브 쿼리 → Python 렌더러) |
 | `api/diagram-chat/route.ts` | 다이어그램 채팅 — 자연어 → 다이어그램 생성 옵션 |
@@ -110,7 +112,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 ## Role
 Next.js 14 App Router pages and API routes. Each subdirectory is a route segment.
 
-## Pages (44)
+## Pages (45)
 
 ### Overview (5)
 - `page.tsx` — Dashboard home (20 StatsCards, Cost availability detection, inventory snapshot, cache warmer status)
@@ -130,12 +132,13 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 ### EKS Sub-pages (4)
 - `k8s/pods/page.tsx`, `k8s/nodes/page.tsx`, `k8s/deployments/page.tsx`, `k8s/services/page.tsx`
 
-### Network & CDN (6)
+### Network & CDN (7)
 - `vpc/page.tsx` — VPC/Subnet/SG/TGW/ELB/NAT/IGW + Resource Map
 - `cloudfront-cdn/page.tsx` — CloudFront distributions
 - `waf/page.tsx` — WAF Web ACLs/rules
 - `topology/page.tsx` — Infra Map + K8s Map (React Flow)
 - `topology-view/page.tsx` — Editable topology view + natural-language chat edits
+- `dependency-graph/page.tsx` — Dependency graph (resource search -> React Flow map, affected-resources panel, project cleanup preview; guidance only)
 - `diagram/page.tsx` — 2D report-style diagram (PNG) + natural-language chat
 
 ### Storage & DB (7)
@@ -171,7 +174,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `security/page.tsx` — Public S3, Open SGs, Unencrypted EBS, CVE
 - `compliance/page.tsx` — CIS v1.5~v4.0 benchmarks (431 controls)
 
-## API Routes (27)
+## API Routes (28)
 
 | API | Description |
 |-----|------------|
@@ -198,6 +201,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 | `api/cost-radar/explain/route.ts` | Cost Detective — why the monthly estimate changed (`?accountId=<12-digit\|__all__>&days=1\|7\|30`, from snapshots + change records, no new CloudTrail/Steampipe calls, 400 on bad input, 500 carries the error name only, `no-store`) |
 | `api/changes/creators/route.ts` | Creator per resource (`?ids=account:resourceId[|createdAtISO],...`, max 200, 400 on bad format) — badges on S3/EC2/RDS lists |
 | `api/changes/route.ts` | Change timeline (`?accountId=<12-digit\|__all__>&range=24h\|7d\|30d\|90d\|all&kind=create\|delete&actor=&type=&q=`; 400 on bad account/range/kind/type, 500 carries the error name only, `no-store`) |
+| `api/graph/route.ts` | Dependency graph (read-only GET: `?op=stats\|search\|hubs\|neighborhood\|impact\|deps\|project`; `arn` (starts with `arn:`, max 1024), `depth` (out of range uses default), `q`/`prefix` (max 100), `tag=key=value`, `vpc=<arn>`; responses carry `builtAt`; `200 {status:'building'}` until a graph exists; 404 unknown arn, 400 bad input, 500 carries the error name only) |
 | `api/inventory/export/route.ts` | Inventory XLSX export (one sheet per resource type + Summary) |
 | `api/diagram/route.ts` | 2D diagram PNG generation (live queries -> Python renderer) |
 | `api/diagram-chat/route.ts` | Diagram chat — natural language -> diagram generation options |

@@ -21,14 +21,14 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 ## 현황 (v1.8.0)
 | 항목 | 수치 |
 |------|------|
-| 페이지 | 44 (/changes 추가) |
-| 라우트 | 71 (페이지 44 + API 27) |
+| 페이지 | 45 (/dependency-graph 추가) |
+| 라우트 | 73 (페이지 45 + API 28) |
 | SQL 쿼리 파일 | 25 |
-| API 라우트 | 27 (changes, changes/creators, cost-radar/explain 추가) |
-| 컴포넌트 | 31 (changes 6종 추가) |
+| API 라우트 | 28 (graph 추가) |
+| 컴포넌트 | 36 (dep-graph 5종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 19 (등록표 `src/lib/ai/registry.ts`의 라우트 수 — 아래 우선순위 표는 그중 대표 11개) |
-| ADR | 11 (001-011) |
+| ADR | 12 (001-012) |
 
 ## 필수 규칙
 
@@ -114,6 +114,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `slack-control/` — Slack 2단계 승인으로 EC2 켜기/끄기/재부팅 (AI 미경유, 태그 조건 IAM) — `src/lib/slack-control/CLAUDE.md`
 - `action-plan/` — 안전한 AI 실행: Slack에서 태그·보안그룹 인바운드·켜기/끄기 변경 (AI는 계획만, 대상·규칙·실행은 코드, 2단계 승인, 세션 정책, 해시 체인 감사, 되돌리기, 기본 꺼짐 — ADR-011) — `src/lib/action-plan/CLAUDE.md`
 - `change-timeline/` — 변경 기록: 누가 어떤 리소스를 만들고 지웠는지 (CloudTrail 90일 백필 + 10분 증분, `/changes`·만든 사람 배지·Slack) — `src/lib/change-timeline/CLAUDE.md`
+- `dep-graph/` — 의존성 그래프: 리소스 15종의 관계를 Steampipe에서 뽑아 PGlite(재귀 CTE)에 담고 "지우면 뭐가 영향 받는지" 안내 (15분 주기 재빌드, `data/graph/latest.json`, `/dependency-graph`·안전한 AI 실행 카드 참고 줄, 안내만 — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 600ms) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
 ### API 라우트 (`src/app/api/`, 26개 — 전체 목록은 `src/app/CLAUDE.md`)
@@ -138,6 +139,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `cost-radar/creators/route.ts` — 리소스 생성자 조회 (CloudTrail, 최대 50개)
 - `changes/route.ts` — 변경 기록 조회 (기간·종류·사람·서비스·검색 필터, 요약 문장용 숫자, 수집 상태)
 - `changes/creators/route.ts` — 리소스별 만든 사람 (`?ids=계정:리소스ID[|생성시각]`, 최대 200개)
+- `graph/route.ts` — 의존성 그래프 조회 (읽기 전용 GET: stats/search/hubs/neighborhood/impact/deps/project, 그래프 없으면 `{status:'building'}`)
 
 ### 인프라
 - `infra-cdk/lib/awsops-stack.ts` — CDK 인프라 (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
@@ -238,14 +240,14 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 ## Stats (v1.8.0)
 | Item | Count |
 |------|-------|
-| Pages | 44 (incl. /changes) |
-| Routes | 71 (44 pages + 27 APIs) |
+| Pages | 45 (incl. /dependency-graph) |
+| Routes | 73 (45 pages + 28 APIs) |
 | SQL Query Files | 25 |
-| API Routes | 27 (incl. changes, changes/creators, cost-radar/explain) |
-| Components | 31 (incl. 6 changes components) |
+| API Routes | 28 (incl. graph) |
+| Components | 36 (incl. 5 dep-graph components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 19 (routes in the registry, `src/lib/ai/registry.ts` — the priority table below shows the main 11) |
-| ADRs | 11 (001-011) |
+| ADRs | 12 (001-012) |
 
 ## Critical Rules
 
@@ -329,6 +331,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `slack-control/` — Two-step-approved EC2 start/stop/reboot from Slack (no AI, tag-conditioned IAM) — `src/lib/slack-control/CLAUDE.md`
 - `action-plan/` — Safe AI actions: tag, SG inbound and start/stop changes from Slack (the AI only plans; targets, rules and execution are code; two-step approval, session policy, hash-chained audit, undo; off by default — ADR-011) — `src/lib/action-plan/CLAUDE.md`
 - `change-timeline/` — Change timeline: who created/deleted which resource (CloudTrail 90-day backfill + 10-min incremental; `/changes`, creator badges, Slack) — `src/lib/change-timeline/CLAUDE.md`
+- `dep-graph/` — Dependency graph: extracts relationships of 15 resource kinds from Steampipe into PGlite (recursive CTE) and shows what is affected if one is deleted (rebuilt every 15 min, `data/graph/latest.json`, `/dependency-graph` and a reference line on safe-AI-action cards, guidance only — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `cloudtrail-access.ts` — Shared CloudTrail pacing (600 ms per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
 ### API Routes (`src/app/api/`, 26 routes — full list in `src/app/CLAUDE.md`)
@@ -353,6 +356,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `cost-radar/creators/route.ts` — Resource creator lookup (CloudTrail, max 50)
 - `changes/route.ts` — Change timeline (range/kind/actor/type/search filters, summary numbers, ingest status)
 - `changes/creators/route.ts` — Creator per resource (`?ids=account:resourceId[|createdAt]`, max 200)
+- `graph/route.ts` — Dependency graph queries (read-only GET: stats/search/hubs/neighborhood/impact/deps/project; `{status:'building'}` until a graph exists)
 
 ### Infrastructure
 - `infra-cdk/lib/awsops-stack.ts` — CDK infra (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
