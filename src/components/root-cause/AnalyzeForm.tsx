@@ -10,6 +10,7 @@ import { useGraph, type SearchBody } from '@/components/dep-graph/api';
 import { typeColor } from '@/components/dep-graph/layout';
 import { analyze, RootCauseError, type AnalyzeResult } from './api';
 import { fromLocalInput, toLocalInput } from './format';
+import { isFresh, searchKeyAction } from './selection';
 
 const DEBOUNCE_MS = 250;
 const MAX_Q = 100;
@@ -32,29 +33,47 @@ export default function AnalyzeForm({ accountId, onResult }: Props) {
   const [atText, setAtText] = useState(() => toLocalInput(new Date()));
   const [touched, setTouched] = useState(false);
   const [running, setRunning] = useState(false);
+  const [dataQ, setDataQ] = useState<string | null>(null);
   const ctrlRef = useRef<AbortController | null>(null);
+  const accountRef = useRef(accountId);
+  accountRef.current = accountId;
 
   useEffect(() => {
     const id = setTimeout(() => setQ(text.trim().slice(0, MAX_Q)), DEBOUNCE_MS);
     return () => clearTimeout(id);
   }, [text]);
   useEffect(() => () => ctrlRef.current?.abort(), []);
-  // A pick belongs to one account. / 고른 리소스는 계정마다 다르다.
-  useEffect(() => { setPicked(null); }, [accountId]);
+  // A pick and a running analysis belong to one account: drop both on switch. / 계정이 바뀌면 고른 리소스와 진행 중 분석을 버린다.
+  useEffect(() => {
+    setPicked(null);
+    ctrlRef.current?.abort();
+    ctrlRef.current = null;
+    setRunning(false);
+  }, [accountId]);
 
   const params = useMemo(() => (q ? { op: 'search', q, accountId } : null), [q, accountId]);
   const search = useGraph<SearchBody>(params);
-  const results = search.data?.results ?? [];
-  useEffect(() => { setActive(0); }, [search.data]);
+  // Remember which query the shown results are for. / 보이는 결과가 어떤 검색어의 것인지 기억한다.
+  useEffect(() => { setActive(0); if (search.data) setDataQ(q); }, [search.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const results = useMemo(() => (dataQ === q ? search.data?.results ?? [] : []), [dataQ, q, search.data]);
+  const fresh = isFresh({ text, q, dataQ, loading: search.loading, maxQ: MAX_Q });
 
   const pick = (n: GraphNode) => { setPicked(n); setOpen(false); setText(''); setQ(''); };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') { setOpen(false); return; }
-    if (!open || results.length === 0) return;
-    if (e.key === 'ArrowDown') { e.preventDefault(); setActive((i) => (i + 1) % results.length); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((i) => (i - 1 + results.length) % results.length); }
-    else if (e.key === 'Enter') { e.preventDefault(); const n = results[active]; if (n) pick(n); }
+    const onOption = (e.target as HTMLElement).getAttribute?.('role') === 'option';
+    const act = searchKeyAction(e.key, { open, count: results.length, active, fresh, onOption });
+    if (!act) return;
+    if (act.type === 'close') { setOpen(false); return; }
+    e.preventDefault();
+    if (act.type === 'move') {
+      setActive(act.index);
+      // Keep focus with the highlight when moving between option buttons. / 결과 버튼 사이를 움직이면 포커스도 따라간다.
+      if (onOption) document.getElementById(`rc-opt-${act.index}`)?.focus();
+      return;
+    }
+    const n = results[act.index];
+    if (n) pick(n);
   };
 
   const now = new Date();
@@ -68,15 +87,19 @@ export default function AnalyzeForm({ accountId, onResult }: Props) {
     ctrlRef.current?.abort();
     const ctrl = new AbortController();
     ctrlRef.current = ctrl;
+    const startedFor = accountId;
+    // Ignore a result that lands after an account switch, even before the abort effect runs.
+    // 계정이 바뀐 뒤 도착한 결과는 버린다(abort 효과가 돌기 전이라도).
+    const gone = () => ctrl.signal.aborted || accountRef.current !== startedFor;
     setRunning(true);
     try {
       const r = await analyze({ accountId: picked.accountId, resourceArn: picked.arn, ...(at ? { at } : {}) }, ctrl.signal);
-      if (!ctrl.signal.aborted) onResult(r);
+      if (!gone()) onResult(r);
     } catch (e) {
-      if (ctrl.signal.aborted) return;
+      if (gone()) return;
       onResult({ kind: 'error', status: e instanceof RootCauseError ? e.status : 0 });
     } finally {
-      if (!ctrl.signal.aborted) setRunning(false);
+      if (!gone()) setRunning(false);
     }
   };
 
@@ -129,10 +152,10 @@ export default function AnalyzeForm({ accountId, onResult }: Props) {
               />
               {open && q && (
                 <div id="rc-search-results" role="listbox" className="absolute z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-lg border border-navy-600 bg-navy-800 shadow-xl">
-                  {search.loading && <div className="px-3 py-2 text-xs text-gray-500">{t('rootCause.analyze.searching')}</div>}
+                  {!fresh && !search.error && !search.building && <div className="px-3 py-2 text-xs text-gray-500">{t('rootCause.analyze.searching')}</div>}
                   {search.building && <div className="px-3 py-2 text-xs text-accent-cyan">{t('rootCause.analyze.graphBuilding')}</div>}
                   {!search.loading && search.error && <div className="px-3 py-2 text-xs text-accent-red">{t('rootCause.analyze.searchError')}</div>}
-                  {!search.loading && !search.error && search.data && results.length === 0 && (
+                  {fresh && results.length === 0 && (
                     <div className="px-3 py-2 text-xs text-gray-500">{t('rootCause.analyze.noResults')}</div>
                   )}
                   {results.map((n, i) => (
@@ -146,6 +169,7 @@ export default function AnalyzeForm({ accountId, onResult }: Props) {
                       // 마우스로 눌러도 입력창 포커스 유지, 선택은 click이라 Tab+Enter로도 된다.
                       onMouseDown={(e) => e.preventDefault()}
                       onMouseEnter={() => setActive(i)}
+                      onFocus={() => setActive(i)}
                       onClick={() => pick(n)}
                       className={`flex w-full items-center gap-2 px-3 py-2 text-left ${i === active ? 'bg-navy-700' : 'hover:bg-navy-700'}`}
                     >

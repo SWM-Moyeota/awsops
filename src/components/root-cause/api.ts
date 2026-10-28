@@ -2,6 +2,7 @@
 // /api/root-cause 클라이언트(목록·상세·수동 분석) + 지난 요청을 끊는 훅.
 import { useEffect, useState } from 'react';
 import type { Incident } from '@/lib/root-cause/types';
+import { viewFor } from './selection';
 
 export interface ListBody { incidents: Incident[]; autoDetect: boolean }
 export type AnalyzeBody = { accountId: string; resourceArn: string | null; at?: string };
@@ -68,7 +69,9 @@ function useLoad<T>(key: string | null, load: (signal: AbortSignal) => Promise<T
     // `load` is derived from `key`. / load는 key로 정해진다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, reloadKey]);
-  return { data: state.data, loading: state.loading, error: state.error };
+  // Until the effect catches up, hide data stored for the previous key. / 효과가 따라잡기 전엔 이전 키의 데이터를 숨긴다.
+  const view = viewFor(state, key);
+  return { data: view.data, loading: view.loading, error: view.stale ? null : state.error };
 }
 
 /** Incident list for an account (`__all__` = every account). / 계정의 사건 목록. */

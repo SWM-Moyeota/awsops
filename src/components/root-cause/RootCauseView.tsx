@@ -11,6 +11,7 @@ import AnalyzeForm, { type AnalyzeOutcome } from './AnalyzeForm';
 import IncidentList from './IncidentList';
 import IncidentDetail from './IncidentDetail';
 import { useIncident, useIncidentList } from './api';
+import { isForeign } from './selection';
 
 const RUNNING_REFRESH_MS = 30_000;
 const TOAST_MS = 5_000;
@@ -46,6 +47,13 @@ export default function RootCauseView() {
   // URL wins; otherwise show the newest incident. / URL이 우선, 없으면 가장 최근 사건.
   const selectedId = selectedFromUrl ?? incidents[0]?.id ?? null;
   const detail = useIncident(selectedId, reloadKey);
+  // A ?id from another account (e.g. after switching accounts) is dropped, so the newest incident of this account shows.
+  // Checked against the incident's own account, so a Slack link still opens under "all accounts".
+  // 다른 계정의 ?id(계정을 바꾼 뒤 등)는 버리고 이 계정의 최신 사건을 보여 준다 — 사건 자신의 계정으로 판단해 "전체 계정"에서는 Slack 링크가 그대로 열린다.
+  const foreign = !!detail.data && isForeign(detail.data.accountId, currentAccountId);
+  useEffect(() => {
+    if (foreign && selectedFromUrl) router.replace(pathname, { scroll: false });
+  }, [foreign, selectedFromUrl, router, pathname]);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
   const select = useCallback((id: string) => {
@@ -119,7 +127,7 @@ export default function RootCauseView() {
               {detail.error.status === 404 ? t('rootCause.notFound') : t('rootCause.loadFailed')}
             </p>
           )}
-          {detail.data && <IncidentDetail incident={detail.data} accountLabel={accountLabel(detail.data.accountId)} />}
+          {detail.data && !foreign && <IncidentDetail incident={detail.data} accountLabel={accountLabel(detail.data.accountId)} />}
         </main>
       </div>
 
