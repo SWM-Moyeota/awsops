@@ -1701,5 +1701,11 @@
   "depGraph.project.blockers": "需先确认的资源",
   "depGraph.project.blockersHint": "不是候选，但正在使用候选资源",
   "depGraph.project.uses": "使用的候选: {names}",
-  "depGraph.project.shared": "因被其他地方使用而排除"
+  "depGraph.project.shared": "因被其他地方使用而排除",
+  "depGraph.warnings": "部分类型未能读取: {names}",
+  "depGraph.project.warnings": "部分类型未能读取，结果可能不准确: {names}",
+  "depGraph.project.managed": "AWS 管理的连接（删除所属服务时会一并清理）",
+  "depGraph.project.coverage": "不显示 15 种类型之外（ECS、EKS、IAM 用户等）的使用",
+  "depGraph.project.graph": "候选关系图",
+  "depGraph.project.graphHint": "从最左边的步骤开始删除"
 }

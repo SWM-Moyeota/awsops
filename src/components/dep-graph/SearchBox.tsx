@@ -31,7 +31,11 @@ export default function SearchBox({ placeholder, accountId, onPick, onlyType, re
     return () => clearTimeout(id);
   }, [text]);
 
-  const params = useMemo(() => (q ? { op: 'search', q, accountId } : null), [q, accountId]);
+  // The server filters by type too, so 20 results are all of that type. / 서버도 종류로 걸러 20개가 모두 그 종류다.
+  const params = useMemo(
+    () => (q ? { op: 'search', q, accountId, ...(onlyType ? { type: onlyType } : {}) } : null),
+    [q, accountId, onlyType],
+  );
   const { data, loading, error } = useGraph<SearchBody>(params, reloadKey);
   const results = useMemo(
     () => (data?.results ?? []).filter((n) => !onlyType || n.type === onlyType),

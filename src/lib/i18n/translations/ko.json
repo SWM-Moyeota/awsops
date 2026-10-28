@@ -1793,5 +1793,11 @@
   "depGraph.project.blockers": "먼저 확인해야 하는 것",
   "depGraph.project.blockersHint": "후보가 아닌데 후보를 쓰고 있어요",
   "depGraph.project.uses": "쓰는 후보: {names}",
-  "depGraph.project.shared": "다른 곳에서도 써서 빠진 것"
+  "depGraph.project.shared": "다른 곳에서도 써서 빠진 것",
+  "depGraph.warnings": "일부 종류를 못 읽었어요: {names}",
+  "depGraph.project.warnings": "일부 종류를 못 읽어서 결과가 틀릴 수 있어요: {names}",
+  "depGraph.project.managed": "AWS가 관리하는 연결 (연결된 서비스를 지우면 같이 정리돼요)",
+  "depGraph.project.coverage": "15종 밖(ECS·EKS·IAM 사용자 등)에서 쓰는 것은 보이지 않아요",
+  "depGraph.project.graph": "후보 관계도",
+  "depGraph.project.graphHint": "왼쪽 단계부터 지워요"
 }

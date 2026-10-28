@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Header from '@/components/layout/Header';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import { useAccountContext } from '@/contexts/AccountContext';
-import { TYPE_COLORS, typeColor } from './layout';
+import { TYPE_COLORS, layoutNeighborhood, typeColor } from './layout';
 import { minutesSince, useGraph, type HubsBody, type NeighborhoodBody, type StatsBody, type WalkBody } from './api';
 import SearchBox from './SearchBox';
 import GraphCanvas from './GraphCanvas';
@@ -77,6 +77,8 @@ export default function DepGraphView() {
 
   const s = stats.data?.stats;
   const nodeTotal = s ? Object.values(s.nodeCounts).reduce((a, b) => a + (b ?? 0), 0) : 0;
+  const warnings = s?.warnings ?? [];
+  const nbPositions = useMemo(() => (nb.data ? layoutNeighborhood({ nodes: nb.data.nodes }) : {}), [nb.data]);
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -86,6 +88,9 @@ export default function DepGraphView() {
       {s && (
         <p className="text-xs text-gray-400">
           {t('depGraph.builtAgo', { minutes: minutesSince(builtAt ?? s.builtAt, now), nodes: nodeTotal, edges: s.edgeCount })}
+          {warnings.length > 0 && (
+            <span className="ml-2 text-accent-orange">· {t('depGraph.warnings', { names: warnings.join(', ') })}</span>
+          )}
         </p>
       )}
       {stats.building && (
@@ -123,7 +128,7 @@ export default function DepGraphView() {
             )}
           </div>
 
-          {tab === 'project' && <ProjectPreviewPanel accountId={currentAccountId} reloadKey={reloadKey} />}
+          {tab === 'project' && <ProjectPreviewPanel accountId={currentAccountId} reloadKey={reloadKey} onPick={pick} />}
 
           {tab === 'relations' && !center && (
             <section className="space-y-3">
@@ -180,7 +185,14 @@ export default function DepGraphView() {
                 <div className="min-w-0 flex-1 space-y-2">
                   <div className="h-[460px] overflow-hidden rounded-lg border border-navy-600 bg-navy-900 lg:h-[calc(100vh-320px)] lg:min-h-[480px]">
                     {nb.data ? (
-                      <GraphCanvas nb={nb.data} onPick={pick} />
+                      <GraphCanvas
+                        nodes={nb.data.nodes}
+                        edges={nb.data.edges}
+                        positions={nbPositions}
+                        centerArn={nb.data.center.arn}
+                        onPick={pick}
+                        frameKey={`${nb.data.center.arn}|${nb.data.nodes.length}`}
+                      />
                     ) : nb.error ? (
                       <div className="flex h-full items-center justify-center px-6 text-center text-sm text-accent-red">
                         {nb.error.status === 404 ? t('depGraph.notFound') : t('depGraph.error')}

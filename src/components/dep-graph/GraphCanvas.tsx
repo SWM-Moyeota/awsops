@@ -1,13 +1,13 @@
 'use client';
 
-// React Flow canvas for one neighborhood: dependents left, center middle, dependencies right.
-// 주변 그래프 캔버스 — 나를 쓰는 쪽 왼쪽, 중심 가운데, 내가 쓰는 쪽 오른쪽. 노드를 누르면 그 노드가 중심이 된다.
+// React Flow canvas: the caller gives positions (neighborhood columns or cleanup steps).
+// 그래프 캔버스 — 좌표는 부르는 쪽이 준다(주변 그래프 열 또는 정리 단계). 노드를 누르면 그 노드가 중심이 된다.
 import { useMemo } from 'react';
 import ReactFlow, { Background, Controls, MarkerType, Position, type Edge, type Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { layoutNeighborhood, typeColor } from './layout';
-import type { NeighborhoodBody } from './api';
+import type { GraphEdge, GraphNode } from '@/lib/dep-graph/types';
+import { typeColor } from './layout';
 
 // First attr worth showing under the name. / 이름 아래에 보여 줄 첫 속성
 const EXTRA_KEYS = ['state', 'status', 'cidr', 'instanceType', 'engine', 'publicIp', 'privateIp', 'dnsName', 'domainName'];
@@ -21,18 +21,24 @@ function extraOf(attrs: Record<string, unknown>): string | undefined {
 }
 
 interface Props {
-  nb: NeighborhoodBody;
-  onPick: (arn: string) => void;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  positions: Record<string, { x: number; y: number }>;
+  /** Highlighted node, if any; clicking it does nothing. / 강조할 중심 노드(있으면). */
+  centerArn?: string;
+  onPick?: (arn: string) => void;
+  /** Changes when the graph should be re-framed. / 바뀌면 다시 맞춰 보인다. */
+  frameKey: string;
 }
 
-export default function GraphCanvas({ nb, onPick }: Props) {
+export default function GraphCanvas({ nodes: inNodes, edges: inEdges, positions, centerArn, onPick, frameKey }: Props) {
   const { t } = useLanguage();
 
   const { nodes, edges } = useMemo(() => {
-    const pos = layoutNeighborhood({ nodes: nb.nodes });
-    const nodes: Node[] = nb.nodes.map((n) => {
+    const pos = positions;
+    const nodes: Node[] = inNodes.map((n) => {
       const color = typeColor(n.type);
-      const isCenter = n.side === 'center' || n.arn === nb.center.arn;
+      const isCenter = n.arn === centerArn;
       const extra = extraOf(n.attrs);
       return {
         id: n.arn,
@@ -54,7 +60,7 @@ export default function GraphCanvas({ nb, onPick }: Props) {
           padding: '8px 12px',
           width: 180,
           color: '#e5e7eb',
-          cursor: 'pointer',
+          cursor: onPick ? 'pointer' : 'default',
         },
         sourcePosition: Position.Right,
         targetPosition: Position.Left,
@@ -64,7 +70,7 @@ export default function GraphCanvas({ nb, onPick }: Props) {
     });
     // src uses dst: dependents sit left of what they use, so arrows point rightwards.
     // src가 dst를 쓴다 — 쓰는 쪽이 왼쪽이라 화살표는 오른쪽을 향한다.
-    const edges: Edge[] = nb.edges.map((e) => ({
+    const edges: Edge[] = inEdges.map((e) => ({
       id: `${e.src}|${e.dst}|${e.type}`,
       source: e.src,
       target: e.dst,
@@ -76,15 +82,15 @@ export default function GraphCanvas({ nb, onPick }: Props) {
       type: 'smoothstep',
     }));
     return { nodes, edges };
-  }, [nb, t]);
+  }, [inNodes, inEdges, positions, centerArn, onPick, t]);
 
   return (
     <ReactFlow
-      // Remount per center so fitView re-frames the new graph. / 중심이 바뀌면 다시 맞춰 보이도록 재마운트
-      key={`${nb.center.arn}|${nb.nodes.length}`}
+      // Remount per frameKey so fitView re-frames the new graph. / 그래프가 바뀌면 다시 맞춰 보이도록 재마운트
+      key={frameKey}
       nodes={nodes}
       edges={edges}
-      onNodeClick={(_, node) => { if (node.id !== nb.center.arn) onPick(node.id); }}
+      onNodeClick={(_, node) => { if (onPick && node.id !== centerArn) onPick(node.id); }}
       nodesDraggable={false}
       nodesConnectable={false}
       fitView

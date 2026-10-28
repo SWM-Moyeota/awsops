@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { layoutNeighborhood, TYPE_COLORS } from '../layout';
+import { layoutNeighborhood, layoutSteps, TYPE_COLORS } from '../layout';
 
 type Side = 'center' | 'dependent' | 'dependency';
 const n = (arn: string, type: string, name: string, depth: number, side: Side) => ({ arn, type, name, depth, side });
@@ -44,6 +44,22 @@ describe('layoutNeighborhood', () => {
   });
 });
 
+describe('layoutSteps', () => {
+  it('one column per step (x = i*260), sorted by arn, centred on y=0', () => {
+    const pos = layoutSteps([
+      { step: 1, arns: ['arn:b', 'arn:a'], cycle: false },
+      { step: 2, arns: ['arn:c'], cycle: false },
+      { step: 3, arns: ['arn:f', 'arn:d', 'arn:e'], cycle: true },
+    ]);
+    expect(pos).toEqual({
+      'arn:a': { x: 0, y: -40 }, 'arn:b': { x: 0, y: 40 },
+      'arn:c': { x: 260, y: 0 },
+      'arn:d': { x: 520, y: -80 }, 'arn:e': { x: 520, y: 0 }, 'arn:f': { x: 520, y: 80 },
+    });
+  });
+  it('empty order gives no positions', () => expect(layoutSteps([])).toEqual({}));
+});
+
 describe('TYPE_COLORS', () => {
   it('uses only theme accents plus gray', () => {
     const allowed = new Set(['#00d4ff', '#00ff88', '#a855f7', '#f59e0b', '#ef4444', '#6b7280']);
@@ -63,6 +79,10 @@ describe('depGraph i18n parity', () => {
   it('has depGraph keys in ko.json', () => {
     expect(keys.length).toBeGreaterThan(20);
     expect(ko['depGraph.project.notice']).toBe('안내만 해요 — 실제로 지우지 않아요');
+    expect(ko['depGraph.project.managed']).toBe('AWS가 관리하는 연결 (연결된 서비스를 지우면 같이 정리돼요)');
+    expect(ko['depGraph.project.coverage']).toBe('15종 밖(ECS·EKS·IAM 사용자 등)에서 쓰는 것은 보이지 않아요');
+    expect(ko['depGraph.warnings']).toBe('일부 종류를 못 읽었어요: {names}');
+    expect(ko['depGraph.project.warnings']).toBe('일부 종류를 못 읽어서 결과가 틀릴 수 있어요: {names}');
   });
 
   it('every depGraph key in ko.json exists in en.json and zh.json', () => {

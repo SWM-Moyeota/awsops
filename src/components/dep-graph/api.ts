@@ -12,7 +12,7 @@ export interface HubsBody { builtAt: string; hubs: Array<GraphNode & { dependent
 export interface SearchBody { builtAt: string; results: GraphNode[] }
 export type NeighborhoodBody = { builtAt: string } & Neighborhood;
 export type WalkBody = { builtAt: string } & WalkResult;
-export type ProjectBody = { builtAt: string } & ProjectPreview;
+export type ProjectBody = { builtAt: string; warnings: string[] } & ProjectPreview;
 
 /** Error with the HTTP status; `message` is the server's `error` field. / HTTP 상태를 담은 오류. */
 export class GraphFetchError extends Error {

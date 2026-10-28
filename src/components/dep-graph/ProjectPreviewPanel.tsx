@@ -1,17 +1,21 @@
 'use client';
 
-// Read-only project cleanup preview: pick a seed (tag / name prefix / VPC), show delete order, blockers, shared.
-// 프로젝트 정리 미리보기(읽기 전용) — 씨앗(태그/이름 접두어/VPC)을 고르면 지우는 순서·막는 것·공유라 빠진 것을 보여 준다.
+// Read-only project cleanup preview: pick a seed (tag / name prefix / VPC), show delete order, a candidate graph,
+// blockers, AWS-managed links and shared.
+// 프로젝트 정리 미리보기(읽기 전용) — 씨앗(태그/이름 접두어/VPC)을 고르면 지우는 순서·후보 관계도·막는 것·AWS 관리 연결·공유라 빠진 것을 보여 준다.
 import { useEffect, useMemo, useState } from 'react';
-import { Info } from 'lucide-react';
+import { AlertTriangle, Info } from 'lucide-react';
 import type { GraphNode } from '@/lib/dep-graph/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
-import { typeColor } from './layout';
+import { layoutSteps, typeColor } from './layout';
 import { useGraph, type GraphParams, type ProjectBody } from './api';
 import SearchBox from './SearchBox';
+import GraphCanvas from './GraphCanvas';
 
 type SeedKind = 'tag' | 'prefix' | 'vpc';
 const PER_STEP = 30;
+// Nodes drawn in the candidate graph, in delete order. / 관계도에 그리는 최대 개수(지우는 순서대로).
+const GRAPH_MAX = 300;
 
 function NodeChip({ node, fallback }: { node?: GraphNode; fallback: string }) {
   const { t } = useLanguage();
@@ -27,7 +31,7 @@ function NodeChip({ node, fallback }: { node?: GraphNode; fallback: string }) {
 
 const inputCls = 'w-full rounded-lg border border-navy-600 bg-navy-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-accent-cyan focus:outline-none';
 
-export default function ProjectPreviewPanel({ accountId, reloadKey }: { accountId: string; reloadKey: number }) {
+export default function ProjectPreviewPanel({ accountId, reloadKey, onPick }: { accountId: string; reloadKey: number; onPick?: (arn: string) => void }) {
   const { t } = useLanguage();
   const [kind, setKind] = useState<SeedKind>('tag');
   const [tagKey, setTagKey] = useState('');
@@ -56,6 +60,25 @@ export default function ProjectPreviewPanel({ accountId, reloadKey }: { accountI
   };
   const { data, loading, building, error } = useGraph<ProjectBody>(params, `${reloadKey}:${runNonce}`);
   const byArn = useMemo(() => new Map((data?.members ?? []).map((n) => [n.arn, n])), [data]);
+  const warnings = data?.warnings ?? [];
+
+  // Candidate graph: members in delete order (capped), edges among drawn members, step columns.
+  // 후보 관계도 — 지우는 순서대로(상한까지) 그리고, 그린 후보끼리의 간선만, 단계마다 한 열.
+  const graph = useMemo(() => {
+    if (!data || data.seedCount === 0) return null;
+    const drawn = new Set<string>();
+    const order: Array<{ arns: string[] }> = [];
+    for (const st of data.order) {
+      const room = GRAPH_MAX - drawn.size;
+      if (room <= 0) break;
+      const arns = st.arns.slice(0, room).filter((a) => byArn.has(a));
+      arns.forEach((a) => drawn.add(a));
+      if (arns.length) order.push({ arns });
+    }
+    const nodes = Array.from(drawn).map((a) => byArn.get(a)!);
+    const edges = (data.edges ?? []).filter((e) => drawn.has(e.src) && drawn.has(e.dst));
+    return { nodes, edges, positions: layoutSteps(order), truncated: drawn.size < data.members.length };
+  }, [data, byArn]);
 
   return (
     <div className="space-y-4">
@@ -64,6 +87,7 @@ export default function ProjectPreviewPanel({ accountId, reloadKey }: { accountI
         <div>
           <p className="font-semibold">{t('depGraph.project.notice')}</p>
           <p className="mt-0.5 text-xs text-gray-400">{t('depGraph.project.intro')}</p>
+          <p className="mt-0.5 text-xs text-gray-400">{t('depGraph.project.coverage')}</p>
         </div>
       </div>
 
@@ -120,6 +144,13 @@ export default function ProjectPreviewPanel({ accountId, reloadKey }: { accountI
         </div>
       )}
 
+      {data && warnings.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-accent-orange/40 bg-accent-orange/10 px-4 py-3 text-sm text-accent-orange">
+          <AlertTriangle size={16} className="mt-0.5 flex-none" />
+          {t('depGraph.project.warnings', { names: warnings.join(', ') })}
+        </div>
+      )}
+
       {data && data.seedCount === 0 && (
         <p className="rounded-lg border border-navy-600 bg-navy-800 p-4 text-sm text-gray-400">{t('depGraph.project.empty')}</p>
       )}
@@ -148,6 +179,25 @@ export default function ProjectPreviewPanel({ accountId, reloadKey }: { accountI
             </ol>
           </section>
 
+          {graph && graph.nodes.length > 0 && (
+            <section className="rounded-lg border border-navy-600 bg-navy-800 p-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <h3 className="text-sm font-semibold text-white">{t('depGraph.project.graph')}</h3>
+                <span className="text-xs text-gray-500">{t('depGraph.project.graphHint')}</span>
+                {graph.truncated && <span className="text-xs text-accent-orange">{t('depGraph.truncated')}</span>}
+              </div>
+              <div className="mt-3 h-[420px] overflow-hidden rounded-lg border border-navy-600 bg-navy-900">
+                <GraphCanvas
+                  nodes={graph.nodes}
+                  edges={graph.edges}
+                  positions={graph.positions}
+                  onPick={onPick}
+                  frameKey={`${data.builtAt}|${runNonce}|${graph.nodes.length}`}
+                />
+              </div>
+            </section>
+          )}
+
           <section className="rounded-lg border border-accent-red/30 bg-navy-800 p-4">
             <h3 className="text-sm font-semibold text-white">{t('depGraph.project.blockers')} <span className="text-gray-500">{data.blockers.length}</span></h3>
             <p className="mt-0.5 text-xs text-gray-500">{t('depGraph.project.blockersHint')}</p>
@@ -163,6 +213,15 @@ export default function ProjectPreviewPanel({ accountId, reloadKey }: { accountI
               ))}
             </ul>
           </section>
+
+          {(data.managed ?? []).length > 0 && (
+            <section className="rounded-lg border border-navy-600 bg-navy-800 p-4">
+              <h3 className="text-sm font-semibold text-white">{t('depGraph.project.managed')} <span className="text-gray-500">{data.managed.length}</span></h3>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {data.managed.map((n) => <NodeChip key={n.arn} node={n} fallback={n.arn} />)}
+              </div>
+            </section>
+          )}
 
           <section className="rounded-lg border border-navy-600 bg-navy-800 p-4">
             <h3 className="text-sm font-semibold text-white">{t('depGraph.project.shared')} <span className="text-gray-500">{data.shared.length}</span></h3>

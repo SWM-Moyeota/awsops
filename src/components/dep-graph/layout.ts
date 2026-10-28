@@ -57,3 +57,18 @@ export function layoutNeighborhood(nb: { nodes: LayoutInputNode[] }): Record<str
   });
   return out;
 }
+
+/**
+ * Cleanup order as columns: step i (0-based) at x = i*260, inside a step sorted by arn,
+ * `y = j*80 - (count-1)*40`. Dependents (deleted first) sit left of what they use.
+ * 정리 순서를 열로: i번째 단계(0부터)는 x = i*260, 단계 안은 arn 순, 위아래 가운데 정렬.
+ */
+export function layoutSteps(order: Array<{ step?: number; arns: string[]; cycle?: boolean }>): Record<string, { x: number; y: number }> {
+  const out: Record<string, { x: number; y: number }> = {};
+  order.forEach((st, i) => {
+    const list = [...st.arns].sort(cmp);
+    const half = ((list.length - 1) * ROW_GAP) / 2;
+    list.forEach((arn, j) => { out[arn] = { x: i * COLUMN_GAP, y: j * ROW_GAP - half }; });
+  });
+  return out;
+}

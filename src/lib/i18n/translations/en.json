@@ -1793,5 +1793,11 @@
   "depGraph.project.blockers": "Check these first",
   "depGraph.project.blockersHint": "Not candidates, but they use a candidate",
   "depGraph.project.uses": "Uses: {names}",
-  "depGraph.project.shared": "Left out because used elsewhere"
+  "depGraph.project.shared": "Left out because used elsewhere",
+  "depGraph.warnings": "Some kinds could not be read: {names}",
+  "depGraph.project.warnings": "Some kinds could not be read, so this result may be wrong: {names}",
+  "depGraph.project.managed": "AWS-managed links (cleaned up together when you delete the service they belong to)",
+  "depGraph.project.coverage": "Anything used from outside the 15 kinds (ECS, EKS, IAM users …) is not shown",
+  "depGraph.project.graph": "Candidate graph",
+  "depGraph.project.graphHint": "Delete from the leftmost step"
 }
