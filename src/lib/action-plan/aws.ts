@@ -96,7 +96,9 @@ export function createEc2Reader(send: Send = clientSend(new EC2Client({ region: 
             fromPort: x.FromPort ?? -1,
             toPort: x.ToPort ?? -1,
             source: x.CidrIpv4 ?? x.CidrIpv6 ?? x.ReferencedGroupInfo?.GroupId ?? x.PrefixListId ?? '',
-            description: x.Description ? safeName(x.Description) : undefined,
+            // Raw, not safeName'd: undo re-adds the rule with exactly this description (spec §3.11).
+            // Cards sanitize at display time. 되돌리기에서 원래 설명 그대로 다시 넣으므로 원문을 보관한다.
+            description: x.Description ? x.Description : undefined,
           });
         }
         token = r.NextToken;

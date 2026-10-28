@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createEc2Reader, createWriter, createWriterFactory } from '../aws';
+import { computeChanges } from '../changes';
 import type { ResolvedStep } from '../types';
 
 const step = (o: Partial<ResolvedStep>): ResolvedStep =>
@@ -82,5 +83,26 @@ describe('reader', () => {
       ['sgr-1', 'tcp', '1.2.3.4/32'], ['sgr-3', 'icmp', 'sg-2'],
     ]);
     expect(await r.listEniUsers('sg-1')).toEqual({ eniCount: 2, instances: [{ id: 'i-1', name: 'web' }] });
+  });
+
+  it('undoReAddsTheRuleWithTheRawDescription', async () => {
+    const desc = ('team_*a*_~b|c&d ' + 'x'.repeat(200)).slice(0, 200);
+    const r = createEc2Reader(async () => ({ SecurityGroupRules: [
+      { SecurityGroupRuleId: 'sgr-1', IsEgress: false, IpProtocol: 'tcp', FromPort: 22, ToPort: 22, CidrIpv4: '10.0.0.0/8', Description: desc },
+    ] }));
+    const ingress = await r.listIngressRules('sg-1');
+    expect(ingress[0].description).toBe(desc);
+
+    const G = { type: 'security-group' as const, id: 'sg-1', name: 'web-sg' };
+    const { changes } = computeChanges(
+      [{ action: 'sg.ingress.remove', target: G, rule: { protocol: 'tcp', fromPort: 22, toPort: 22, source: '10.0.0.0/8' } }],
+      { 'sg-1': { type: 'security-group', id: 'sg-1', name: 'web-sg', tags: {}, eniCount: 1, ingress } },
+    );
+    expect(changes[0].inverse?.rule?.description).toBe(desc);
+
+    const sent: any[] = [];
+    await createWriter(async c => { sent.push(c.input); return { SecurityGroupRules: [{ SecurityGroupRuleId: 'sgr-2' }] }; })
+      .run(changes[0].inverse!, false);
+    expect(sent[0].IpPermissions[0].IpRanges[0]).toEqual({ CidrIp: '10.0.0.0/8', Description: desc });
   });
 });
