@@ -104,11 +104,14 @@ describe('networkEdges', () => {
         { partition: 'aws', network_interface_id: 'eni-l1', description: desc, ...b },
         // No lambda of that name: no edge and not dropped. / 이름이 맞는 람다가 없으면 간선도 dropped도 없다.
         { partition: 'aws', network_interface_id: 'eni-l2', description: 'AWS Lambda VPC ENI-gone-1a2b3c4d-1111-2222-3333-444455556666', ...b },
-        // Not the Lambda pattern (no uuid). / 패턴이 아니면 무시.
-        { partition: 'aws', network_interface_id: 'eni-l3', description: 'AWS Lambda VPC ENI-my-fn', ...b },
+        // Not a Lambda description. / 람다 설명이 아니면 무시.
+        { partition: 'aws', network_interface_id: 'eni-l3', description: 'Lambda VPC ENI-my-fn', ...b },
+        // Hyperplane ENIs seen in real data have no uuid suffix. / 실데이터의 Hyperplane ENI는 uuid가 없다.
+        { partition: 'aws', network_interface_id: 'eni-l4', description: 'AWS Lambda VPC ENI-my-fn', ...b },
       ],
     });
     expect(has(r.edges, fn, arn('network-interface/eni-l1'), 'uses_eni')).toBe(true);
+    expect(has(r.edges, fn, arn('network-interface/eni-l4'), 'uses_eni')).toBe(true);
     expect(r.edges.filter(x => x.src === fnOther)).toHaveLength(0);
     expect(r.edges.filter(x => x.dst === arn('network-interface/eni-l2') || x.dst === arn('network-interface/eni-l3'))).toHaveLength(0);
     expect(r.dropped).toBe(0);
