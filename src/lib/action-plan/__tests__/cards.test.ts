@@ -69,6 +69,12 @@ describe('actionCard', () => {
     }
   });
 
+  it('policyDeniedCardSaysPermissionNotChecked', () => {
+    const p = actionCard(base({ policy: { ok: false, denials: ['운영 리소스'] }, permission: { ok: false, error: 'NotChecked' } }), cfg);
+    expect(json(p)).toContain('확인하지 않았어요');
+    expect(json(p)).not.toContain('scripts/17-setup-action-executor.sh');
+  });
+
   it('namesAndSummaryAreSanitized', () => {
     const evil = '*evil*`<@U1>`';
     const req = base({

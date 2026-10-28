@@ -88,7 +88,10 @@ export function actionCard(req: ActionRequest, cfg: ActionPlanConfig): { text: s
   parts.push('', '*규칙 검사*');
   parts.push(...(req.policy.ok ? ['• ✅ 통과'] : req.policy.denials.map(d => `• ⛔ ${clean(d, 160)}`)));
   parts.push('*권한 미리 확인*');
-  parts.push(req.permission.ok
+  // The dry-run is skipped once the policy denies, so there is no permission result to show.
+  parts.push(!req.policy.ok
+    ? '• ⏭ 규칙 검사에서 거부돼서 확인하지 않았어요'
+    : req.permission.ok
     ? '• ✅ 실행 권한이 있어요'
     : `• ⛔ 실행 권한이 없어요 — 관리자가 \`scripts/17-setup-action-executor.sh\`에 이 리소스를 등록해야 해요.${req.permission.error ? ` (${clean(req.permission.error, 64)})` : ''}`);
   if (!denied && !req.undoOf && active.length > 0 && active.every(c => c.inverse || c.step.action === 'sg.ingress.add')) {
