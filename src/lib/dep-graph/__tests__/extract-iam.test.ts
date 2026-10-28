@@ -32,8 +32,9 @@ describe('iamEdges', () => {
     s3: [{ arn: 'arn:aws:s3:::b', name: 'b', ...b }, { arn: 'arn:aws:s3:::c', name: 'c', ...b }],
     lambda: [{ arn: fnArn, name: 'fn', ...b }],
     instance: [{ arn: `arn:aws:ec2:${R}:${A}:instance/i-1`, instance_id: 'i-1', ...b }],
-    role: [{
-      arn: roleArn, name: 'r1', attached_policy_arns: [polArn, 'arn:aws:iam::aws:policy/Managed'], ...b,
+    role: [{ arn: roleArn, name: 'r1', ...b }],
+    rolePolicy: [{
+      arn: roleArn, attached_policy_arns: [polArn, 'arn:aws:iam::aws:policy/Managed'], ...b,
       inline_policies_std: [{ PolicyName: 'in', PolicyDocument: { Statement: [
         { Effect: 'Allow', Resource: ['arn:aws:s3:::b/*', 'arn:aws:ec2:*:*:instance/*', fnArn] },
         { Effect: 'Deny', Resource: 'arn:aws:s3:::c' },
@@ -58,8 +59,20 @@ describe('iamEdges', () => {
     expect(edges.length).toBe(3);
     expect(dropped).toBe(0);
   });
+  it('rolePolicy rows without a role node add nothing', () => {
+    const r: Rows = {
+      s3: [{ arn: 'arn:aws:s3:::b', name: 'b', ...b }],
+      rolePolicy: [{ arn: roleArn, inline_policies_std: [{ PolicyDocument: { Statement: { Effect: 'Allow', Resource: 'arn:aws:s3:::b' } } }], ...b }],
+    };
+    const s = new EdgeSink();
+    iamEdges(r, buildIndex(buildNodes(r)), s);
+    expect(s.result()).toEqual({ edges: [], dropped: 0 });
+  });
   it('survives bad shapes', () => {
-    const bad: Rows = { role: [{ arn: roleArn, name: 'r', inline_policies_std: 'x', attached_policy_arns: null, ...b }, { arn: 'r2', name: 'r2', inline_policies_std: [null, { PolicyDocument: null }], ...b }] };
+    const bad: Rows = {
+      role: [{ arn: roleArn, name: 'r', ...b }, { arn: 'r2', name: 'r2', ...b }],
+      rolePolicy: [{ arn: roleArn, inline_policies_std: 'x', attached_policy_arns: null, ...b }, { arn: 'r2', inline_policies_std: [null, { PolicyDocument: null }], ...b }, null as never],
+    };
     const s = new EdgeSink();
     expect(() => iamEdges(bad, buildIndex(buildNodes(bad)), s)).not.toThrow();
   });

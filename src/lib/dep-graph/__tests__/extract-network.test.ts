@@ -91,6 +91,28 @@ describe('networkEdges', () => {
     const r = run({ ...base, eni: [{ partition: 'aws', network_interface_id: 'eni-1', groups: '[{"GroupId":"sg-a"}]', ...b }] });
     expect(has(r.edges, arn('network-interface/eni-1'), arn('security-group/sg-a'), 'uses_sg')).toBe(true);
   });
+  it('Lambda ENI description links the lambda of the same account and region', () => {
+    const R2 = 'us-east-1';
+    const fn = `arn:aws:lambda:${R}:${A}:function:my-fn`;
+    const fnOther = `arn:aws:lambda:${R2}:${A}:function:my-fn`;
+    const desc = 'AWS Lambda VPC ENI-my-fn-1a2b3c4d-1111-2222-3333-444455556666';
+    const r = run({
+      ...base,
+      lambda: [{ arn: fn, name: 'my-fn', ...b }, { arn: fnOther, name: 'my-fn', account_id: A, region: R2 }],
+      eni: [
+        ...base.eni!,
+        { partition: 'aws', network_interface_id: 'eni-l1', description: desc, ...b },
+        // No lambda of that name: no edge and not dropped. / 이름이 맞는 람다가 없으면 간선도 dropped도 없다.
+        { partition: 'aws', network_interface_id: 'eni-l2', description: 'AWS Lambda VPC ENI-gone-1a2b3c4d-1111-2222-3333-444455556666', ...b },
+        // Not the Lambda pattern (no uuid). / 패턴이 아니면 무시.
+        { partition: 'aws', network_interface_id: 'eni-l3', description: 'AWS Lambda VPC ENI-my-fn', ...b },
+      ],
+    });
+    expect(has(r.edges, fn, arn('network-interface/eni-l1'), 'uses_eni')).toBe(true);
+    expect(r.edges.filter(x => x.src === fnOther)).toHaveLength(0);
+    expect(r.edges.filter(x => x.dst === arn('network-interface/eni-l2') || x.dst === arn('network-interface/eni-l3'))).toHaveLength(0);
+    expect(r.dropped).toBe(0);
+  });
   it('unknown vpc_id counts as dropped', () => {
     const r = run({ subnet: [{ subnet_arn: arn('subnet/s9'), subnet_id: 's9', vpc_id: 'vpc-nope', ...b }] });
     expect(r.edges).toHaveLength(0);

@@ -37,9 +37,11 @@ export function iamEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
     if (arn && p.policy_std) policyDocs.set(arn, p.policy_std);
   }
 
-  for (const r of listRows(rows, 'role') as Row[]) {
+  // Policies come from rolePolicy rows, matched to role nodes by ARN.
+  // 정책은 rolePolicy 행에서 읽고 ARN으로 역할 노드에 맞춘다.
+  for (const r of listRows(rows, 'rolePolicy') as Row[]) {
     const role = ix.byArn(str(r.arn) ?? '');
-    if (!role) continue;
+    if (!role || role.type !== 'role') continue;
     const docs: unknown[] = [];
     for (const ip of asArray(r.inline_policies_std)) {
       if (ip && typeof ip === 'object') docs.push((ip as Record<string, unknown>).PolicyDocument);

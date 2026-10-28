@@ -7,7 +7,7 @@ export interface GraphNode { arn: string; type: NodeType; id: string; name: stri
 export interface GraphEdge { src: string; dst: string; type: EdgeType }
 export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; dropped: number }
 
-export type QueryName = 'vpc'|'subnet'|'eni'|'instance'|'sg'|'sgRule'|'alb'|'nlb'|'clb'|'tg'|'rds'|'lambda'|'role'|'policy'|'nat'|'eip'|'ebs'|'s3'|'cloudfront';
+export type QueryName = 'vpc'|'subnet'|'eni'|'instance'|'sg'|'sgRule'|'alb'|'nlb'|'clb'|'tg'|'rds'|'lambda'|'role'|'rolePolicy'|'policy'|'nat'|'eip'|'ebs'|'s3'|'cloudfront';
 export type Row = Record<string, unknown>;
 export type Rows = Partial<Record<QueryName, Row[]>>;
 

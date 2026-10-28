@@ -18,6 +18,7 @@ export function link(
 
 const LB_TAIL = /:loadbalancer\/((?:app|net)\/[^/]+\/[0-9a-f]+)$/;
 const ELB_DESC = /^ELB ((?:app|net)\/[^/]+\/[0-9a-f]+)$/;
+const LAMBDA_DESC = /^AWS Lambda VPC ENI-(.+)-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 export function networkEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
   const list = (q: keyof Rows): Row[] => listRows(rows, q);
@@ -29,6 +30,10 @@ export function networkEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
     const m = LB_TAIL.exec(n.arn);
     if (m) lbByTail.set(`${n.accountId}\0${m[1]}`, n);
   }
+  // lambda lookup by account + region + name (names repeat across regions).
+  // 계정+리전+이름으로 lambda 색인 — 이름은 리전이 다르면 겹칠 수 있다.
+  const lambdaByName = new Map<string, GraphNode>();
+  for (const n of ix.nodes) if (n.type === 'lambda') lambdaByName.set(`${n.accountId}\0${n.region}\0${n.id}`, n);
 
   for (const r of list('subnet')) {
     const a = acct(r);
@@ -57,6 +62,11 @@ export function networkEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
     const desc = str(r.description);
     const m = desc ? ELB_DESC.exec(desc) : null;
     if (m) sink.add(lbByTail.get(`${a}\0${m[1]}`)?.arn, eni.arn, 'uses_eni');
+    // Lambda ENI: only when that lambda is in the graph; no match is not dropped.
+    // 람다 ENI — 그 람다가 그래프에 있을 때만 잇고, 없으면 dropped로 세지 않는다.
+    const lm = desc ? LAMBDA_DESC.exec(desc) : null;
+    const fn = lm ? lambdaByName.get(`${a}\0${str(r.region) ?? ''}\0${lm[1]}`) : undefined;
+    if (fn) sink.add(fn.arn, eni.arn, 'uses_eni');
   }
   for (const r of list('eip')) {
     const a = acct(r);

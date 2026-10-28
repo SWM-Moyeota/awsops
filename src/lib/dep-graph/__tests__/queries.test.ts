@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { GRAPH_QUERIES } from '../queries';
 
-const NAMES = ['vpc','subnet','eni','instance','sg','sgRule','alb','nlb','clb','tg','rds','lambda','role','policy','nat','eip','ebs','s3','cloudfront'];
+const NAMES = ['vpc','subnet','eni','instance','sg','sgRule','alb','nlb','clb','tg','rds','lambda','role','rolePolicy','policy','nat','eip','ebs','s3','cloudfront'];
 
 describe('GRAPH_QUERIES', () => {
-  it('has all 19 names', () => {
+  it('has all 20 names', () => {
     expect(Object.keys(GRAPH_QUERIES).sort()).toEqual([...NAMES].sort());
   });
   it('are SELECT-only with no dollar sign', () => {
@@ -21,6 +21,18 @@ describe('GRAPH_QUERIES', () => {
   });
   it('never selects lambda tags', () => {
     expect(GRAPH_QUERIES.lambda).not.toMatch(/\btags\b/);
+  });
+  it('role holds node columns only; policies come from rolePolicy', () => {
+    // A failed policy read must not drop the roles themselves.
+    // 정책을 못 읽어도 역할 노드는 남아야 한다.
+    expect(GRAPH_QUERIES.role).not.toMatch(/inline_policies_std|attached_policy_arns/);
+    expect(GRAPH_QUERIES.role).toMatch(/instance_profile_arns/);
+    expect(GRAPH_QUERIES.rolePolicy).toMatch(/inline_policies_std/);
+    expect(GRAPH_QUERIES.rolePolicy).toMatch(/attached_policy_arns/);
+  });
+  it('eni reads requester_managed; cloudfront reads partition', () => {
+    expect(GRAPH_QUERIES.eni).toMatch(/\brequester_managed\b/);
+    expect(GRAPH_QUERIES.cloudfront).toMatch(/\bpartition\b/);
   });
   it('policy only reads customer-managed policies', () => {
     expect(GRAPH_QUERIES.policy).toMatch(/is_aws_managed\s*=\s*false/);

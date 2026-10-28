@@ -69,7 +69,7 @@ const SPECS: Partial<Record<QueryName, Spec>> = {
     },
     id: r => str(r.network_interface_id),
     natural: r => str(r.description),
-    attrs: r => ({ interfaceType: val(r.interface_type), status: val(r.status), privateIp: val(r.private_ip_address) }),
+    attrs: r => ({ interfaceType: val(r.interface_type), status: val(r.status), privateIp: val(r.private_ip_address), requesterManaged: r.requester_managed === true }),
   },
   instance: { type: 'instance', arn: r => str(r.arn), id: r => str(r.instance_id), attrs: r => ({ state: val(r.instance_state), instanceType: val(r.instance_type), privateIp: val(r.private_ip_address) }) },
   sg: { type: 'sg', arn: r => str(r.arn), id: r => str(r.group_id), natural: r => str(r.group_name), attrs: r => ({ vpcId: val(r.vpc_id) }) },
@@ -91,7 +91,7 @@ const SPECS: Partial<Record<QueryName, Spec>> = {
   },
 };
 
-// Order is fixed so output is deterministic. sgRule/policy have no spec, so no nodes.
+// Order is fixed so output is deterministic. sgRule/rolePolicy/policy have no spec, so no nodes.
 const ORDER: QueryName[] = ['vpc','subnet','eni','instance','sg','alb','nlb','clb','tg','rds','lambda','role','nat','eip','ebs','s3','cloudfront'];
 
 export function buildNodes(rows: Rows): GraphNode[] {

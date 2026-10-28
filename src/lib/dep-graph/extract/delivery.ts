@@ -10,13 +10,18 @@ import { link } from './network';
 const S3_ORIGIN = /^(.+)\.s3(?:[.-][a-z0-9-]+)?\.amazonaws\.com$/;
 const S3_WEBSITE = /^(.+)\.s3-website[.-][a-z0-9-]+\.amazonaws\.com$/;
 
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  return a.size === b.size && Array.from(a).every(x => b.has(x));
+}
+
 export function deliveryEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
   const list = (q: keyof Rows): Row[] => listRows(rows, q);
 
   for (const q of ['alb', 'nlb', 'clb'] as const) {
     for (const r of list(q)) {
       const a = acct(r);
-      const lb = ix.byId(a, str(r.name) ?? '', 'lb');
+      // Own node by ARN: names are only unique per region. / 이름은 리전마다만 유일해서 ARN으로.
+      const lb = ix.byArn(str(r.arn) ?? '');
       if (!lb) continue;
       if (q === 'clb') {
         for (const s of asArray(r.subnets)) link(sink, ix, lb, a, str(s), 'subnet', 'in_subnet');
@@ -29,7 +34,7 @@ export function deliveryEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
 
   for (const r of list('tg')) {
     const a = acct(r);
-    const tg = ix.byId(a, str(r.target_group_name) ?? '', 'tg');
+    const tg = ix.byArn(str(r.target_group_arn) ?? '');
     if (!tg) continue;
     for (const l of asArray(r.load_balancer_arns)) {
       const lbArn = str(l);
@@ -45,12 +50,40 @@ export function deliveryEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
     }
   }
 
+  // Subnet and SG ids per rds, kept here only to match RDS ENIs (not stored in attrs).
+  // RDS ENI를 맞추려고 여기서만 쓰는 서브넷·SG 목록 — attrs에는 넣지 않는다.
+  const dbNets: Array<{ db: GraphNode; account: string; subnets: Set<string>; sgs: Set<string> }> = [];
   for (const r of list('rds')) {
     const a = acct(r);
-    const db = ix.byId(a, str(r.db_instance_identifier) ?? '', 'rds');
+    const db = ix.byArn(str(r.arn) ?? '');
     if (!db) continue;
-    for (const s of asArray(r.subnets)) link(sink, ix, db, a, field(s, 'SubnetIdentifier'), 'subnet', 'in_subnet');
-    for (const g of asArray(r.vpc_security_groups)) link(sink, ix, db, a, field(g, 'VpcSecurityGroupId'), 'sg', 'uses_sg');
+    const subnets = new Set<string>(), sgs = new Set<string>();
+    for (const s of asArray(r.subnets)) {
+      const id = field(s, 'SubnetIdentifier');
+      if (id) subnets.add(id);
+      link(sink, ix, db, a, id, 'subnet', 'in_subnet');
+    }
+    for (const g of asArray(r.vpc_security_groups)) {
+      const id = field(g, 'VpcSecurityGroupId');
+      if (id) sgs.add(id);
+      link(sink, ix, db, a, id, 'sg', 'uses_sg');
+    }
+    dbNets.push({ db, account: a, subnets, sgs });
+  }
+  // RDS ENI: same account, ENI subnet in the db's subnets, ENI SG set equal to the db's.
+  // RDS ENI — 같은 계정, ENI 서브넷이 db 서브넷 중 하나, SG 집합이 같으면 rds → eni.
+  for (const r of list('eni')) {
+    if (str(r.description) !== 'RDSNetworkInterface') continue;
+    const a = acct(r);
+    const eni = ix.byId(a, str(r.network_interface_id) ?? '', 'eni');
+    const subnet = str(r.subnet_id);
+    if (!eni || !subnet) continue;
+    const groups = new Set<string>();
+    for (const g of asArray(r.groups)) { const id = field(g, 'GroupId'); if (id) groups.add(id); }
+    for (const d of dbNets) {
+      if (d.account !== a || !d.subnets.has(subnet) || !sameSet(d.sgs, groups)) continue;
+      sink.add(d.db.arn, eni.arn, 'uses_eni');
+    }
   }
 
   for (const r of list('s3')) {

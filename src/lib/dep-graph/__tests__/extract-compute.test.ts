@@ -56,6 +56,22 @@ describe('computeEdges', () => {
     expect(r.edges.filter(e => e.src === i || e.src === fn)).toHaveLength(0);
     expect(r.dropped).toBe(0);
   });
+  it('same lambda name in two regions links each region\'s own node', () => {
+    const R2 = 'us-east-1';
+    const fn2 = `arn:aws:lambda:${R2}:${A}:function:fn`;
+    const sub2 = `arn:aws:ec2:${R2}:${A}:subnet/subnet-9`;
+    const r = run({
+      ...base,
+      subnet: [...base.subnet!, { subnet_arn: sub2, subnet_id: 'subnet-9', account_id: A, region: R2 }],
+      lambda: [
+        { arn: fn, name: 'fn', vpc_subnet_ids: ['subnet-1'], ...b },
+        { arn: fn2, name: 'fn', vpc_subnet_ids: ['subnet-9'], account_id: A, region: R2 },
+      ],
+    });
+    expect(has(r.edges, fn, arn('subnet/subnet-1'), 'in_subnet')).toBe(true);
+    expect(has(r.edges, fn2, sub2, 'in_subnet')).toBe(true);
+    expect(has(r.edges, fn2, arn('subnet/subnet-1'), 'in_subnet')).toBe(false);
+  });
   it('unresolvable profile or role counts as dropped', () => {
     const r = run({ ...base, instance: [{ arn: i, instance_id: 'i-1', iam_instance_profile_arn: 'arn:other', ...b }], lambda: [{ arn: fn, name: 'fn', role: 'arn:nope', ...b }] });
     expect(r.dropped).toBe(2);

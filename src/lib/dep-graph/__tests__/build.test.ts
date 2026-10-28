@@ -83,6 +83,28 @@ describe('build', () => {
     await expect(fs.access(snap)).rejects.toBeTruthy();
   });
 
+  it('rolePolicy failing keeps role nodes and uses_role, drops only can_access', async () => {
+    const roleArn = `arn:aws:iam::${A}:role/r1`;
+    const prof = `arn:aws:iam::${A}:instance-profile/p1`;
+    const fn = `arn:aws:lambda:${R}:${A}:function:fn`;
+    const partial = async (q: Record<string, string>) => {
+      const out: Record<string, { rows: unknown[]; error?: string }> = {};
+      for (const k of Object.keys(q)) out[k] = { rows: [] };
+      out.role = { rows: [{ arn: roleArn, name: 'r1', instance_profile_arns: [prof], ...b }] };
+      out.instance = { rows: [{ arn: arn('instance/i-1'), instance_id: 'i-1', iam_instance_profile_arn: prof, ...b }] };
+      out.lambda = { rows: [{ arn: fn, name: 'fn', role: roleArn, ...b }] };
+      out.s3 = { rows: [{ arn: 'arn:aws:s3:::b', name: 'b', ...b }] };
+      out.rolePolicy = { rows: [], error: 'AccessDenied' };
+      return out;
+    };
+    const stats = await rebuildGraph({ run: partial, snapshotPath: path.join(dir, 'rp.json') });
+    expect(stats.warnings).toEqual(['rolePolicy']);
+    expect(stats.nodeCounts.role).toBe(1);
+    const edges = getCurrentStore()!.data().edges;
+    expect(edges.filter(e => e.type === 'uses_role').map(e => e.src).sort()).toEqual([arn('instance/i-1'), fn].sort());
+    expect(edges.filter(e => e.type === 'can_access')).toEqual([]);
+  });
+
   it('statsFor counts only present types', () => {
     const s = statsFor({ nodes: [], edges: [], dropped: 2 }, ['a'], new Date(0));
     expect(s).toEqual({ builtAt: new Date(0).toISOString(), nodeCounts: {}, edgeCount: 0, dropped: 2, warnings: ['a'] });

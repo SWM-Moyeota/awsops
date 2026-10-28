@@ -7,7 +7,6 @@ import type { EdgeSink } from '../sink';
 import { acct, field, listRows } from './util';
 import { link } from './network';
 
-
 export function computeEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
   const list = (q: keyof Rows): Row[] => listRows(rows, q);
 
@@ -39,7 +38,8 @@ export function computeEdges(rows: Rows, ix: NodeIndex, sink: EdgeSink): void {
   }
   for (const r of list('lambda')) {
     const a = acct(r);
-    const fn = ix.byId(a, str(r.name) ?? '', 'lambda');
+    // By ARN: names are only unique per region. / 이름은 리전마다만 유일해서 ARN으로 찾는다.
+    const fn = ix.byArn(str(r.arn) ?? '');
     if (!fn) continue;
     const role = str(r.role);
     if (role) sink.add(fn.arn, ix.byArn(role)?.arn, 'uses_role');

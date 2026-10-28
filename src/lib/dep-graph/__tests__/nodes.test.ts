@@ -24,8 +24,8 @@ describe('buildNodes', () => {
   });
   it('eni arn and description fallback', () => {
     expect(eniArn('aws', R, A, 'eni-1')).toBe(`arn:aws:ec2:${R}:${A}:network-interface/eni-1`);
-    const [n] = buildNodes({ eni: [{ partition: 'aws', network_interface_id: 'eni-1', description: 'ELB app/x/1', interface_type: 'interface', status: 'in-use', private_ip_address: '10.0.0.9', ...base }] });
-    expect(n).toMatchObject({ arn: `arn:aws:ec2:${R}:${A}:network-interface/eni-1`, type: 'eni', name: 'ELB app/x/1', attrs: { interfaceType: 'interface', status: 'in-use', privateIp: '10.0.0.9' } });
+    const [n] = buildNodes({ eni: [{ partition: 'aws', network_interface_id: 'eni-1', description: 'ELB app/x/1', interface_type: 'interface', status: 'in-use', private_ip_address: '10.0.0.9', requester_managed: true, ...base }] });
+    expect(n).toMatchObject({ arn: `arn:aws:ec2:${R}:${A}:network-interface/eni-1`, type: 'eni', name: 'ELB app/x/1', attrs: { interfaceType: 'interface', status: 'in-use', privateIp: '10.0.0.9', requesterManaged: true } });
   });
   it('sg', () => {
     const [n] = buildNodes({ sg: [{ arn: 'arn:sg', group_id: 'sg-1', group_name: 'web-sg', vpc_id: 'vpc-1', ...base }] });
@@ -79,8 +79,8 @@ describe('buildNodes', () => {
     expect(n[0]).toMatchObject({ name: 'www.x.com', attrs: { domainName: 'd1.cloudfront.net', enabled: true } });
     expect(n[1].name).toBe('d2.cloudfront.net');
   });
-  it('sgRule and policy produce no nodes', () => {
-    expect(buildNodes({ sgRule: [{ group_id: 'sg-1', ...base }], policy: [{ arn: 'arn:p', ...base }] })).toEqual([]);
+  it('sgRule, rolePolicy and policy produce no nodes', () => {
+    expect(buildNodes({ sgRule: [{ group_id: 'sg-1', ...base }], rolePolicy: [{ arn: 'arn:role', ...base }], policy: [{ arn: 'arn:p', ...base }] })).toEqual([]);
   });
   it('skips rows without id or arn', () => {
     expect(buildNodes({ instance: [{ arn: 'arn:x', ...base }, { instance_id: 'i-2', ...base }] })).toEqual([]);
