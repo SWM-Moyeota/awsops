@@ -57,7 +57,7 @@ AWSops: 🛠 AWS 제어 요청 — 끄기 (정지) · k8s-practice (i-...) · �
   - 태그만으로는 안 됩니다. 공유 계정에서는 누구나 태그를 붙일 수 있기 때문입니다.
 - **신뢰 경계**: 서버에 셸로 접근할 수 있는 사람(SSM, `/vscode`)은 승인 단계를 건너뛰고 허용 목록의 서버를 제어할 수 있습니다. 그래서 `/vscode`는 꺼 두는 것을 권장합니다(ADR-010).
 - **승인자**: `data/config.json`에 `"slackControl": {"approverIds": ["U0..."]}`를 넣습니다. 비어 있으면 기능이 꺼집니다. Slack 사용자 ID는 프로필 → ⋮ → "멤버 ID 복사"에서 찾습니다.
-  - 혼자 테스트할 때만 `"allowSelfApproval": true`를 넣습니다(기본값은 false라 요청자 본인은 승인할 수 없습니다).
+  - 혼자 테스트할 때만 `"allowSelfApproval": true`를 넣습니다(기본값은 false라 요청자 본인은 승인할 수 없습니다). 이 설정은 Slack 제어(켜기·끄기·재부팅)에만 적용되고, 아래 AI 실행에는 적용되지 않습니다.
   - `"requestTtlMinutes"`의 기본값은 15입니다.
 - **처음 한 번**: 관리자 Mac에서 `bash scripts/16-setup-slack-control.sh i-xxxx`를 실행합니다(제어 전용 IAM 역할과 허용 목록을 만듭니다).
 - **기록**: `data/slack-control/audit.jsonl`에 남고, CloudTrail에는 `SourceIdentity=slack-<승인자ID>`로 남습니다.
@@ -86,6 +86,7 @@ AWSops: 🛠 AWS 실행 요청 · 요청자 A
   1. 대상에 태그: `aws ec2 create-tags --resources i-xxxx sg-yyyy --tags Key=awsops:control,Value=allow`
   2. 허용 목록 등록 (관리자 Mac): `bash scripts/17-setup-action-executor.sh i-xxxx sg-yyyy` — 실행 전용 역할 `AWSopsActionExecutorRole`을 만들고 목록을 정합니다. 매번 전체 목록을 넘기고, ID 없이 실행하면 모두 해제됩니다. 태그만으로는 안 됩니다.
   3. `data/config.json`에 추가합니다. 승인자는 `slackControl.approverIds`를 같이 씁니다(비어 있으면 꺼짐).
+     - `slackControl.allowSelfApproval`은 **물려받지 않습니다.** AI 실행은 항상 요청자가 아닌 다른 승인자가 최종 승인해야 해서, 승인자가 한 명뿐이면(혼자 테스트) 실행할 수 없습니다. 테스트하려면 승인자를 두 명 이상 넣습니다.
      ```json
      "actionPlan": { "enabled": true, "maxSteps": 5, "maxResources": 3, "maxBlastRadius": 5, "undoHours": 24,
                      "sourceAliases": { "사무실": ["203.0.113.0/24"] } }

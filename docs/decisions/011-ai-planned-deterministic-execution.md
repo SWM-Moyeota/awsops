@@ -36,7 +36,9 @@ Let an LLM **propose** a plan, and let code do everything that decides what actu
    Deny on `awsops:*` tag keys. A wrong plan can at worst propose something these layers refuse.
 4. **Two people approve** — the same two-step store as ADR-010 (`slack-control/requests.ts`,
    generalized): the requester confirms the previewed before → after card, then a different approver
-   from `slackControl.approverIds` approves behind Slack's confirm dialog. Right before executing,
+   from `slackControl.approverIds` approves behind Slack's confirm dialog. `slackControl.allowSelfApproval` is **not**
+   inherited: action-plan forces it to `false` (`config.ts`), so one person can never run an AI action alone,
+   even on a deployment that lets the requester self-approve slack-control start/stop. Right before executing,
    the targets are re-read; if any touched field changed since the preview, nothing runs.
 5. **Audit and undo** — every state change is appended to a hash-chained
    `data/action-plan/audit.jsonl`; successful steps store their inverse, and "↩️ 되돌리기" (24 h)
