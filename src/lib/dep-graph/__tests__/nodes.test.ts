@@ -106,6 +106,20 @@ describe('buildIndex', () => {
   });
 });
 
+describe('buildIndex ambiguity', () => {
+  it('needs a type when ids collide', () => {
+    const nodes = buildNodes({
+      alb: [{ arn: 'arn:lb', name: 'moyeota-api', ...base }],
+      lambda: [{ arn: 'arn:fn', name: 'moyeota-api', ...base }],
+    });
+    const idx = buildIndex(nodes);
+    expect(idx.byId(A, 'moyeota-api')).toBeUndefined();
+    expect(idx.byId(A, 'moyeota-api', 'lambda')?.arn).toBe('arn:fn');
+    expect(idx.byId(A, 'moyeota-api', 'lb')?.arn).toBe('arn:lb');
+    expect(idx.byId(A, 'moyeota-api', 'vpc')).toBeUndefined();
+  });
+});
+
 describe('helpers', () => {
   it('asArray', () => {
     expect(asArray(null)).toEqual([]);

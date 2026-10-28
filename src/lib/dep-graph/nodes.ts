@@ -23,7 +23,8 @@ export function eniArn(partition: string, region: string, accountId: string, id:
   return `arn:${partition}:ec2:${region}:${accountId}:network-interface/${id}`;
 }
 
-// Plain scalars from DB (inet etc. arrive as strings); keep others as-is.
+// Normalizes undefined to null so attrs serialize to JSON; other values pass through.
+// undefined는 null로 바꿔 JSON에 남기고, 나머지 값은 그대로 둔다.
 const val = (v: unknown): unknown => (v === undefined ? null : v);
 
 function parseObject(v: unknown): Record<string, unknown> | undefined {
@@ -116,16 +117,30 @@ export function buildNodes(rows: Rows): GraphNode[] {
 
 export interface NodeIndex {
   byArn(arn: string): GraphNode | undefined;
-  byId(accountId: string, id: string): GraphNode | undefined;
+  /** With `type`: exact lookup. Without: the node only if exactly one matches, else undefined (ambiguous). */
+  byId(accountId: string, id: string, type?: NodeType): GraphNode | undefined;
   nodes: GraphNode[];
 }
 
 export function buildIndex(nodes: GraphNode[]): NodeIndex {
+  // Last write wins on duplicate ARNs. / 같은 ARN이 중복이면 마지막 노드가 남는다.
   const arns = new Map<string, GraphNode>();
-  const ids = new Map<string, GraphNode>();
+  const typed = new Map<string, GraphNode>();
+  const untyped = new Map<string, GraphNode[]>();
   for (const n of nodes) {
     arns.set(n.arn, n);
-    ids.set(`${n.accountId}\u0000${n.id}`, n);
+    typed.set(`${n.accountId}\0${n.type}\0${n.id}`, n);
+    const k = `${n.accountId}\0${n.id}`;
+    const list = untyped.get(k);
+    if (list) list.push(n); else untyped.set(k, [n]);
   }
-  return { byArn: a => arns.get(a), byId: (acc, id) => ids.get(`${acc}\u0000${id}`), nodes };
+  return {
+    byArn: a => arns.get(a),
+    byId: (acc, id, type) => {
+      if (type) return typed.get(`${acc}\0${type}\0${id}`);
+      const list = untyped.get(`${acc}\0${id}`);
+      return list && list.length === 1 ? list[0] : undefined;
+    },
+    nodes,
+  };
 }
