@@ -1,9 +1,9 @@
-// In-server detection loop: first tick after 90 s, then every 5 min; signals -> incidents -> one analysis + one notification each.
-// 서버 안 감지 루프 — 90초 후 첫 tick, 이후 5분마다. 신호 → 사건 → 사건마다 분석 1회 + 알림 1회.
+// In-server detection loop: first tick after 90 s, then every 5 min; signals -> incidents, analysis >= 10 min after start, one alert each.
+// 서버 안 감지 루프 — 90초 후 첫 tick, 이후 5분마다. 신호 → 사건, 시작 10분 뒤 분석(최대 3회), 사건마다 알림 1회.
 import { getConfig, type AppConfig } from '@/lib/app-config';
 import { getCurrentStore } from '@/lib/dep-graph/store';
 import type { GraphData } from '@/lib/dep-graph/types';
-import { analyzeIncident, enqueueAnalysis } from './analyze';
+import { analyzeIncident, enqueueAnalysis, saveAnalysis, withCap } from './analyze';
 import { applySignals } from './incidents';
 import { notifyIncident } from './slack';
 import { fetchSignals } from './signals';
@@ -13,6 +13,12 @@ import type { Analysis, Incident, Signal } from './types';
 export const DETECT_INTERVAL_MS = 300_000;
 const FIRST_RUN_DELAY_MS = 90_000;
 const DEFAULT_REGION = 'ap-northeast-2';
+// CloudTrail delivers events ~5 min late: analyze from start+10 min. / CloudTrail 이벤트는 약 5분 늦게 오므로 시작 10분 뒤부터 분석.
+export const ANALYZE_DELAY_MS = 10 * 60_000;
+// After the last failed attempt the alert goes out without analysis. / 마지막 시도도 실패하면 분석 없이 알린다.
+export const MAX_ANALYSIS_ATTEMPTS = 3;
+// A hung per-account signal fetch must not stall the loop. / 계정별 신호 조회가 멈춰도 루프는 계속.
+const FETCH_CAP_MS = 60_000;
 
 const errName = (e: unknown) => (e instanceof Error ? e.name : 'Error');
 
@@ -42,6 +48,12 @@ function targetAccounts(cfg: Pick<AppConfig, 'accounts'>, data: GraphData): Arra
   return Array.from(seen, ([accountId, region]) => ({ accountId, region }));
 }
 
+// Open auto incident with no analysis or alert, old enough, attempts left. / 분석·알림 없는 열린 자동 사건, 시작 10분 경과, 시도 남음.
+function analysisDue(i: Incident, now: Date): boolean {
+  return i.source === 'auto' && i.status === 'open' && !i.analysis && !i.notifiedAt
+    && (i.analysisAttempts ?? 0) < MAX_ANALYSIS_ATTEMPTS && now.getTime() >= Date.parse(i.startedAt) + ANALYZE_DELAY_MS;
+}
+
 /** One detection pass; never throws, never overlaps. / 감지 한 번 — throw하지 않고 겹치지 않는다. */
 export async function tick(deps: LoopDeps = {}): Promise<void> {
   const s = rootCauseState();
@@ -52,36 +64,50 @@ export async function tick(deps: LoopDeps = {}): Promise<void> {
     if (cfg.rootCause?.autoDetect === false) return;
     const data = (deps.currentData ?? (() => getCurrentStore()?.data() ?? null))();
     if (!data) return; // no graph yet: skip this tick / 그래프가 아직 없으면 건너뜀
-    const now = (deps.now ?? (() => new Date()))();
+    const clock = deps.now ?? (() => new Date());
+    const now = clock();
     const fetchFn = deps.fetch ?? ((a: string, r: string, d: GraphData, t: Date) => fetchSignals(a, r, d, t));
     const update = deps.update ?? updateIncidents;
     const analyze = deps.analyze ?? ((inc: Incident) => analyzeIncident(inc));
 
     const signals: Signal[] = [];
     for (const { accountId, region } of targetAccounts(cfg, data)) {
-      try { signals.push(...(await fetchFn(accountId, region, data, now))); } catch (e) {
+      try { signals.push(...(await withCap(() => fetchFn(accountId, region, data, now), FETCH_CAP_MS))); } catch (e) {
         console.error('[root-cause] fetch signals failed:', errName(e));
       }
     }
-    let created: Incident[] = [];
+    // New incidents are stored now; due ones are claimed (attempt +1) in the same write. / 새 사건은 지금 저장, 분석할 사건은 같은 쓰기에서 시도 +1.
+    let due: Incident[] = [];
     try {
-      await update((list) => { const r = applySignals(list, signals, () => data, now); created = r.created; return r.list; });
+      await update((list) => {
+        const next = applySignals(list, signals, () => data, now).list;
+        due = next.filter((i) => analysisDue(i, now)).map((i) => ({ ...i, analysisAttempts: (i.analysisAttempts ?? 0) + 1 }));
+        const claimed = new Map(due.map((i) => [i.id, i]));
+        return next.map((i) => claimed.get(i.id) ?? i);
+      });
     } catch (e) {
       console.error('[root-cause] incident update failed:', errName(e));
       return;
     }
-    for (const inc of created) {
+    for (const inc of due) {
+      let target: Incident | null;
       try {
-        const a = await enqueueAnalysis(() => analyze(inc));
-        const saved = (await update((l) => l.map((i) => (i.id === inc.id ? { ...i, analysis: a } : i)))).find((i) => i.id === inc.id) ?? null;
+        target = await saveAnalysis(inc.id, await enqueueAnalysis(() => analyze(inc)), update);
+      } catch (e) {
+        console.error('[root-cause] incident analysis failed:', errName(e));
+        // Last attempt failed: alert without analysis so an outage is never silent. / 마지막 시도 실패 — 분석 없이라도 알린다.
+        if ((inc.analysisAttempts ?? 0) < MAX_ANALYSIS_ATTEMPTS) continue;
+        target = inc;
+      }
+      try {
         const notifier = s.notifier;
-        if (!saved || !notifier || cfg.rootCause?.slackAlerts === false) continue;
-        if (await notifier(saved)) {
-          const at = (deps.now ?? (() => new Date()))().toISOString();
+        if (!target || !notifier || cfg.rootCause?.slackAlerts === false) continue;
+        if (await notifier(target)) {
+          const at = clock().toISOString();
           await update((l) => l.map((i) => (i.id === inc.id ? { ...i, notifiedAt: at } : i)));
         }
       } catch (e) {
-        console.error('[root-cause] incident analysis failed:', errName(e));
+        console.error('[root-cause] incident alert failed:', errName(e));
       }
     }
   } catch (e) {

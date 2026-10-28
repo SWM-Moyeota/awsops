@@ -26,7 +26,8 @@ export interface AiCause { eventId: string; reason: string; confidence: 'high' |
 export interface AiResult { status: 'ok' | 'unverified' | 'failed' | 'skipped'; summary?: string; causes?: AiCause[]; checks?: string[]; droppedCitations: number }
 
 export interface Analysis { analyzedAt: string; windowFrom: string; windowTo: string; graph: { from: string | null; to: string | null; count: number }; eventsSeen: number; truncated: boolean; failedRegions: string[]; suspects: Suspect[]; ai: AiResult }
-export interface Incident { id: string; key: string; accountId: string; region: string; resourceArn: string | null; resourceName: string | null; signals: Signal[]; startedAt: string; firstSeenAt: string; lastSeenAt: string; status: 'open' | 'resolved'; source: 'auto' | 'manual'; analysis?: Analysis; notifiedAt?: string }
+// analysisAttempts: auto analyses started so far (max 3). / 지금까지 시작한 자동 분석 횟수(최대 3).
+export interface Incident { id: string; key: string; accountId: string; region: string; resourceArn: string | null; resourceName: string | null; signals: Signal[]; startedAt: string; firstSeenAt: string; lastSeenAt: string; status: 'open' | 'resolved'; source: 'auto' | 'manual'; analysis?: Analysis; notifiedAt?: string; analysisAttempts?: number }
 
 // Replay-test case: small graph history, raw CloudTrail events, the operator's answer. / 재현 시험 한 건.
 export interface Scenario { id: string; title: string; category: string; knownLimit?: boolean; accountId: string; region: string; targetArn: string | null; startedAt: string; graphs: GraphSnapshot[]; events: Record<string, unknown>[]; answer: string }

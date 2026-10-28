@@ -129,7 +129,7 @@ export async function analyzeIncident(inc: Incident, deps: AnalyzeDeps = {}): Pr
 }
 
 // Settle within capMs: reject with Timeout, leave the job running unawaited. / capMs 안에 끝나지 않으면 Timeout — 작업은 기다리지 않고 둔다.
-function withCap<T>(fn: () => Promise<T>, capMs: number): Promise<T> {
+export function withCap<T>(fn: () => Promise<T>, capMs: number): Promise<T> {
   const job = Promise.resolve().then(fn);
   job.catch(() => undefined); // late rejection after the cap is not unhandled / 상한 뒤 늦은 실패 처리
   let timer: NodeJS.Timeout | undefined;
@@ -149,8 +149,8 @@ export function enqueueAnalysis<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** Store an analysis on its incident; returns the saved incident (null if it fell off the list). / 분석을 사건에 저장. */
-export async function saveAnalysis(id: string, analysis: Analysis): Promise<Incident | null> {
-  const list = await updateIncidents((l) => l.map((i) => (i.id === id ? { ...i, analysis } : i)));
+export async function saveAnalysis(id: string, analysis: Analysis, update: (fn: (list: Incident[]) => Incident[]) => Promise<Incident[]> = updateIncidents): Promise<Incident | null> {
+  const list = await update((l) => l.map((i) => (i.id === id ? { ...i, analysis } : i)));
   return list.find((i) => i.id === id) ?? null;
 }
 

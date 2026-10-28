@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ensureRootCauseStarted, setIncidentNotifier, tick, type LoopDeps } from '../loop';
-import { readIncidents } from '../store';
+import { readIncidents, updateIncidents } from '../store';
 import type { GraphData, GraphNode } from '@/lib/dep-graph/types';
 import type { Analysis, Incident, Signal } from '../types';
 
@@ -88,12 +88,29 @@ describe('tick', () => {
     await tick(d);
     expect(d.fetch).not.toHaveBeenCalled();
   });
-  it('three related signals -> one incident, one analysis, one notification', async () => {
+  // Signals start 11:57, so analysis is due from 12:07. / 신호 시작 11:57 → 12:07부터 분석.
+  const at = (hhmm: string) => () => new Date(`2026-10-29T${hhmm}:00Z`);
+  it('detection stores the incident only; no analysis or alert yet', async () => {
     const notify = vi.fn(async () => true);
     setIncidentNotifier(notify);
     const d = deps();
     await tick(d);
-    expect(d.analyze).toHaveBeenCalledTimes(1);
+    expect(d.analyze).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    const [inc] = await readIncidents();
+    expect(inc.signals).toHaveLength(3);
+    expect(inc.analysis).toBeUndefined();
+    expect(inc.analysisAttempts).toBeUndefined();
+  });
+  it('three related signals -> one incident, analyzed >= 10 min after start, one notification', async () => {
+    const notify = vi.fn(async () => true);
+    setIncidentNotifier(notify);
+    const analyze = vi.fn(async () => analysis());
+    await tick(deps({ analyze }));
+    await tick(deps({ analyze, now: at('12:06') }));
+    expect(analyze).not.toHaveBeenCalled(); // 9 min after start / 시작 9분 뒤
+    await tick(deps({ analyze, now: at('12:07') }));
+    expect(analyze).toHaveBeenCalledTimes(1);
     expect(notify).toHaveBeenCalledTimes(1);
     const [notified] = notify.mock.calls[0] as unknown as [Incident];
     expect(notified.analysis).toBeTruthy();
@@ -101,21 +118,115 @@ describe('tick', () => {
     expect(list).toHaveLength(1);
     expect(list[0].signals).toHaveLength(3);
     expect(list[0].analysis).toBeTruthy();
-    expect(list[0].notifiedAt).toBe(NOW.toISOString());
+    expect(list[0].analysisAttempts).toBe(1);
+    expect(list[0].notifiedAt).toBe('2026-10-29T12:07:00.000Z');
     // Same signals next tick: no new incident, no new analysis or post. / 다음 tick 같은 신호: 새 사건·분석·알림 없음.
-    await tick(deps({ analyze: d.analyze }));
-    expect(d.analyze).toHaveBeenCalledTimes(1);
+    await tick(deps({ analyze, now: at('12:12') }));
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(await readIncidents()).toHaveLength(1);
+  });
+  it('failed analysis is retried up to 3 times, then alerted without analysis, once', async () => {
+    const notify = vi.fn(async () => true);
+    setIncidentNotifier(notify);
+    const analyze = vi.fn(async (): Promise<Analysis> => { throw new Error('ai'); });
+    await tick(deps({ analyze }));
+    await tick(deps({ analyze, now: at('12:07') }));
+    await tick(deps({ analyze, now: at('12:12') }));
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(notify).not.toHaveBeenCalled(); // not silent, but not early either / 이르게 알리지 않음
+    await tick(deps({ analyze, now: at('12:17') }));
+    expect(analyze).toHaveBeenCalledTimes(3);
+    expect(notify).toHaveBeenCalledTimes(1);
+    const [notified] = notify.mock.calls[0] as unknown as [Incident];
+    expect(notified.analysis).toBeUndefined();
+    const [inc] = await readIncidents();
+    expect(inc.analysisAttempts).toBe(3);
+    expect(inc.notifiedAt).toBe('2026-10-29T12:17:00.000Z');
+    await tick(deps({ analyze, now: at('12:22') }));
+    expect(analyze).toHaveBeenCalledTimes(3);
     expect(notify).toHaveBeenCalledTimes(1);
   });
-  it('notifier returning falsy leaves notifiedAt unset', async () => {
-    setIncidentNotifier(async () => false);
-    await tick(deps());
+  it('final failure with a falsy notifier is not retried again', async () => {
+    const notify = vi.fn(async () => false);
+    setIncidentNotifier(notify);
+    const analyze = vi.fn(async (): Promise<Analysis> => { throw new Error('ai'); });
+    await tick(deps({ analyze }));
+    for (const t of ['12:07', '12:12', '12:17', '12:22']) await tick(deps({ analyze, now: at(t) }));
+    expect(analyze).toHaveBeenCalledTimes(3);
+    expect(notify).toHaveBeenCalledTimes(1);
     expect((await readIncidents())[0].notifiedAt).toBeUndefined();
+  });
+  it('a failure then a success -> one alert with the analysis', async () => {
+    const notify = vi.fn(async () => true);
+    setIncidentNotifier(notify);
+    const analyze = vi.fn(async (): Promise<Analysis> => { throw new Error('ai'); }).mockImplementationOnce(async () => { throw new Error('ai'); }).mockImplementation(async () => analysis());
+    await tick(deps({ analyze }));
+    await tick(deps({ analyze, now: at('12:07') }));
+    expect(notify).not.toHaveBeenCalled();
+    await tick(deps({ analyze, now: at('12:12') }));
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect((notify.mock.calls[0] as unknown as [Incident])[0].analysis).toBeTruthy();
+  });
+  it('restarted process picks up a pending open incident; manual and resolved ones are skipped', async () => {
+    const base = { accountId: A, region: 'ap-northeast-2', resourceArn: LB, resourceName: 'web', signals: [sig('alb-5xx', LB)], startedAt: '2026-10-29T11:30:00.000Z', firstSeenAt: '2026-10-29T11:31:00.000Z', lastSeenAt: '2026-10-29T11:55:00.000Z' };
+    await updateIncidents(() => [
+      { ...base, id: 'rc-pending', key: 'k1', status: 'open', source: 'auto', analysisAttempts: 1 },
+      { ...base, id: 'rc-manual', key: 'k2', status: 'open', source: 'manual' },
+      { ...base, id: 'rc-resolved', key: 'k3', status: 'resolved', source: 'auto' },
+    ]);
+    delete globalThis.__awsopsRootCause; // fresh process state / 새 프로세스 상태
+    const notify = vi.fn(async () => true);
+    setIncidentNotifier(notify);
+    const analyze = vi.fn(async () => analysis());
+    await tick(deps({ analyze, fetch: vi.fn(async () => [] as Signal[]) }));
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect((analyze.mock.calls[0] as unknown as [Incident])[0].id).toBe('rc-pending');
+    expect(notify).toHaveBeenCalledTimes(1);
+    const list = await readIncidents();
+    expect(list.find((i) => i.id === 'rc-pending')).toMatchObject({ analysisAttempts: 2, notifiedAt: NOW.toISOString() });
+    expect(list.find((i) => i.id === 'rc-manual')?.analysis).toBeUndefined();
+  });
+  it('a hung signal fetch is capped at 60 s; the tick ends and the next one runs', async () => {
+    vi.useFakeTimers();
+    const B = '222222222222';
+    const fetch = vi.fn((accountId: string) => (accountId === B ? new Promise<Signal[]>(() => undefined) : Promise.resolve([sig('alb-5xx', LB)])));
+    let mem: Incident[] = [];
+    const d = deps({ fetch, config: () => ({ accounts: [{ ...accounts[0], accountId: B }, accounts[0]] }), update: async (fn) => (mem = fn(mem)) });
+    let done = false;
+    void tick(d).then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(done).toBe(true);
+    expect(globalThis.__awsopsRootCause!.running).toBe(false);
+    expect(mem).toHaveLength(1); // the other account still counted / 다른 계정은 그대로 처리
+    void tick(d);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
+  it('notifier returning falsy leaves notifiedAt unset', async () => {
+    const notify = vi.fn(async () => false);
+    setIncidentNotifier(notify);
+    const analyze = vi.fn(async () => analysis());
+    await tick(deps({ analyze }));
+    await tick(deps({ analyze, now: at('12:07') }));
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect((await readIncidents())[0].notifiedAt).toBeUndefined();
+    // Analysis is saved, so no retry and no second post. / 분석은 저장됐으니 재시도·재알림 없음.
+    await tick(deps({ analyze, now: at('12:12') }));
+    expect(analyze).toHaveBeenCalledTimes(1);
+    expect(notify).toHaveBeenCalledTimes(1);
   });
   it('slackAlerts:false -> notifier not called', async () => {
     const notify = vi.fn(async () => true);
     setIncidentNotifier(notify);
-    await tick(deps({ config: () => ({ accounts, rootCause: { slackAlerts: false } }) }));
+    const config = () => ({ accounts, rootCause: { slackAlerts: false } });
+    const analyze = vi.fn(async () => analysis());
+    await tick(deps({ config, analyze }));
+    await tick(deps({ config, analyze, now: at('12:07') }));
+    expect(analyze).toHaveBeenCalledTimes(1); // still analyzed for the page / 화면용 분석은 그대로
     expect(notify).not.toHaveBeenCalled();
   });
   it('errors are logged, never thrown; other accounts still run', async () => {
