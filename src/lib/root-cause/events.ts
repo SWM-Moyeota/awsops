@@ -21,14 +21,15 @@ const normalizeName = (n: string): string => n.replace(/\d{8}(v\d+)?$/, '');
 
 // ---------- params / 파라미터 ----------
 
-const SECRET_KEY = /password|secret|token|credential|privatekey/i;
+const SECRET_KEY = /password|secret|token|credential|privatekey|accesskeyid/i;
+const ACCESS_KEY_ID = /\b(AKIA|ASIA)[A-Z0-9]{16}\b/;
 const MAX_PARAMS = 600;
 
 // Request parameters as short JSON with secret-like values hidden. / 비밀처럼 보이는 값을 가린 짧은 JSON.
 export function sanitizeParams(req: unknown): string {
   if (req === null || req === undefined) return '';
   try {
-    const json = JSON.stringify(req, (k, v) => (k && SECRET_KEY.test(k) ? '[숨김]' : v));
+    const json = JSON.stringify(req, (k, v) => ((k && SECRET_KEY.test(k)) || (typeof v === 'string' && ACCESS_KEY_ID.test(v)) ? '[숨김]' : v));
     if (!json) return '';
     return json.length > MAX_PARAMS ? `${json.slice(0, MAX_PARAMS - 1)}…` : json;
   } catch {

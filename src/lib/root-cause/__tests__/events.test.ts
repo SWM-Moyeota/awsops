@@ -93,6 +93,14 @@ describe('sanitizeParams', () => {
     expect(s).not.toContain('"y"');
     expect(JSON.parse(s)).toEqual({ masterUserPassword: '[숨김]', nested: { SessionToken: '[숨김]' }, ok: 'z' });
   });
+  it('hides access key IDs by key and by value', () => {
+    const ev = toWriteEvent(base({ eventName: 'DeleteAccessKey', eventSource: 'iam.amazonaws.com', requestParameters: { userName: 'kim', accessKeyId: 'AKIAABCDEFGHIJKLMNOP' } }), 'a')!;
+    expect(ev.params).not.toContain('AKIA');
+    expect(JSON.parse(ev.params).accessKeyId).toBe('[숨김]');
+    const s = sanitizeParams({ note: { list: ['ok', 'ASIAABCDEFGHIJKLMNOP'] } });
+    expect(s).not.toContain('ASIA');
+    expect(JSON.parse(s).note.list).toEqual(['ok', '[숨김]']);
+  });
   it('caps at 600 chars with an ellipsis', () => {
     const s = sanitizeParams({ a: 'q'.repeat(2000) });
     expect(s.length).toBeLessThanOrEqual(600);
