@@ -15,6 +15,7 @@ export interface ProjectPreview {
   shared: GraphNode[];
 }
 
+const arr = <T>(s?: Iterable<T>): T[] => (s ? Array.from(s) : []);
 const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const byTypeNameArn = (a: GraphNode, b: GraphNode) =>
   cmp(a.type, b.type) || cmp(a.name, b.name) || cmp(a.arn, b.arn);
@@ -40,7 +41,7 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
       const queue = [seed.arn];
       while (queue.length) {
         const cur = queue.pop()!;
-        for (const s of rev.get(cur) ?? []) if (!members.has(s)) { members.add(s); queue.push(s); }
+        for (const s of arr(rev.get(cur))) if (!members.has(s)) { members.add(s); queue.push(s); }
       }
     }
   } else {
@@ -50,7 +51,7 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
       }
     }
   }
-  if (opts?.accountId) for (const a of [...members]) if (byArn.get(a)!.accountId !== opts.accountId) members.delete(a);
+  if (opts?.accountId) for (const a of Array.from(members)) if (byArn.get(a)!.accountId !== opts.accountId) members.delete(a);
   const seedCount = members.size;
   if (seedCount === 0) return { seedCount: 0, members: [], order: [], blockers: [], shared: [] };
 
@@ -58,19 +59,19 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
   let changed = true;
   while (changed) {
     changed = false;
-    for (const m of [...members]) {
-      for (const d of fwd.get(m) ?? []) {
+    for (const m of Array.from(members)) {
+      for (const d of arr(fwd.get(m))) {
         if (members.has(d)) continue;
-        if ([...(rev.get(d) ?? [])].every(s => members.has(s))) { members.add(d); changed = true; }
+        if (arr(arr(rev.get(d))).every(s => members.has(s))) { members.add(d); changed = true; }
       }
     }
   }
 
   const shared = new Set<string>();
   const blockerUses = new Map<string, Set<string>>();
-  for (const m of members) {
-    for (const d of fwd.get(m) ?? []) if (!members.has(d)) shared.add(d);
-    for (const s of rev.get(m) ?? []) {
+  for (const m of arr(members)) {
+    for (const d of arr(fwd.get(m))) if (!members.has(d)) shared.add(d);
+    for (const s of arr(rev.get(m))) {
       if (members.has(s)) continue;
       if (!blockerUses.has(s)) blockerUses.set(s, new Set());
       blockerUses.get(s)!.add(m);
@@ -78,7 +79,7 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
   }
 
   // Tarjan SCC on member-only edges (iterative). 멤버 간선만으로 SCC
-  const list = [...members].sort(cmp);
+  const list = Array.from(members).sort(cmp);
   const index = new Map<string, number>(), low = new Map<string, number>();
   const onStack = new Set<string>(), stack: string[] = [];
   const comp = new Map<string, number>();
@@ -90,7 +91,7 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
     const visit = (v: string) => {
       index.set(v, counter); low.set(v, counter); counter++;
       stack.push(v); onStack.add(v);
-      work.push({ v, it: [...(fwd.get(v) ?? [])].filter(x => members.has(x)).sort(cmp)[Symbol.iterator]() });
+      work.push({ v, it: arr(arr(fwd.get(v))).filter(x => members.has(x)).sort(cmp)[Symbol.iterator]() });
     };
     visit(root);
     while (work.length) {
@@ -119,8 +120,8 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
   // Kahn on condensation: dependents first. 응축 그래프에서 의존하는 쪽부터
   const indeg = sccs.map(() => 0);
   const out = sccs.map(() => new Set<number>());
-  for (const m of members) {
-    for (const d of fwd.get(m) ?? []) {
+  for (const m of arr(members)) {
+    for (const d of arr(fwd.get(m))) {
       if (!members.has(d)) continue;
       const a = comp.get(m)!, b = comp.get(d)!;
       if (a !== b && !out[a].has(b)) { out[a].add(b); indeg[b]++; }
@@ -132,15 +133,15 @@ export function previewProject(data: GraphData, seed: ProjectSeed, opts?: { acco
     ready.sort((x, y) => cmp(sccs[x][0], sccs[y][0]));
     const i = ready.shift()!;
     order.push({ step: order.length + 1, arns: sccs[i], cycle: sccs[i].length > 1 });
-    for (const j of out[i]) if (--indeg[j] === 0) ready.push(j);
+    for (const j of arr(out[i])) if (--indeg[j] === 0) ready.push(j);
   }
 
-  const toNodes = (s: Iterable<string>) => [...s].map(a => byArn.get(a)!).sort(byTypeNameArn);
+  const toNodes = (s: Iterable<string>) => arr(s).map(a => byArn.get(a)!).sort(byTypeNameArn);
   return {
     seedCount,
     members: toNodes(members),
     order,
-    blockers: toNodes(blockerUses.keys()).map(node => ({ node, uses: [...blockerUses.get(node.arn)!].sort(cmp) })),
+    blockers: toNodes(blockerUses.keys()).map(node => ({ node, uses: Array.from(blockerUses.get(node.arn)!).sort(cmp) })),
     shared: toNodes(shared),
   };
 }
