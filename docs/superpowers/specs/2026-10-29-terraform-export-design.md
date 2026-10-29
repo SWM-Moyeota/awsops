@@ -67,7 +67,7 @@
 - Terraform **1.9.8**, `linux_arm64` 또는 `linux_amd64`(uname으로 고름).
 - `releases.hashicorp.com`에서 zip과 `SHA256SUMS`를 받아 체크섬을 확인한다. 체크섬이 다르면 중단한다.
 - 설치 위치: `/home/ec2-user/awsops/.tools/terraform` (git 제외).
-- AWS provider **5.100.0** 고정. 플러그인 캐시는 `data/tf-export/plugin-cache`이고, 스크립트가 미리 `init`해 둔다.
+- AWS provider **5.100.0** 고정. 플러그인 캐시는 `data/tf-export/plugin-cache`이고, 스크립트가 미리 `init`해 둔다(작업은 이 폴더를 파일시스템 미러로 읽는다). 묶음의 `providers.tf`는 `required_version = ">= 1.5.0, < 2.0.0"`, 작업 폴더는 `= 1.9.8`.
 - 앱은 `.tools/terraform`이 없으면 화면·API에서 "설치가 필요해요: scripts/18-setup-terraform.sh"를 보여 주고 아무것도 실행하지 않는다.
 - `03-build-deploy.sh`는 바꾸지 않는다. 설치는 사용자가 한 번만 직접 실행한다.
 
@@ -157,7 +157,7 @@
 ### 실행
 - Terraform은 `execFile`로만 부르고, 하위 명령 허용 목록을 코드에서 검사한다.
 - 공통 플래그: `-input=false -no-color`.
-- 환경 변수: `TF_IN_AUTOMATION=1`, `TF_INPUT=0`, `CHECKPOINT_DISABLE=1`, `TF_PLUGIN_CACHE_DIR`.
+- 환경 변수: `TF_IN_AUTOMATION=1`, `TF_INPUT=0`, `CHECKPOINT_DISABLE=1`. `TF_PLUGIN_CACHE_DIR`는 쓰지 않는다(최종 리뷰 수정): 프로바이더는 CLI 설정의 `filesystem_mirror`(`data/tf-export/plugin-cache`)에서만 설치하고 `direct`는 없다. 캐시 폴더가 미러와 같으면 Terraform이 거부한다.
 - 명령 하나에 10분 제한, 작업 전체에 30분 제한.
 - 자격 증명:
   - 호스트 계정은 서버 기본 역할을 쓴다. 이 역할은 ReadOnlyAccess 외에 일부 쓰기 권한(리스너 수정, S3 PutObject 등)도 있으므로, **안전은 하위 명령 허용 목록과 인자 검사에 달려 있다**(아래 6장).

@@ -20,10 +20,12 @@
 
 ## 규칙
 - Terraform 하위 명령은 `version`·`init`·`plan`·`show`·`validate`·`fmt`만, 플래그도 허용 목록(`Object.hasOwn` 검사). **`apply`와 상태 쓰기는 없다.**
-- 상속된 `TF_*`·엔드포인트·프록시 환경 변수는 버리고, 고정한 CLI 설정으로 `hashicorp/aws`만 허용, `HOME`은 작업 폴더. 매 plan 전에 작업 폴더를 검사한다(`UnsafeConfig`).
+- 상속된 `TF_*`·엔드포인트·프록시 환경 변수와 `AWS_PROFILE`·`AWS_CONFIG_FILE`·`AWS_SHARED_CREDENTIALS_FILE`은 버리고(호스트는 IMDS), 고정한 CLI 설정으로 `hashicorp/aws`만 `data/tf-export/plugin-cache`의 `filesystem_mirror`에서 설치한다(`direct` 없음, `TF_PLUGIN_CACHE_DIR` 없음 — 캐시 폴더가 미러와 같으면 init이 실패하고, 실행 중 다운로드는 없다). `HOME`은 작업 폴더. 매 plan 전에 작업 폴더를 검사한다(`UnsafeConfig`, `aws_lambda_invocation` data/resource 포함).
+- terraform은 `detached` 프로세스 그룹으로 돈다. 중단·시간 초과·출력 초과 때 그룹 전체를 SIGKILL하고(프로바이더 플러그인까지) 끝난 뒤에 돌려준다. `nice`나 terraform 바이너리가 없으면 `NotInstalled`.
+- 작업 폴더의 `providers.tf`는 `required_version = "= 1.9.8"`, 묶음의 `providers.tf`는 `">= 1.5.0, < 2.0.0"`(프로바이더는 둘 다 `= 5.100.0`). `scripts/18-setup-terraform.sh`는 ec2-user로만 돈다(root 거부).
 - 호스트 역할은 완전한 읽기 전용이 아니므로 안전 경계는 실행기다. 교차 계정은 자격 증명이 없으면 닫힌 채 실패하고(`NoCredentials`) 명령마다 새 AssumeRole 자격 증명을 쓴다.
 - 비밀은 생성 직후 `sensitive` 변수로 뽑는다. 실제 값은 작업 폴더의 `secrets.auto.tfvars`에만 있고 묶기·실패·상한 때 지운다. 묶음에는 `CHANGE_ME`만 나간다. AI에는 가린 텍스트만 준다.
-- AI 블록은 `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy`, 비ASCII 식별자를 금지하고 `ignore_changes`는 `user_data`·`user_data_base64`·`tags_all`만 허용한다.
+- AI 블록은 `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy`, 비ASCII 식별자를 금지하고 `ignore_changes`는 `user_data`·`user_data_base64`·`tags_all`(`aws_lambda_function`은 `filename`·`source_code_hash`도)과 보낸 블록에 이미 있던 항목만 허용한다.
 - 내보내는 묶음은 항상 diff 0인 마지막 단계다. diff 0이 아닌 것을 통과로 표시하지 않는다.
 - 로그와 API 오류에는 오류 이름만 남긴다. 작업은 한 번에 하나, 30분 상한.
 - 규칙을 바꾸면 테스트를 돌리고, 사전 시험 수치는 탐색용이라 출하 파이프라인 수치로 쓰지 않는다.
@@ -52,10 +54,12 @@ Moves resources created by hand in the console into Terraform code. Generates co
 
 ## Rules
 - Only the subcommands `version`, `init`, `plan`, `show`, `validate`, `fmt`, with an allowlist of flags (`Object.hasOwn` checks). **No `apply`, no state writes.**
-- Drop inherited `TF_*`, endpoint and proxy env vars; a pinned CLI config allows only `hashicorp/aws`; `HOME` is the job folder. Scan the job folder before every plan (`UnsafeConfig`).
+- Drop inherited `TF_*`, endpoint and proxy env vars and `AWS_PROFILE`/`AWS_CONFIG_FILE`/`AWS_SHARED_CREDENTIALS_FILE` (the host uses IMDS); a pinned CLI config installs only `hashicorp/aws`, only from the `filesystem_mirror` at `data/tf-export/plugin-cache` (no `direct`, no `TF_PLUGIN_CACHE_DIR` — a cache dir that is also the mirror fails init, and nothing is downloaded at run time); `HOME` is the job folder. Scan the job folder before every plan (`UnsafeConfig`, including `aws_lambda_invocation` data/resource).
+- terraform runs in a `detached` process group; abort, timeout and output overflow SIGKILL the whole group (provider plugins too) and the call returns only after exit. A missing `nice` or terraform binary is `NotInstalled`.
+- The job folder's `providers.tf` has `required_version = "= 1.9.8"`; the bundle's has `">= 1.5.0, < 2.0.0"` (provider `= 5.100.0` in both). `scripts/18-setup-terraform.sh` runs as ec2-user only (refuses root).
 - The host role is not fully read-only, so the executor is the safety boundary. Cross-account fails closed (`NoCredentials`) and uses fresh AssumeRole credentials per command.
 - Secrets become `sensitive` variables right after generation. Real values live only in `secrets.auto.tfvars` in the job folder and are deleted at packaging, failure and cap. Only `CHANGE_ME` ships in the bundle. The AI gets scrubbed text only.
-- AI blocks may not contain `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy` or non-ASCII identifiers; `ignore_changes` may list only `user_data`, `user_data_base64`, `tags_all`.
+- AI blocks may not contain `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy` or non-ASCII identifiers; `ignore_changes` may list only `user_data`, `user_data_base64`, `tags_all` (plus `filename`, `source_code_hash` for `aws_lambda_function`) and entries already in the block sent.
 - The shipped bundle is always the last diff-0 level. Never show a non-diff-0 resource as passed.
 - Logs and API errors carry error names only. One job at a time, 30-minute cap.
 - After changing a rule, rerun the tests; the pre-test numbers are probe numbers and must not be quoted as the shipped pipeline's.
