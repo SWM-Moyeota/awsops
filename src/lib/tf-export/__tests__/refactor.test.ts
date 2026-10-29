@@ -223,6 +223,13 @@ describe('refactorBundle', () => {
     expect(body).toContain('resource "aws_vpc" "demo_vpc"');
     expect(body).not.toContain('fake-secret-1');
   });
+  it('noRefs takes the original addresses and leaves those blocks unreferenced', () => {
+    const lb = fixtureItems.find(i => i.tfType === 'aws_lb')!.address;
+    const { files, addresses } = refactorBundle({ generated: raw, imports, items: fixtureItems, level: 'refactored', noRefs: [lb] });
+    const edge = files['edge.tf'];
+    const block = edge.slice(edge.indexOf(`resource "aws_lb" "${addresses[lb].split('.')[1]}"`));
+    expect(block.slice(0, block.indexOf('\n}'))).toMatch(/security_groups\s+= \["sg-417b37380b1865e9e"\]/);
+  });
   it('ignores items whose resource is no longer in the text', () => {
     const gone = item('aws_vpc.gone', 'vpc-zzz', 'gone');
     const src = 'resource "aws_subnet" "s" {\n  vpc_id = "vpc-zzz"\n}\n';

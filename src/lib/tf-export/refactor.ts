@@ -174,7 +174,9 @@ export function refactorBundle(input: { generated: string; imports: string; item
   const imports = renameAddresses(input.imports, names);
   if (input.level === 'refactored') {
     const renamed = items.map(i => ({ ...i, address: names.get(i.address) ?? i.address }));
-    text = applyReferences(text, buildRefIndex(renamed), undefined, { skip: input.noRefs });
+    // noRefs are original addresses; the text is already renamed / noRefs는 원래 주소, 텍스트는 이미 이름이 바뀜
+    const skip = (input.noRefs ?? []).map(a => names.get(a) ?? a);
+    text = applyReferences(text, buildRefIndex(renamed), undefined, { skip });
   }
   const { text: clean, vars } = extractSecrets(text);
   return { files: { 'imports.tf': imports, ...splitLayers(clean) }, secrets: vars, addresses: Object.fromEntries(names) };
