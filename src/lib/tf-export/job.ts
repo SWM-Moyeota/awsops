@@ -271,7 +271,7 @@ async function callAi(ctx: Ctx, input: AiFixInput): Promise<string | null> {
   ctx.ai.outputTokens += r.outputTokens || 0;
   ctx.aiTouched.add(input.address);
   if (!r.ok || !r.block) return null;
-  const v = validateFix(r.block, input.address);
+  const v = validateFix(r.block, input.address, input.block);
   return v.ok ? v.block : null;
 }
 

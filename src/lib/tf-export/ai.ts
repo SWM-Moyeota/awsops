@@ -9,6 +9,8 @@ const PROMPT_CAP = 16_000;
 const PROBLEM_CAP = 4_000;
 const CALL_CAP_MS = 120_000;
 const ALLOWED_IGNORE = ['user_data', 'user_data_base64', 'tags_all'];
+// Extra ignore_changes entries per resource type (the lambda placeholder rule) / 종류별 추가 허용 (Lambda 자리표시 규칙)
+const TYPE_IGNORE: Record<string, string[]> = { aws_lambda_function: ['filename', 'source_code_hash'] };
 
 // System prompt with the fixing rules / 수정 규칙을 담은 시스템 프롬프트
 export const FIX_SYSTEM_PROMPT = `You fix ONE Terraform resource block so that "terraform plan" shows no changes. / Terraform 리소스 블록 하나를 고쳐 plan에 변경이 없게 만든다.
@@ -17,7 +19,7 @@ Rules / 규칙:
 - Return exactly one \`\`\`hcl code block and nothing else of value. / \`\`\`hcl 코드 블록 하나만 돌려준다.
 - Never add provisioners, providers, modules, terraform blocks or data sources. / provisioner, provider, module, terraform 블록, data source는 추가하지 않는다.
 - Prefer deleting computed or conflicting attributes, or matching the remote value. / 계산되는 속성이나 충돌하는 속성을 지우거나 원격 값에 맞추는 쪽을 택한다.
-- lifecycle.ignore_changes may list only user_data, user_data_base64, tags_all. / lifecycle.ignore_changes에는 user_data, user_data_base64, tags_all만 쓸 수 있다.
+- lifecycle.ignore_changes may list only user_data, user_data_base64, tags_all (plus filename, source_code_hash for aws_lambda_function) and entries already in the given block; keep those existing entries. / lifecycle.ignore_changes에는 user_data, user_data_base64, tags_all(aws_lambda_function은 filename, source_code_hash도)과 받은 블록에 이미 있던 항목만 쓸 수 있고, 있던 항목은 그대로 둔다.
 - Values shown as [숨김] are redacted; keep references or leave them out. / [숨김]은 가려진 값이다.`;
 
 // Take the first ```hcl (or plain ```) block / 첫 번째 ```hcl 또는 ``` 블록만 꺼낸다
@@ -53,8 +55,21 @@ function stripStrings(src: string): string {
   return src.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/(#|\/\/)[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-// Validate an AI block for the given address / 주소에 대한 AI 블록을 검증
-export function validateFix(block: string, address: string): { ok: true; block: string } | { ok: false; reason: string } {
+// ignore_changes lists in a block: attribute names, or null for a non-list form / 블록의 ignore_changes 목록 (목록이 아니면 null)
+function ignoreLists(text: string): string[][] | null {
+  const out: string[][] = [];
+  const re = /ignore_changes\s*=\s*(\[[^\]]*\]|[^\n]*)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const list = m[1].trim().match(/^\[([^\]]*)\]/);
+    if (!list) return null;
+    out.push(list[1].split(/[,\s]+/).map((s: string) => s.trim().replace(/^"|"$/g, '')).filter(Boolean));
+  }
+  return out;
+}
+
+// Validate an AI block for the given address; `original` is the block we sent / 주소에 대한 AI 블록 검증; original은 보낸 블록
+export function validateFix(block: string, address: string, original?: string): { ok: true; block: string } | { ok: false; reason: string } {
   const text = block.normalize('NFKC').trim();
   if (!text) return { ok: false, reason: '빈 응답' };
   if (/provisioner|local-exec|remote-exec/.test(text)) return { ok: false, reason: '금지된 구문(provisioner)' };
@@ -69,16 +84,12 @@ export function validateFix(block: string, address: string): { ok: true; block: 
   const h = heads[0].match(/^resource\s+"([^"]+)"\s+"([^"]+)"$/);
   if (!h) return { ok: false, reason: 'resource 블록이 아님' };
   if (`${h[1]}.${h[2]}` !== address) return { ok: false, reason: '다른 리소스 주소' };
-  const re = /ignore_changes\s*=\s*(\[[^\]]*\]|[^\n]*)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const v = m[1].trim();
-    const list = v.match(/^\[([^\]]*)\]/);
-    if (!list) return { ok: false, reason: 'ignore_changes 형식 불허' };
-    const attrs = list[1].split(/[,\s]+/).map((s: string) => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
-    const bad = attrs.find((a: string) => !ALLOWED_IGNORE.includes(a));
-    if (bad) return { ok: false, reason: `ignore_changes 불허 속성: ${bad}` };
-  }
+  const lists = ignoreLists(text);
+  if (!lists) return { ok: false, reason: 'ignore_changes 형식 불허' };
+  // Allowed: the base list, per-type extras, and entries the original block already had / 기본 목록, 종류별 추가, 원래 블록에 있던 항목
+  const allowed = new Set([...ALLOWED_IGNORE, ...(TYPE_IGNORE[h[1]] ?? []), ...(original ? (ignoreLists(original.normalize('NFKC')) ?? []).flat() : [])]);
+  const bad = lists.flat().find((a: string) => !allowed.has(a));
+  if (bad) return { ok: false, reason: `ignore_changes 불허 속성: ${bad}` };
   return { ok: true, block: text };
 }
 
@@ -125,6 +136,6 @@ export async function aiFix(input: AiFixInput, deps: { invoke?: Invoke; record?:
   const tokens = { inputTokens: res.inputTokens, outputTokens: res.outputTokens };
   const hcl = extractHcl(res.content);
   if (!hcl) return finish(false, 'AI 응답에 코드 블록 없음', tokens);
-  const v = validateFix(hcl, input.address);
+  const v = validateFix(hcl, input.address, input.block);
   return v.ok ? finish(true, '', tokens, v.block) : finish(false, v.reason, tokens);
 }

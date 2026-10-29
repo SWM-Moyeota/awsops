@@ -43,6 +43,18 @@ describe('validateFix', () => {
     expect(validateFix('resource "aws_security_group" "web" {\n lifecycle {\n  ignore_changes = [\n   tags_all,\n   user_data\n  ]\n }\n}', ADDR).ok).toBe(true);
     expect(validateFix('resource "aws_security_group" "web" {\n lifecycle {\n  ignore_changes = [\n   tags_all,\n   ami\n  ]\n }\n}', ADDR).ok).toBe(false);
   });
+  it('allows filename/source_code_hash for aws_lambda_function only', () => {
+    const lam = 'resource "aws_lambda_function" "fn" {\n filename = "lambda-placeholder.zip"\n lifecycle {\n  ignore_changes = [filename, source_code_hash]\n }\n}';
+    expect(validateFix(lam, 'aws_lambda_function.fn').ok).toBe(true);
+    expect(validateFix(lam.replace('aws_lambda_function', 'aws_security_group').replace('"fn"', '"web"'), ADDR).ok).toBe(false);
+  });
+  it('allows ignore_changes entries already present in the original block', () => {
+    const orig = 'resource "aws_security_group" "web" {\n lifecycle {\n  ignore_changes = [ami, "description"]\n }\n}';
+    const fixed = 'resource "aws_security_group" "web" {\n name = "x"\n lifecycle {\n  ignore_changes = [ami, description, tags_all]\n }\n}';
+    expect(validateFix(fixed, ADDR, orig).ok).toBe(true);
+    expect(validateFix(fixed, ADDR).ok).toBe(false);
+    expect(validateFix(fixed.replace('tags_all', 'egress'), ADDR, orig).ok).toBe(false);
+  });
   it('rejects a different address', () => {
     expect(validateFix(GOOD.replace('"web"', '"other"'), ADDR).ok).toBe(false);
     expect(validateFix(GOOD.replace('aws_security_group', 'aws_vpc'), ADDR).ok).toBe(false);
@@ -73,6 +85,13 @@ describe('aiFix', () => {
     expect(JSON.stringify(req.messages).length).toBeLessThan(17000);
     expect(r).toMatchObject({ ok: true, inputTokens: 10, outputTokens: 5 });
     expect(record.mock.calls[0][0]).toMatchObject({ route: 'terraform-export', gateway: 'bedrock', via: 'tf-export', success: true, userId: 'u@x.com' });
+  });
+  it('accepts a lambda fix that keeps the placeholder ignore_changes from the input block', async () => {
+    const block = 'resource "aws_lambda_function" "fn" {\n  filename = "lambda-placeholder.zip"\n  lifecycle {\n    ignore_changes = [filename, source_code_hash]\n  }\n}';
+    const invoke = vi.fn().mockResolvedValue({ content: '```hcl\n' + block.replace('{', '{\n  timeout = 3') + '\n```', inputTokens: 1, outputTokens: 1 });
+    const r = await aiFix({ address: 'aws_lambda_function.fn', block, problem: { kind: 'error', messages: ['x'] } }, { invoke, record: vi.fn() });
+    expect(r.ok).toBe(true);
+    expect(FIX_SYSTEM_PROMPT).toContain('source_code_hash');
   });
   it('rejects an invalid AI answer but still records tokens', async () => {
     const invoke = vi.fn().mockResolvedValue({ content: '```hcl\n' + GOOD.replace('"web"', '"zzz"') + '\n```', inputTokens: 3, outputTokens: 2 });

@@ -229,6 +229,15 @@ describe('runPipeline — failures and fallbacks', () => {
     expect(await readBundleFile(job.id, 'variables.tf')).not.toContain('sensitive');
   });
 
+  it('accepts an AI lambda fix that keeps the placeholder ignore_changes', async () => {
+    const tf = fakeTf({ changed: (a, body) => (a.startsWith('aws_lambda_function.') || a.startsWith('aws_instance.')) && !body.includes(MARK) });
+    const ai = fakeAi(a => a.startsWith('aws_instance.') || a.startsWith('aws_lambda_function.'));
+    const job = makeJob();
+    await runPipeline(job, deps(tf.fn, ai.fn));
+    expect(ai.inputs.find(i => i.address.startsWith('aws_lambda_function.'))!.block).toMatch(/ignore_changes\s*=\s*\[filename, source_code_hash\]/);
+    expect(job.results.find(r => r.tfType === 'aws_lambda_function')).toMatchObject({ outcome: 'pass-ignore', passedAt: 'ai' });
+  });
+
   it('rejects an AI block with a provisioner (counted as a failed fix)', async () => {
     const tf = fakeTf();
     const ai = fakeAi(() => false, i => `resource "aws_instance" "${i.address.split('.')[1]}" {\n  provisioner "local-exec" { command = "id" }\n}`);
