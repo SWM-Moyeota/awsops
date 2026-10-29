@@ -10,7 +10,7 @@ const PROBLEM_CAP = 4_000;
 const CALL_CAP_MS = 120_000;
 const ALLOWED_IGNORE = ['user_data', 'user_data_base64', 'tags_all'];
 // Extra ignore_changes entries per resource type (the lambda placeholder rule) / 종류별 추가 허용 (Lambda 자리표시 규칙)
-const TYPE_IGNORE: Record<string, string[]> = { aws_lambda_function: ['filename', 'source_code_hash'] };
+const TYPE_IGNORE: { [type: string]: string[] } = { aws_lambda_function: ['filename', 'source_code_hash'] };
 
 // System prompt with the fixing rules / 수정 규칙을 담은 시스템 프롬프트
 export const FIX_SYSTEM_PROMPT = `You fix ONE Terraform resource block so that "terraform plan" shows no changes. / Terraform 리소스 블록 하나를 고쳐 plan에 변경이 없게 만든다.
