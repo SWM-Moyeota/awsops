@@ -3,7 +3,7 @@
 ## 역할
 페이지 전반에 걸쳐 사용되는 공유 React 컴포넌트. 레이아웃, 카드, 차트, 테이블, K8s UI.
 
-## 주요 파일 (43개)
+## 주요 파일 (49개)
 
 ### layout/ — 레이아웃 (3)
 - `layout/Sidebar.tsx` — 메인 네비게이션 (6개 그룹, Bedrock·비용 레이더 포함, 활성 표시는 경로 세그먼트 단위) + Sign Out 버튼 (로고 우측) + AccountSelector + 계정별 기능 필터링
@@ -51,6 +51,13 @@
 - `root-cause/SuspectTable.tsx` · `SuspectTimeline.tsx` — 용의자 표(몇 분 전, 누가(도구), 경로, 점수 + 세 값 막대, 참고 순위 안내) · Recharts 산점도(−60~+5분, 시작 세로선)
 - `root-cause/format.ts` · `api.ts` — 시각 차이·신호·거리 문구 순수 함수 · `/api/root-cause` 클라이언트와 abort 훅
 
+### tf-export/ — Terraform 코드 변환 (6 + 헬퍼) — 자세한 내용은 `tf-export/CLAUDE.md`
+- `tf-export/TfExportView.tsx` — `/terraform-export` 본문 (항상 보이는 주의 문구, 미설치면 `scripts/18-setup-terraform.sh` 안내만, 계정 하나 필요, 1·2·3단계, 지난 작업, 누적 지표)
+- `tf-export/SeedPicker.tsx` — 탭: 태그 / 이름 접두어 / VPC(검색 + ARN) / 개별 검색(칩, 최대 60개) + 미리 보기 버튼
+- `tf-export/PreviewList.tsx` — 포함 표 + 제외 이유(서버에 포함됨·지원 안 함·개수 초과·다른 리전·다른 곳에서도 씀·AWS가 관리·AWS 서비스 역할) + 코드 만들기 버튼
+- `tf-export/JobProgress.tsx` · `JobResult.tsx` · `FileViewer.tsx` — 8단계 진행 표시(3초마다 확인) · 통과율 카드·리소스 표(✅/🟡/❌)·CHANGE_ME 안내·zip 내려받기 · 파일 탭 + 코드
+- `tf-export/format.ts` · `api.ts` — 단계·결과·이유 문구와 비율·씨앗 순수 함수 · `/api/terraform-export` 클라이언트와 abort·폴링 훅
+
 ### charts/ — Recharts 차트 래퍼 (3)
 - `charts/BarChartCard.tsx` — 바 차트
 - `charts/LineChartCard.tsx` — 라인 차트
@@ -78,7 +85,7 @@
 ## Role
 Shared React components across pages: layout, cards, charts, tables, K8s UI.
 
-## Key Files (43)
+## Key Files (49)
 
 ### layout/ — Layout (3)
 - `layout/Sidebar.tsx` — Main navigation (6 groups, incl. Bedrock and Cost Radar; active state matches whole path segments) + Sign Out button (next to logo) + AccountSelector + account feature filtering
@@ -124,6 +131,13 @@ Shared React components across pages: layout, cards, charts, tables, K8s UI.
 - `root-cause/IncidentList.tsx` · `IncidentDetail.tsx` — incident cards (signal icon, status, top suspect line) · incident card + graph basis + verified AI explanation (citation chips jump to the suspect row, otherwise a muted note)
 - `root-cause/SuspectTable.tsx` · `SuspectTimeline.tsx` — suspect table (minutes before, who (tool), path, score + three bars, reference-ranking caveat) · Recharts scatter (−60..+5 min, start line)
 - `root-cause/format.ts` · `api.ts` — pure offset/signal/distance copy helpers · `/api/root-cause` client and abortable hooks
+
+### tf-export/ — Terraform export (6 + helpers) — see `tf-export/CLAUDE.md`
+- `tf-export/TfExportView.tsx` — `/terraform-export` body (always-visible caution, only the `scripts/18-setup-terraform.sh` notice when not installed, needs one account, steps 1-2-3, past jobs, totals)
+- `tf-export/SeedPicker.tsx` — tabs: tag / name prefix / VPC (search + ARN) / one-by-one search (chips, up to 60) + preview button
+- `tf-export/PreviewList.tsx` — included table + exclusion reasons (part of a server, not supported, over the limit, other region, used elsewhere, managed by AWS, AWS service role) + make-code button
+- `tf-export/JobProgress.tsx` · `JobResult.tsx` · `FileViewer.tsx` — 8-stage stepper (checked every 3 s) · pass-rate cards, per-resource table (✅/🟡/❌), CHANGE_ME note, zip download · file tabs + code
+- `tf-export/format.ts` · `api.ts` — pure stage/outcome/reason copy, percent and seed helpers · `/api/terraform-export` client with abortable and polling hooks
 
 ### charts/ — Recharts Chart Wrappers (3)
 - `charts/BarChartCard.tsx` — Bar chart

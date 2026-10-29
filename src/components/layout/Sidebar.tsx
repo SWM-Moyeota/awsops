@@ -41,6 +41,7 @@ import {
   Radar,
   History,
   Share2,
+  FileCode,
   SearchCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -90,6 +91,7 @@ const navGroups: NavGroup[] = [
       { labelKey: 'sidebar.waf', href: '/waf', icon: Shield },
       { labelKey: 'sidebar.topology', href: '/topology', icon: GitBranch },
       { labelKey: 'sidebar.depGraph', href: '/dependency-graph', icon: Share2 },
+      { labelKey: 'sidebar.tfExport', href: '/terraform-export', icon: FileCode },
       { labelKey: 'sidebar.topologyView', href: '/topology-view', icon: Box },
       { labelKey: 'sidebar.diagram', href: '/diagram', icon: FileSearch },
     ],
