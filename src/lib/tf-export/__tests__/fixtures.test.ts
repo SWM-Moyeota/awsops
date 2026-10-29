@@ -1,0 +1,33 @@
+// Fixture sanity: anonymized and self-consistent / 픽스처 점검: 익명화 및 일관성
+import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+const dir = join(__dirname, 'fixtures');
+const read = (f: string) => readFileSync(join(dir, f), 'utf-8');
+const files = ['generated.raw.tf', 'plan-errors.log', 'plan.json'];
+
+describe('tf-export fixtures', () => {
+  it('contains no real account ids (only 111122223333)', () => {
+    for (const f of files) {
+      const ids = read(f).match(/(?<![0-9A-Za-z])[0-9]{12}(?![0-9A-Za-z])/g) ?? [];
+      expect(ids.filter(i => i !== '111122223333'), f).toEqual([]);
+    }
+  });
+  it('contains no email addresses', () => {
+    for (const f of files) expect(read(f), f).not.toMatch(/[A-Za-z0-9._-]+@[A-Za-z0-9-]+\.[A-Za-z]/);
+  });
+  it('error log line refs exist in generated.raw.tf', () => {
+    const total = read('generated.raw.tf').split('\n').length;
+    const refs = (read('plan-errors.log').match(/on generated\.tf line \d+/g) ?? []).map(m => Number(m.replace(/\D/g, '')));
+    expect(refs.length).toBeGreaterThan(0);
+    for (const n of refs) {
+      expect(n).toBeGreaterThanOrEqual(1);
+      expect(n).toBeLessThanOrEqual(total);
+    }
+  });
+  it('plan.json parses with >= 14 resource changes', () => {
+    const plan = JSON.parse(read('plan.json'));
+    expect(plan.resource_changes.length).toBeGreaterThanOrEqual(14);
+  });
+});

@@ -100,3 +100,7 @@ data/action-plan/
 data/graph/
 data/root-cause/
 .superpowers/
+
+# tf-export working data and tools / tf-export 작업 데이터와 도구
+data/tf-export/
+.tools/
