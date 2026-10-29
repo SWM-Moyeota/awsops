@@ -160,6 +160,19 @@ describe('setLifecycleIgnore', () => {
     const all = 'resource "aws_x" "a" {\n  lifecycle {\n    ignore_changes = all\n  }\n}\n';
     expect(setLifecycleIgnore(all, 'aws_x.a', ['user_data'])).toBe(all);
   });
+  it('merges into a single-line lifecycle block instead of adding a stray line', () => {
+    const one = 'resource "aws_x" "a" {\n  lifecycle { ignore_changes = [tags] }\n}\n';
+    expect(setLifecycleIgnore(one, 'aws_x.a', ['user_data'])).toBe(
+      'resource "aws_x" "a" {\n  lifecycle { ignore_changes = [tags, user_data] }\n}\n');
+    const other = 'resource "aws_x" "a" {\n  lifecycle { create_before_destroy = true }\n}\n';
+    expect(setLifecycleIgnore(other, 'aws_x.a', ['user_data'])).toBe(
+      'resource "aws_x" "a" {\n  lifecycle {\n    create_before_destroy = true\n    ignore_changes = [user_data]\n  }\n}\n');
+    const empty = 'resource "aws_x" "a" {\n  lifecycle {}\n}\n';
+    expect(setLifecycleIgnore(empty, 'aws_x.a', ['user_data'])).toBe(
+      'resource "aws_x" "a" {\n  lifecycle {\n    ignore_changes = [user_data]\n  }\n}\n');
+    const allOne = 'resource "aws_x" "a" {\n  lifecycle { ignore_changes = all }\n}\n';
+    expect(setLifecycleIgnore(allOne, 'aws_x.a', ['user_data'])).toBe(allOne);
+  });
 });
 
 describe('imports and renames', () => {

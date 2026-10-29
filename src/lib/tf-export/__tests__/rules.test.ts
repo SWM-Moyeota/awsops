@@ -168,6 +168,17 @@ describe('applyRules — each rule on a minimal snippet', () => {
   });
 });
 
+describe('applyRules — errors without an address', () => {
+  it('an absolute line with no address removes nothing', () => {
+    const t = 'resource "aws_x" "a" {\n  n = 0\n}\n';
+    const log = 'Error: Something odd\n\n  on generated.tf line 2:\n   2:   n = 0\n\nNo address here.\n';
+    const errs = parsePlanErrors(log);
+    expect(errs[0].address).toBeUndefined();
+    expect(errs[0].line).toBe(2);
+    expect(applyRules(t, errs).text).toBe(t);
+  });
+});
+
 describe('applyRules — real fixture', () => {
   const errs = parsePlanErrors(log);
   const rawLines = raw.split('\n');

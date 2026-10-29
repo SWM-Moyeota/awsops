@@ -81,7 +81,7 @@ export function applyRules(generated: string, errors: PlanError[]): { text: stri
   const res = splitResources(generated);
   const owner = (ln: number) => res.find(r => r.startLine <= ln && ln <= r.endLine)?.address;
   const absLine = (e: PlanError): number | undefined => {
-    if (e.line === undefined) return undefined;
+    if (e.line === undefined || !e.address) return undefined; // never act on an error without an address / 주소 없는 오류로는 지우지 않음
     if (e.file && !/(^|\/)generated\.tf$/.test(e.file)) return undefined;
     const r = e.address ? res.find(x => x.address === e.address!.replace(/\[[^\]]*\]$/, '')) : undefined;
     if (e.relative) return r ? r.startLine + e.line : undefined;

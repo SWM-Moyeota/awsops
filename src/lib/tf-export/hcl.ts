@@ -249,6 +249,29 @@ export function setLifecycleIgnore(text: string, address: string, attrs: string[
     if (text.slice(ls, close).trim() === '') return text.slice(0, ls) + block + text.slice(ls);
     return text.slice(0, close) + '\n' + block + text.slice(close);
   }
+  const mergeList = (vStart: number): string => {
+    const vEnd = s.match.get(vStart)!;
+    const existing = text.slice(vStart + 1, vEnd).split('\n').map(l => l.replace(/(#|\/\/).*$/, '')).join(' ')
+      .split(',').map(x => x.trim()).filter(Boolean);
+    const merged = [...existing];
+    for (const a of attrs) if (!merged.includes(a)) merged.push(a);
+    return `[${merged.join(', ')}]`;
+  };
+  // Single-line `lifecycle { … }`: merge in place or rewrite multi-line / 한 줄 lifecycle: 그 자리에서 합치거나 여러 줄로 다시 씀
+  if (lc.headLine === lc.closeLine) {
+    const re = /ignore_changes\s*=\s*/g;
+    const inner = text.slice(lc.open + 1, lc.close);
+    for (let m = re.exec(inner); m; m = re.exec(inner)) {
+      const at = lc.open + 1 + m.index;
+      if (s.mask[at] !== 1 || /[\w-]/.test(text[at - 1])) continue;
+      const vStart = at + m[0].length;
+      if (text[vStart] !== '[' || s.match.get(vStart) === undefined) return text; // `all` or an expression / `all` 또는 식
+      return text.slice(0, vStart) + mergeList(vStart) + text.slice(s.match.get(vStart)! + 1);
+    }
+    const pad = text.slice(s.lines[lc.headLine - 1].start, s.lines[lc.headLine - 1].end).match(/^\s*/)![0];
+    const body = inner.trim();
+    return text.slice(0, lc.open + 1) + '\n' + (body ? `${pad}  ${body}\n` : '') + `${pad}  ignore_changes = [${attrs.join(', ')}]\n${pad}` + text.slice(lc.close);
+  }
   // Find ignore_changes inside lifecycle / lifecycle 안의 ignore_changes 찾기
   for (let k = lc.headLine; k < lc.closeLine - 1; k++) {
     const ln = s.lines[k];
