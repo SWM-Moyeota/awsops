@@ -15,14 +15,15 @@ import { validateFix, type AiFixInput, type AiFixResult } from './ai';
 import { hclString, tokenize, decodeStr } from './_scan';
 import { makeZip } from './zip';
 import { buildReadme } from './readme';
-import { tfExportState, saveJob, readJobs, addStats, jobDir, JOB_ID } from './store';
+import { tfExportState, saveJob, readJobs, addStats, jobDir, jobsRoot, JOB_ID } from './store';
 
 export const JOB_CAP_MS = 30 * 60_000;
 const RULE_ROUNDS = 4;
 const AI_ROUNDS = 3;
 const BUNDLE_ZIP = 'bundle.zip';
 
-export type TerraformFn = (args: string[], opts: { cwd: string; accountId: string; hostAccountId: string; region: string }) => Promise<ExecResult>;
+// Same contract as runTerraform; must stop the command when `signal` aborts / runTerraform과 같은 계약, signal이 중단되면 명령을 멈춰야 함
+export type TerraformFn = (args: string[], opts: { cwd: string; accountId: string; hostAccountId: string; region: string; signal?: AbortSignal }) => Promise<ExecResult>;
 // Injectable dependencies (tests use fakes) / 주입 가능한 의존성 (테스트는 가짜를 씀)
 export interface JobDeps {
   terraform?: TerraformFn;
@@ -162,6 +163,7 @@ interface Ctx {
   ai: { calls: number; inputTokens: number; outputTokens: number };
   logN: number;
   cancelled: boolean;
+  abort: AbortController;
 }
 
 type Check = { verdicts: Map<string, Verdict>; json: unknown } | { errors: PlanError[] };
@@ -190,7 +192,7 @@ async function tf(ctx: Ctx, args: string[]): Promise<ExecResult> {
   checkpoint(ctx);
   assertAllowed(args);
   const run = ctx.deps.terraform ?? (await import('./runner')).runTerraform;
-  const r = await run(args, { cwd: ctx.dir, accountId: ctx.job.accountId, hostAccountId: ctx.hostAccountId, region: ctx.job.region });
+  const r = await run(args, { cwd: ctx.dir, accountId: ctx.job.accountId, hostAccountId: ctx.hostAccountId, region: ctx.job.region, signal: ctx.abort.signal });
   checkpoint(ctx);
   const n = String(++ctx.logN).padStart(3, '0');
   await fs.promises.mkdir(path.join(ctx.dir, 'logs'), { recursive: true });
@@ -335,6 +337,7 @@ async function rules(ctx: Ctx, genErrors: PlanError[]): Promise<{ errors: PlanEr
   let count = genErrors.length;
   let planned = false;
   for (let round = 0; round < RULE_ROUNDS; round++) {
+    const prev = { text: ctx.generated, ignored: JSON.parse(JSON.stringify(ctx.ruleIgnored)) as Record<string, string[]>, errors };
     const r = applyRules(ctx.generated, errors);
     for (const [a, attrs] of Object.entries(r.ignored)) {
       const cur = ctx.ruleIgnored[a] ?? (ctx.ruleIgnored[a] = []);
@@ -347,7 +350,16 @@ async function rules(ctx: Ctx, genErrors: PlanError[]): Promise<{ errors: PlanEr
     await writeWorking(ctx);
     errors = await plan(ctx);
     planned = true;
-    if (!errors.length || errors.length >= count) break;
+    if (errors.length > count) {
+      // This round made it worse: go back to the previous text and stop / 이번 회차가 더 나빠지면 이전 텍스트로 되돌리고 멈춤
+      ctx.generated = prev.text;
+      ctx.ruleIgnored = prev.ignored;
+      await writeWorking(ctx);
+      // Round-0 errors came from generate (resource-relative lines); re-plan for current ones / 0회차 오류는 generate 것이라 다시 plan
+      errors = round === 0 || !prev.errors.length ? await plan(ctx) : prev.errors;
+      break;
+    }
+    if (!errors.length || errors.length === count) break;
     count = errors.length;
   }
   // passRules: diff check right after rules; resources still in error are left out of it / 규칙 직후 diff 확인, 오류가 남은 리소스는 빼고
@@ -494,19 +506,8 @@ async function refactorAndVerify(ctx: Ctx): Promise<Bundle> {
     const noRefs = Array.from(r.failed.keys());
     r = await tryLevel(ctx, 'refactored', base, noRefs);
     if (r.ok) return r.bundle;
-    if (!r.whole) {
-      // Still changed after undoing their references: drop them and verify once more / 참조를 되돌려도 바뀌면 빼고 한 번 더 확인
-      const gone = r.failed;
-      let g = base.generated;
-      let im = base.imports;
-      for (const a of Array.from(gone.keys())) { g = removeResource(g, a); im = removeImport(im, a); }
-      const saved = new Map(ctx.failed);
-      for (const [a, paths] of Array.from(gone)) ctx.failed.set(a, { reason: `정리 뒤 diff(${paths.join(', ')})`, changedPaths: paths });
-      const r3 = await tryLevel(ctx, 'refactored', { generated: g, imports: im }, noRefs);
-      if (r3.ok) { ctx.generated = g; ctx.imports = im; return r3.bundle; }
-      ctx.failed = saved;
-    }
   }
+  // Still changing (or a whole-plan error): no references at all (spec §6.5) / 그래도 바뀌거나 plan 전체 오류면 참조 없이
   const n = await tryLevel(ctx, 'named', base, []);
   if (n.ok) return n.bundle;
   // Raw: the diff-0 working set from the diff stage, not planned again / 원본: diff 단계에서 diff 0이었던 세트 (다시 plan하지 않음)
@@ -537,7 +538,7 @@ function finalize(ctx: Ctx, bundle: Bundle | null, passAi: number, text: string)
   }
   ctx.job.results = results;
   return {
-    total: ctx.job.items.length, passRules: ctx.passedAtRules.size, passAi, passFinal: bundle ? pure + ignore : 0,
+    total: ctx.job.items.length, passRules: results.filter(r => r.passedAt === 'rules').length, passAi, passFinal: bundle ? pure + ignore : 0,
     pure, ignore, failed, byType, aiCalls: ctx.ai.calls, inputTokens: ctx.ai.inputTokens, outputTokens: ctx.ai.outputTokens,
   };
 }
@@ -612,14 +613,16 @@ export async function runPipeline(job: JobRecord, deps: JobDeps = {}): Promise<v
   const ctx: Ctx = {
     job, dir: jobDir(job.id), deps, hostAccountId: info?.hostAccountId ?? '', generated: '', imports: '', secrets: [], ruleIgnored: {},
     placeholder: false, failed: new Map(), passedAtRules: new Set(), aiTouched: new Set(), bundleFiles: new Set(),
-    ai: { calls: 0, inputTokens: 0, outputTokens: 0 }, logN: 0, cancelled: false,
+    ai: { calls: 0, inputTokens: 0, outputTokens: 0 }, logN: 0, cancelled: false, abort: new AbortController(),
   };
   const inner = info ? pipeline(ctx) : Promise.reject(named('NotFound'));
   inner.catch(() => undefined);
   try {
     await withCap(() => inner, deps.capMs ?? JOB_CAP_MS);
   } catch (e) {
+    // Stop: no new steps, and kill a running terraform (SIGKILL) / 멈춤: 새 단계 금지, 실행 중인 terraform은 SIGKILL
     ctx.cancelled = true;
+    ctx.abort.abort();
     const name = e instanceof Error && e.name ? e.name : 'Error';
     console.error('[tf-export] JobFailed', name);
     job.stage = 'failed';
@@ -627,16 +630,13 @@ export async function runPipeline(job: JobRecord, deps: JobDeps = {}): Promise<v
     job.finishedAt = new Date().toISOString();
     delete job.files;
     deps.onStage?.('failed');
-    await cleanup(ctx.dir, new Set()).catch(() => undefined);
     await saveJob(job).catch(() => console.error('[tf-export] SaveFailed'));
-    // Wait for a capped run to settle, then clean once more / 상한에 걸린 실행이 끝나길 기다린 뒤 한 번 더 정리
+    // Clean only after the run (and its child process) has settled / 실행과 자식 프로세스가 끝난 뒤에만 정리
     await inner.catch(() => undefined);
     await cleanup(ctx.dir, new Set()).catch(() => undefined);
-    if (job.stage !== 'failed' || job.files) {
-      job.stage = 'failed';
-      delete job.files;
-      await saveJob(job).catch(() => console.error('[tf-export] SaveFailed'));
-    }
+    job.stage = 'failed';
+    delete job.files;
+    await saveJob(job).catch(() => console.error('[tf-export] SaveFailed'));
   } finally {
     st.jobs.delete(job.id);
   }
@@ -659,6 +659,7 @@ export async function startJob(req: { accountId: string; seed: ExportSeed; reque
   st.running = 'starting';
   let job: JobRecord;
   try {
+    await sweepJobFolders();
     const installed = deps.installed ? await deps.installed() : (await (await import('./runner')).isInstalled()).installed;
     if (!installed) throw named('NotInstalled');
     const info = await accountInfo(req.accountId, deps);
@@ -691,10 +692,26 @@ export async function recoverInterrupted(): Promise<number> {
   for (const j of await readJobs()) {
     if (j.stage === 'done' || j.stage === 'failed' || st.jobs.has(j.id) || st.running === j.id) continue;
     await saveJob({ ...j, stage: 'failed', error: '서버 재시작', finishedAt: new Date().toISOString() });
-    await cleanup(jobDir(j.id), new Set()).catch(() => undefined);
     n++;
   }
+  await sweepJobFolders();
   return n;
+}
+
+/** Remove raw files from idle job folders: not-done folders are emptied, done ones keep only the bundle. / 쉬는 작업 폴더의 원본 파일 지우기: 끝나지 않은 폴더는 비우고, 끝난 폴더는 묶음만 남김. */
+export async function sweepJobFolders(): Promise<void> {
+  const st = tfExportState();
+  const busy = (id: string) => st.jobs.has(id) || st.running === id;
+  const jobs = await readJobs();
+  const known = new Set(jobs.map(j => j.id));
+  for (const j of jobs) {
+    if (busy(j.id)) continue;
+    const keep = j.stage === 'done' && j.files ? new Set([...j.files, BUNDLE_ZIP]) : new Set<string>();
+    await cleanup(jobDir(j.id), keep).catch(() => console.error('[tf-export] SweepFailed'));
+  }
+  let names: string[] = [];
+  try { names = await fs.promises.readdir(jobsRoot()); } catch { return; }
+  for (const n of names) if (JOB_ID.test(n) && !known.has(n) && !busy(n)) await fs.promises.rm(path.join(jobsRoot(), n), { recursive: true, force: true }).catch(() => undefined);
 }
 
 export async function getJob(id: string): Promise<JobRecord | null> {

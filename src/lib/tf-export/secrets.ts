@@ -62,7 +62,9 @@ export function extractSecrets(text: string): { text: string; vars: SecretVar[] 
     for (let k = 2; used.has(name); k++) name = `${base}_${k}`;
     used.add(name);
     vars.push({ name, value, address, path: v.chain.join('.') });
-    edits.push({ start: v.tok.start, end: v.tok.end, text: `var.${name}` });
+    // Keep the line count: a multi-line heredoc leaves blank lines so plan line numbers stay valid / 줄 수 유지: 여러 줄 heredoc 자리는 빈 줄로 남겨 plan 줄 번호를 지킴
+    const breaks = v.tok.v.split('\n').length - 1;
+    edits.push({ start: v.tok.start, end: v.tok.end, text: `var.${name}` + '\n'.repeat(breaks) });
   }
   return { text: applyEdits(text, edits), vars };
 }

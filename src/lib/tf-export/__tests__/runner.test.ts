@@ -5,7 +5,7 @@ vi.mock('@/lib/cloudtrail-access', () => ({
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { assertAllowed, runTerraform, TF_BIN, PLUGIN_CACHE_DIR } from '../runner';
+import { assertAllowed, runTerraform, defaultExec, ABORTED_CODE, TF_BIN, PLUGIN_CACHE_DIR } from '../runner';
 
 afterEach(() => vi.unstubAllEnvs());
 const ok = { code: 0, stdout: '', stderr: '' };
@@ -98,5 +98,30 @@ describe('runTerraform', () => {
     await runTerraform(['version'], { ...base, accountId: '111', exec });
     const env = (exec.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
     expect(Object.keys(env).filter((k) => /^(aws_endpoint_url|aws_ca_bundle|https?_proxy|all_proxy)/i.test(k))).toEqual([]);
+  });
+});
+
+describe('abort', () => {
+  it('passes the signal to exec, which can stop the command', async () => {
+    const ac = new AbortController();
+    // Fake exec honoring the signal like execFile does / execFile처럼 signal을 따르는 가짜 exec
+    const exec = vi.fn((_f: string, _a: string[], o: { signal?: AbortSignal }) => new Promise<{ code: number; stdout: string; stderr: string }>(res => {
+      o.signal?.addEventListener('abort', () => res({ code: ABORTED_CODE, stdout: '', stderr: 'aborted' }));
+    }));
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'tfr-'));
+    const p = runTerraform(['plan', '-input=false', '-no-color', '-out=plan.bin'], { cwd, accountId: '111', hostAccountId: '111', region: 'ap-northeast-2', exec, signal: ac.signal });
+    await new Promise(r => setTimeout(r, 5));
+    ac.abort();
+    expect(await p).toEqual({ code: ABORTED_CODE, stdout: '', stderr: 'aborted' });
+    expect((exec.mock.calls[0] as unknown as [string, string[], { signal?: AbortSignal }])[2].signal).toBe(ac.signal);
+  });
+  it('defaultExec kills a real child and resolves only after it exited', async () => {
+    const ac = new AbortController();
+    const t0 = Date.now();
+    const p = defaultExec('sleep', ['5'], { cwd: os.tmpdir(), env: process.env, timeout: 10_000, maxBuffer: 1 << 20, signal: ac.signal });
+    setTimeout(() => ac.abort(), 20);
+    expect(await p).toMatchObject({ code: ABORTED_CODE, stderr: 'aborted' });
+    expect(Date.now() - t0).toBeLessThan(3000);
+    expect(await defaultExec('sleep', ['1'], { cwd: os.tmpdir(), env: process.env, timeout: 10_000, maxBuffer: 1 << 20, signal: ac.signal })).toMatchObject({ code: ABORTED_CODE });
   });
 });

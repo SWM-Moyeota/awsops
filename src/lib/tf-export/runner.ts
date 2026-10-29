@@ -8,7 +8,9 @@ export const TF_BIN = path.join(process.cwd(), '.tools/terraform');
 export const PLUGIN_CACHE_DIR = path.join(process.cwd(), 'data/tf-export/plugin-cache');
 
 export type ExecResult = { code: number; stdout: string; stderr: string };
-export type ExecFn = (file: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; timeout: number; maxBuffer: number }) => Promise<ExecResult>;
+export type ExecFn = (file: string, args: string[], o: { cwd: string; env: NodeJS.ProcessEnv; timeout: number; maxBuffer: number; signal?: AbortSignal }) => Promise<ExecResult>;
+// Exit code reported for an aborted command / 중단된 명령의 종료 코드
+export const ABORTED_CODE = 137;
 
 const FORBIDDEN = new Set(['apply', 'import', 'state', 'destroy', '-auto-approve', 'console', 'taint', 'untaint', 'force-unlock', 'workspace']);
 const FILE = /^[a-z0-9._-]+$/;
@@ -48,10 +50,18 @@ export function assertAllowed(args: string[]): void {
   }
 }
 
-const defaultExec: ExecFn = (file, args, o) => new Promise((resolve) => {
-  execFile(file, args, { cwd: o.cwd, env: o.env, timeout: o.timeout, maxBuffer: o.maxBuffer }, (err, stdout, stderr) => {
+/** execFile wrapper; on abort the child gets SIGKILL and we resolve only after it has exited. / 중단되면 SIGKILL을 보내고 자식이 끝난 뒤에만 돌려준다. */
+export const defaultExec: ExecFn = (file, args, o) => new Promise((resolve) => {
+  if (o.signal?.aborted) return resolve({ code: ABORTED_CODE, stdout: '', stderr: 'aborted' });
+  const child = execFile(file, args, { cwd: o.cwd, env: o.env, timeout: o.timeout, maxBuffer: o.maxBuffer, signal: o.signal, killSignal: 'SIGKILL' }, (err, stdout, stderr) => {
     if (!err) return resolve({ code: 0, stdout, stderr });
     const e = err as NodeJS.ErrnoException & { killed?: boolean };
+    if (e.name === 'AbortError' || o.signal?.aborted) {
+      const done = () => resolve({ code: ABORTED_CODE, stdout: String(stdout ?? ''), stderr: 'aborted' });
+      if (child.exitCode !== null || child.signalCode !== null) return done();
+      child.once('exit', done);
+      return;
+    }
     if (String(e.code) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return resolve({ code: 125, stdout, stderr: 'output too large' });
     if (e.killed) return resolve({ code: 124, stdout, stderr: 'timeout' });
     resolve({ code: typeof e.code === 'number' ? e.code : 1, stdout, stderr });
@@ -70,7 +80,7 @@ export async function isInstalled(exec: ExecFn = defaultExec): Promise<{ install
 
 export async function runTerraform(
   args: string[],
-  opts: { cwd: string; accountId: string; hostAccountId: string; region: string; timeoutMs?: number; exec?: ExecFn },
+  opts: { cwd: string; accountId: string; hostAccountId: string; region: string; timeoutMs?: number; exec?: ExecFn; signal?: AbortSignal },
 ): Promise<ExecResult> {
   assertAllowed(args);
   const cross = opts.accountId !== opts.hostAccountId;
@@ -97,7 +107,7 @@ export async function runTerraform(
   env.HOME = opts.cwd;
   const timeout = opts.timeoutMs ?? (cross ? 12 : 10) * 60_000;
   try {
-    const r = await (opts.exec ?? defaultExec)('nice', ['-n', '10', TF_BIN, ...args], { cwd: opts.cwd, env, timeout, maxBuffer: 32 * 1024 * 1024 });
+    const r = await (opts.exec ?? defaultExec)('nice', ['-n', '10', TF_BIN, ...args], { cwd: opts.cwd, env, timeout, maxBuffer: 32 * 1024 * 1024, signal: opts.signal });
     return r.code === 124 ? { ...r, stderr: 'timeout' } : r;
   } catch (err) {
     if (String((err as { code?: unknown }).code) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return { code: 125, stdout: '', stderr: 'output too large' };

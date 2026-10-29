@@ -145,6 +145,7 @@ describe('runPipeline — happy path on the fixtures', () => {
     }
     expect(job.bundleLevel).toBe('refactored');
     expect(job.stats).toMatchObject({ total: 14, passRules: 13, passAi: 14, passFinal: 14, pure: 12, ignore: 2, failed: 0, aiCalls: 1, inputTokens: 10, outputTokens: 5 });
+    expect(job.results.filter(r => r.passedAt === 'rules').length).toBe(job.stats!.passRules);
     expect(job.stats!.byType.aws_instance).toEqual({ total: 1, pass: 1 });
     const inst = job.results.find(r => r.tfType === 'aws_instance')!;
     expect(inst).toMatchObject({ outcome: 'pass-ignore', passedAt: 'ai', ignored: ['user_data'] });
@@ -318,6 +319,67 @@ describe('runPipeline — failures and fallbacks', () => {
   });
 });
 
+describe('runPipeline — fix round 1', () => {
+  it('the cap aborts a running terraform and cleans up only after the child exited', async () => {
+    const base = fakeTf();
+    let signalSeen: AbortSignal | undefined;
+    // Fake honoring the signal: like a killed plan it writes files right before it exits / signal을 따르는 가짜: 끝나기 직전 파일을 씀
+    const tf: TerraformFn = async (a, o) => {
+      if (a[0] === 'show') {
+        signalSeen = o.signal;
+        return new Promise(res => o.signal!.addEventListener('abort', () => {
+          setTimeout(() => {
+            fs.writeFileSync(path.join(o.cwd, 'plan.bin'), 'late');
+            fs.writeFileSync(path.join(o.cwd, 'generated.tf'), `x = "${SECRET}"`);
+            res({ code: 137, stdout: '', stderr: 'aborted' });
+          }, 20);
+        }));
+      }
+      return base.fn(a, o);
+    };
+    const job = makeJob();
+    await runPipeline(job, deps(tf, fakeAi().fn, undefined, { capMs: 1000 }));
+    expect(signalSeen?.aborted).toBe(true);
+    expect(job).toMatchObject({ stage: 'failed', error: 'Timeout' });
+    expect(leftovers(job.id)).toEqual([]);
+  });
+
+  it('a rules round that adds errors is reverted and the loop stops', async () => {
+    const vpcErr = 'Error: Invalid value\n\n  with aws_vpc.r_vpc,\n  on generated.tf line 1, in resource "aws_vpc" "r_vpc":\n   1: resource "aws_vpc" "r_vpc" {\n\nbad\n';
+    const eipErr = 'Error: Unsupported argument\n\n  with aws_eip.r_eip,\n  on generated.tf line 1, in resource "aws_eip" "r_eip":\n   1: resource "aws_eip" "r_eip" {\n\nbogus\n';
+    const rulesRan = (files: Array<{ f: string; t: string }>) => files.some(x => x.f === 'generated.tf' && x.t.includes(LAMBDA_PLACEHOLDER));
+    const tf = fakeTf({
+      planError: files => {
+        if (rulesRan(files)) return vpcErr.repeat(20);
+        const eipFixed = files.some(x => /resource "aws_eip"[^]*?# ai-fixed/.test(x.t));
+        return eipFixed ? null : eipErr;
+      },
+    });
+    const ai = fakeAi(a => a.startsWith('aws_eip.') || a.startsWith('aws_instance.'));
+    const job = makeJob();
+    await runPipeline(job, deps(tf.fn, ai.fn));
+    expect(job.stage).toBe('done');
+    // Only one rules plan + one re-plan of the reverted text before ai-fix / 규칙 plan 한 번 + 되돌린 텍스트 plan 한 번
+    const plansBeforeAi = tf.calls.slice(2, 4).map(a => a[0]);
+    expect(plansBeforeAi).toEqual(['plan', 'plan']);
+    expect(ai.inputs[0]).toMatchObject({ address: 'aws_eip.r_eip', problem: { kind: 'error' } });
+    expect(job.results.find(r => r.tfType === 'aws_lambda_function')).toMatchObject({ outcome: 'pass' });
+    expect(job.files).not.toContain(LAMBDA_PLACEHOLDER);
+    expect(await readBundleFile(job.id, 'compute.tf')).not.toContain(LAMBDA_PLACEHOLDER);
+  });
+
+  it('still-changing resources after undoing their references go to named, nothing is dropped', async () => {
+    const anyRef = (files: Array<{ f: string; t: string }>) => files.some(x => /= aws_\w+\.\w+\.(id|arn)\b/.test(x.t));
+    const tf = fakeTf({ changed: (a, body, files) => (a.startsWith('aws_instance.') && !body.includes(MARK)) || (a.startsWith('aws_subnet.') && anyRef(files)) });
+    const stages: Stage[] = [];
+    const job = makeJob();
+    await runPipeline(job, deps(tf.fn, fakeAi().fn, stages));
+    expect(job.bundleLevel).toBe('named');
+    expect(stages.filter(s => s === 'verify').length).toBe(3);
+    expect(job.stats).toMatchObject({ passFinal: 14, failed: 0 });
+  });
+});
+
 describe('unsafeConfigReason', () => {
   it('accepts our providers.tf and generated resources', () => {
     expect(unsafeConfigReason('providers.tf', PROVIDERS_TF)).toBeNull();
@@ -370,6 +432,24 @@ describe('startJob / recoverInterrupted', () => {
     expect(tfExportState().running).toBeNull();
     expect((await getJob(jobId))!.stage).toBe('done');
     expect((await listJobs()).map(j => j.id)).toEqual([jobId]);
+  });
+
+  it('sweeps raw files: failed folders emptied, done folders keep only the bundle (also at startJob)', async () => {
+    const failed = makeJob({ stage: 'failed', error: 'Timeout' });
+    const done = makeJob({ stage: 'done', files: ['main.tf'] });
+    await saveJob(failed);
+    await saveJob(done);
+    for (const [j, names] of [[failed, ['plan.bin', 'secrets.auto.tfvars']], [done, ['main.tf', 'bundle.zip', 'plan.bin', 'generated.tf']]] as const) {
+      fs.mkdirSync(jobDir(j.id), { recursive: true });
+      for (const n of names) fs.writeFileSync(path.join(jobDir(j.id), n), SECRET);
+    }
+    await recoverInterrupted();
+    expect(leftovers(failed.id)).toEqual([]);
+    expect(leftovers(done.id).sort()).toEqual(['bundle.zip', 'main.tf']);
+    // Cheap check at startJob, even when the start itself fails / 시작이 실패해도 startJob에서 한 번 검사
+    fs.writeFileSync(path.join(jobDir(failed.id), 'generated.tf'), SECRET);
+    await expect(startJob({ accountId: '111122223333', seed: { kind: 'prefix', prefix: 'x' }, requestedBy: null }, { ...deps(fakeTf().fn, fakeAi().fn), installed: async () => false })).rejects.toThrow('NotInstalled');
+    expect(leftovers(failed.id)).toEqual([]);
   });
 
   it('marks jobs left unfinished by a restart as failed, once', async () => {

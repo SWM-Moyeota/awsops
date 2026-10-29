@@ -2,6 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { applyRules, parsePlanErrors } from '../rules';
 import { SECRET_KEY, extractSecrets, variablesTf, tfvarsExample, secretsTfvars, scrubForAi, scrubValue, scrubErrorText } from '../secrets';
 
 const raw = readFileSync(join(__dirname, 'fixtures', 'generated.raw.tf'), 'utf-8');
@@ -52,6 +53,28 @@ describe('extractSecrets', () => {
     expect(text).toContain('http_tokens = "required"');
     expect(text).toContain('description     = "token = \\"not-a-key\\""');
     expect(text).toContain('password        = null # sensitive');
+  });
+  it('keeps the line count for a 3-line heredoc secret so later lines keep their numbers', () => {
+    const src = [
+      'resource "aws_db_instance" "d" {',
+      '  master_password = <<EOT',
+      'line-one',
+      'line-two',
+      'line-three',
+      'EOT',
+      '  port = 0',
+      '}',
+      '',
+    ].join('\n');
+    const { text, vars } = extractSecrets(src);
+    expect(vars).toEqual([expect.objectContaining({ name: 'd_master_password', value: 'line-one\nline-two\nline-three\n' })]);
+    expect(text.split('\n').length).toBe(src.split('\n').length);
+    expect(text.split('\n')[1]).toBe('  master_password = var.d_master_password');
+    expect(text.split('\n')[6]).toBe('  port = 0');
+    expect(text).not.toContain('line-two');
+    // A resource-relative error on line 6 still hits `port = 0` / 리소스 기준 6번째 줄 오류가 여전히 `port = 0`을 가리킴
+    const log = 'Error: Invalid value\n\n  with aws_db_instance.d,\n  on generated.tf line 6:\n  (source code not available)\n\nport must not be zero\n';
+    expect(applyRules(text, parsePlanErrors(log)).text).not.toContain('port = 0');
   });
   it('decodes escapes and heredoc values; dedupes names', () => {
     const src = `resource "aws_lambda_function" "f" {
