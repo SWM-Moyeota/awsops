@@ -1,5 +1,6 @@
 // Incident analysis: CloudTrail write events -> merged graph -> ranked suspects -> cited AI explanation; serial queue; manual runs.
 // 사건 분석 — CloudTrail 쓰기 이벤트 → 합친 그래프 → 용의자 순위 → 인용 검증 AI 설명. 직렬 큐, 수동 분석.
+import { withCap } from '@/lib/with-cap';
 import { CloudTrailClient, LookupEventsCommand } from '@aws-sdk/client-cloudtrail';
 import { accountCredentials, cloudTrailSlot } from '@/lib/cloudtrail-access';
 import type { LookupFn } from '@/lib/change-timeline/ingest';
@@ -30,6 +31,8 @@ const LOOKUP_TIMEOUT_MS = 20_000;
 const JOB_CAP_MS = 180_000;
 
 const errName = (e: unknown) => (e instanceof Error ? e.name : 'Error');
+// withCap lives in a shared module; re-exported for existing importers / withCap은 공용 모듈로 옮기고 기존 import를 위해 다시 내보냄
+export { withCap };
 function namedError(name: string, message = name): Error { const e = new Error(message); e.name = name; return e; }
 
 // Write events only (ReadOnly=false), 50 per page; creds first, then the shared slot, new client per call.
@@ -126,18 +129,6 @@ export async function analyzeIncident(inc: Incident, deps: AnalyzeDeps = {}): Pr
     analyzedAt: now.toISOString(), windowFrom: windowFrom.toISOString(), windowTo: windowTo.toISOString(),
     graph: { from: merged.from, to: merged.to, count: merged.count }, eventsSeen, truncated, failedRegions, suspects, ai,
   };
-}
-
-// Settle within capMs: reject with Timeout, leave the job running unawaited. / capMs 안에 끝나지 않으면 Timeout — 작업은 기다리지 않고 둔다.
-export function withCap<T>(fn: () => Promise<T>, capMs: number): Promise<T> {
-  const job = Promise.resolve().then(fn);
-  job.catch(() => undefined); // late rejection after the cap is not unhandled / 상한 뒤 늦은 실패 처리
-  let timer: NodeJS.Timeout | undefined;
-  const cap = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(namedError('Timeout')), capMs);
-    timer.unref?.();
-  });
-  return Promise.race([job, cap]).finally(() => clearTimeout(timer));
 }
 
 /** Process-wide serial chain: one analysis at a time (shares CloudTrail slots with ingest), each capped at 180 s. / 프로세스 전체에서 한 번에 하나씩, 작업당 180초 상한. */

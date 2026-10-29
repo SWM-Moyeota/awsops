@@ -2,10 +2,11 @@
 import { invokeText } from '@/lib/ai/bedrock';
 import { recordAndSave } from '@/lib/ai/stats';
 import { getBedrockModelId, getBedrockModelLabel } from '@/lib/app-config';
-import { withCap } from '@/lib/root-cause/analyze';
+import { withCap } from '@/lib/with-cap';
 import { scrubForAi } from './secrets';
 
 const PROMPT_CAP = 16_000;
+const PROBLEM_CAP = 4_000;
 const CALL_CAP_MS = 120_000;
 const ALLOWED_IGNORE = ['user_data', 'user_data_base64', 'tags_all'];
 
@@ -47,26 +48,34 @@ function topLevelHeaders(src: string): string[] | null {
   return heads;
 }
 
+// Blank out string literals and comments so only code remains / 문자열·주석을 비워 코드만 남긴다
+function stripStrings(src: string): string {
+  return src.replace(/"(?:\\.|[^"\\])*"/g, '""').replace(/(#|\/\/)[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 // Validate an AI block for the given address / 주소에 대한 AI 블록을 검증
 export function validateFix(block: string, address: string): { ok: true; block: string } | { ok: false; reason: string } {
-  const text = block.trim();
+  const text = block.normalize('NFKC').trim();
   if (!text) return { ok: false, reason: '빈 응답' };
   if (/provisioner|local-exec|remote-exec/.test(text)) return { ok: false, reason: '금지된 구문(provisioner)' };
   if (/data\s+"(external|http)"/.test(text)) return { ok: false, reason: '금지된 데이터 소스' };
   if (/^\s*(provider|module|terraform)\b/m.test(text)) return { ok: false, reason: '금지된 블록(provider/module/terraform)' };
+  if (/[^\x00-\x7F]/.test(stripStrings(text))) return { ok: false, reason: '식별자에 비ASCII 문자' };
+  if (/^\s*(count|for_each)\s*=/m.test(text)) return { ok: false, reason: 'count/for_each 불허' };
+  if (/prevent_destroy/.test(text)) return { ok: false, reason: 'prevent_destroy 불허' };
   const heads = topLevelHeaders(text);
   if (!heads) return { ok: false, reason: 'HCL 구조 오류' };
   if (heads.length !== 1) return { ok: false, reason: '리소스 블록이 정확히 하나여야 함' };
   const h = heads[0].match(/^resource\s+"([^"]+)"\s+"([^"]+)"$/);
   if (!h) return { ok: false, reason: 'resource 블록이 아님' };
   if (`${h[1]}.${h[2]}` !== address) return { ok: false, reason: '다른 리소스 주소' };
-  const re = /ignore_changes\s*=\s*([^\n]*(?:\[[^\]]*\])?)/g;
+  const re = /ignore_changes\s*=\s*(\[[^\]]*\]|[^\n]*)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const v = m[1].trim();
     const list = v.match(/^\[([^\]]*)\]/);
     if (!list) return { ok: false, reason: 'ignore_changes 형식 불허' };
-    const attrs = list[1].split(',').map((s: string) => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
+    const attrs = list[1].split(/[,\s]+/).map((s: string) => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
     const bad = attrs.find((a: string) => !ALLOWED_IGNORE.includes(a));
     if (bad) return { ok: false, reason: `ignore_changes 불허 속성: ${bad}` };
   }
@@ -82,13 +91,16 @@ export interface AiFixResult { ok: boolean; block?: string; reason?: string; inp
 type Invoke = typeof invokeText;
 type Record = typeof recordAndSave;
 
-// Build the capped, scrubbed prompt / 비밀을 지우고 길이를 제한한 프롬프트 생성
+// Build the scrubbed prompt: problem kept whole (cap 4,000), block truncated first, total <= 16,000 / 문제 부분은 보존, 블록을 먼저 줄임
 function buildPrompt(i: AiFixInput): string {
-  const problem = i.problem.kind === 'error'
+  const problemRaw = i.problem.kind === 'error'
     ? `Plan errors / plan 오류:\n${i.problem.messages.join('\n')}`
     : `Attributes that differ (remote value) / 달라지는 속성(원격 값):\n${i.problem.changes.map((c) => `- ${c.path}: ${JSON.stringify(c.remote) ?? 'null'}`).join('\n')}`;
-  const body = `Address: ${i.address}\n\nCurrent block:\n\`\`\`hcl\n${i.block}\n\`\`\`\n\n${problem}`;
-  return scrubForAi(body).slice(0, PROMPT_CAP);
+  const problem = scrubForAi(problemRaw).slice(0, PROBLEM_CAP);
+  const head = `Address: ${i.address}\n\nCurrent block:\n\`\`\`hcl\n`;
+  const tail = `\n\`\`\`\n\n${problem}`;
+  const room = Math.max(0, PROMPT_CAP - head.length - tail.length);
+  return head + scrubForAi(i.block).slice(0, room) + tail;
 }
 
 // Ask the AI for one validated replacement block / 검증된 대체 블록 하나를 AI에 요청
@@ -108,7 +120,7 @@ export async function aiFix(input: AiFixInput, deps: { invoke?: Invoke; record?:
     res = await withCap(() => invoke({ modelId: getBedrockModelId(), system: FIX_SYSTEM_PROMPT, messages: [{ role: 'user', content: prompt }], maxTokens: 4000 }), CALL_CAP_MS);
   } catch (e) {
     console.error('[tf-export] AiFixFailed', e instanceof Error ? e.name : 'Error');
-    return finish(false, e instanceof Error && e.message === 'Timeout' ? 'AI 시간 초과' : 'AI 호출 실패', { inputTokens: 0, outputTokens: 0 });
+    return finish(false, e instanceof Error && e.name === 'Timeout' ? 'AI 시간 초과' : 'AI 호출 실패', { inputTokens: 0, outputTokens: 0 });
   }
   const tokens = { inputTokens: res.inputTokens, outputTokens: res.outputTokens };
   const hcl = extractHcl(res.content);
