@@ -68,6 +68,8 @@ export function unsafeConfigReason(file: string, text: string): string | null {
       while (toks[j]?.k === 'str' && toks[j].line === t.line) labels.push(decodeStr(toks[j++].v));
       const block = isP(j, '{') && toks[j].line === t.line;
       if (block && t.v === 'data' && labels[0] && /^(external|http)$/.test(labels[0])) return `data.${labels[0]}`;
+      // aws_lambda_invocation runs a function during plan / aws_lambda_invocation은 plan 중에 함수를 실행한다
+      if (block && (t.v === 'data' || t.v === 'resource') && labels[0] === 'aws_lambda_invocation') return `${t.v}.aws_lambda_invocation`;
       if (block && stack.length === 0) {
         if (t.v === 'module') return 'module';
         if (t.v === 'provider' && (file !== 'providers.tf' || labels[0] !== 'aws')) return 'provider';
@@ -98,8 +100,9 @@ export async function assertSafeConfig(dir: string): Promise<void> {
 
 // ---------- fixed files / 고정 파일 ----------
 
-export const PROVIDERS_TF = `terraform {
-  required_version = "= 1.9.8"
+// Working providers.tf pins the exact Terraform the job runs / 작업용 providers.tf는 작업이 쓰는 Terraform을 정확히 고정
+const providersTf = (requiredVersion: string) => `terraform {
+  required_version = "${requiredVersion}"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -112,6 +115,9 @@ provider "aws" {
   region = var.region
 }
 `;
+export const PROVIDERS_TF = providersTf('= 1.9.8');
+// Shipped providers.tf accepts any 1.x from 1.5 (import blocks need 1.5) / 묶음의 providers.tf는 1.5 이상 1.x 허용 (import 블록은 1.5부터)
+export const BUNDLE_PROVIDERS_TF = providersTf('>= 1.5.0, < 2.0.0');
 
 // variables.tf: region + sensitive secret variables / variables.tf: region과 sensitive 비밀 변수
 function variablesFile(region: string, vars: SecretVar[], rename?: Record<string, string>): string {
@@ -552,7 +558,7 @@ async function cleanup(dir: string, keep: Set<string>): Promise<void> {
 
 async function packageBundle(ctx: Ctx, bundle: Bundle): Promise<void> {
   await setStage(ctx, 'package');
-  const files: Record<string, string | Buffer> = { 'providers.tf': PROVIDERS_TF, 'variables.tf': variablesFile(ctx.job.region, bundle.vars, bundle.addresses), ...bundle.files };
+  const files: Record<string, string | Buffer> = { 'providers.tf': BUNDLE_PROVIDERS_TF, 'variables.tf': variablesFile(ctx.job.region, bundle.vars, bundle.addresses), ...bundle.files };
   if (bundle.vars.length) files['terraform.tfvars.example'] = tfvarsExample(bundle.vars);
   if (Object.values(bundle.files).some(t => t.includes(LAMBDA_PLACEHOLDER))) files[LAMBDA_PLACEHOLDER] = makeZip([]);
   const names = Object.keys(files).concat(['README.md', 'report.json']);
@@ -705,7 +711,7 @@ export async function sweepJobFolders(): Promise<void> {
   const jobs = await readJobs();
   const known = new Set(jobs.map(j => j.id));
   for (const j of jobs) {
-    if (busy(j.id)) continue;
+    if (!JOB_ID.test(j.id) || busy(j.id)) continue; // malformed ids never become paths / 형식이 틀린 id는 경로로 쓰지 않음
     const keep = j.stage === 'done' && j.files ? new Set([...j.files, BUNDLE_ZIP]) : new Set<string>();
     await cleanup(jobDir(j.id), keep).catch(() => console.error('[tf-export] SweepFailed'));
   }

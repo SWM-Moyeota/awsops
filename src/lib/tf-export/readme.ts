@@ -29,7 +29,8 @@ export function buildReadme(job: JobRecord, files: string[]): string {
   L.push('# Terraform 코드 변환 결과', '');
   L.push(`- 계정: ${job.accountId}`, `- 리전: ${job.region}`, `- 만든 시각: ${job.finishedAt ?? job.startedAt}`);
   if (job.bundleLevel) L.push(`- 묶음 단계: ${job.bundleLevel} — ${LEVEL_LABEL[job.bundleLevel]}`);
-  L.push(`- 가져올 리소스: ${passed.length}개`, '');
+  L.push(`- 가져올 리소스: ${passed.length}개`);
+  L.push('- 시험한 버전: Terraform 1.9.8, AWS 프로바이더 5.100.0 (`providers.tf`는 Terraform 1.5 이상 2.0 미만, 프로바이더 `= 5.100.0`)', '');
   L.push('> 이 코드는 지금 AWS 상태를 그대로 옮긴 거예요. `plan`에서 바꿀 것이 0개인지 꼭 확인한 뒤에만 `apply`하세요.', '');
 
   L.push('## 쓰는 법', '');

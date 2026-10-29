@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { runPipeline, startJob, recoverInterrupted, getJob, listJobs, readBundleFile, bundleZip, unsafeConfigReason, PROVIDERS_TF, type JobDeps, type TerraformFn } from '../job';
+import { runPipeline, startJob, recoverInterrupted, getJob, listJobs, readBundleFile, bundleZip, unsafeConfigReason, PROVIDERS_TF, BUNDLE_PROVIDERS_TF, type JobDeps, type TerraformFn } from '../job';
 import { saveJob, readJobs, readStats, jobDir, tfExportState } from '../store';
 import { splitResources } from '../hcl';
 import { LAMBDA_PLACEHOLDER } from '../rules';
@@ -164,6 +164,14 @@ describe('runPipeline — happy path on the fixtures', () => {
     const readme = (await readBundleFile(job.id, 'README.md'))!;
     expect(readme).toContain('14 to import, 0 to add, 0 to change, 0 to destroy');
     expect(readme).toContain('CHANGE_ME');
+    // Bundle allows any 1.x from 1.5; the job itself pins 1.9.8 / 묶음은 1.5 이상 1.x 허용, 작업 자체는 1.9.8 고정
+    const prov = (await readBundleFile(job.id, 'providers.tf'))!;
+    expect(prov).toContain('required_version = ">= 1.5.0, < 2.0.0"');
+    expect(prov).toContain('version = "= 5.100.0"');
+    expect(prov).not.toContain('= 1.9.8');
+    expect(PROVIDERS_TF).toContain('required_version = "= 1.9.8"');
+    expect(readme).toContain('Terraform 1.9.8');
+    expect(readme).toContain('5.100.0');
     expect(readme).toContain('지원 안 함');
     expect(readme).toContain('user_data');
     expect(readme).toContain('Lambda 코드');
@@ -392,6 +400,7 @@ describe('runPipeline — fix round 1', () => {
 describe('unsafeConfigReason', () => {
   it('accepts our providers.tf and generated resources', () => {
     expect(unsafeConfigReason('providers.tf', PROVIDERS_TF)).toBeNull();
+    expect(unsafeConfigReason('providers.tf', BUNDLE_PROVIDERS_TF)).toBeNull();
     expect(unsafeConfigReason('generated.tf', RAW)).toBeNull();
     expect(unsafeConfigReason('x.tf', 'resource "aws_s3_bucket" "b" {\n  tags = { Note = "provisioner module provider" }\n}\n')).toBeNull();
   });
@@ -400,6 +409,8 @@ describe('unsafeConfigReason', () => {
     expect(unsafeConfigReason('a.tf', 'data "external" "x" {\n  program = ["sh"]\n}\n')).toBe('data.external');
     expect(unsafeConfigReason('a.tf', 'data "http" "x" {\n  url = "http://169.254.169.254"\n}\n')).toBe('data.http');
     expect(unsafeConfigReason('a.tf', 'module "m" {\n  source = "./m"\n}\n')).toBe('module');
+    expect(unsafeConfigReason('a.tf', 'data "aws_lambda_invocation" "x" {\n  function_name = "f"\n  input = "{}"\n}\n')).toBe('data.aws_lambda_invocation');
+    expect(unsafeConfigReason('a.tf', 'resource "aws_lambda_invocation" "x" {\n  function_name = "f"\n  input = "{}"\n}\n')).toBe('resource.aws_lambda_invocation');
     expect(unsafeConfigReason('a.tf', 'provider "aws" {\n  region = "us-east-1"\n}\n')).toBe('provider');
     expect(unsafeConfigReason('providers.tf', PROVIDERS_TF + '\nprovider "null" {}\n')).toBe('provider');
     expect(unsafeConfigReason('a.tf', 'terraform {\n  backend "s3" {}\n}\n')).toBe('terraform');
@@ -459,6 +470,18 @@ describe('startJob / recoverInterrupted', () => {
     fs.writeFileSync(path.join(jobDir(failed.id), 'generated.tf'), SECRET);
     await expect(startJob({ accountId: '111122223333', seed: { kind: 'prefix', prefix: 'x' }, requestedBy: null }, { ...deps(fakeTf().fn, fakeAi().fn), installed: async () => false })).rejects.toThrow('NotInstalled');
     expect(leftovers(failed.id)).toEqual([]);
+  });
+
+  it('skips a malformed job id in jobs.json instead of rejecting', async () => {
+    const good = makeJob({ stage: 'failed', error: 'Timeout' });
+    await saveJob(good);
+    await saveJob(makeJob({ id: '../evil', stage: 'failed' }));
+    await saveJob(makeJob({ id: 'bad-id', stage: 'diff' }));
+    fs.mkdirSync(jobDir(good.id), { recursive: true });
+    fs.writeFileSync(path.join(jobDir(good.id), 'plan.bin'), SECRET);
+    await expect(recoverInterrupted()).resolves.toBe(1);
+    expect(leftovers(good.id)).toEqual([]);
+    await expect(startJob({ accountId: '111122223333', seed: { kind: 'prefix', prefix: 'x' }, requestedBy: null }, { ...deps(fakeTf().fn, fakeAi().fn), installed: async () => false })).rejects.toThrow('NotInstalled');
   });
 
   it('marks jobs left unfinished by a restart as failed, once', async () => {
