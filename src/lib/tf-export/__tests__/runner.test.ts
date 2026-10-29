@@ -2,7 +2,10 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 vi.mock('@/lib/cloudtrail-access', () => ({
   freshCredentials: vi.fn(async (id: string) => (id === '222' ? { accessKeyId: 'AK', secretAccessKey: 'SK', sessionToken: 'ST' } : undefined)),
 }));
-import { assertAllowed, runTerraform, TF_BIN } from '../runner';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { assertAllowed, runTerraform, TF_BIN, PLUGIN_CACHE_DIR } from '../runner';
 
 afterEach(() => vi.unstubAllEnvs());
 const ok = { code: 0, stdout: '', stderr: '' };
@@ -22,7 +25,7 @@ describe('assertAllowed', () => {
 });
 
 describe('runTerraform', () => {
-  const base = { cwd: '/tmp/j', hostAccountId: '111', region: 'ap-northeast-2' };
+  const base = { cwd: fs.mkdtempSync(path.join(os.tmpdir(), 'tfr-')), hostAccountId: '111', region: 'ap-northeast-2' };
   it('does not call exec for forbidden argv', async () => {
     const exec = vi.fn();
     await expect(runTerraform(['apply'], { ...base, accountId: '111', exec })).rejects.toThrow('subcommand');
@@ -58,7 +61,7 @@ describe('runTerraform', () => {
     const exec = vi.fn(async () => ok);
     await runTerraform(['version'], { ...base, accountId: '111', exec });
     const env = (exec.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
-    expect(Object.keys(env).filter((k) => /^tf_/i.test(k)).sort()).toEqual(['TF_IN_AUTOMATION', 'TF_INPUT', 'TF_PLUGIN_CACHE_DIR'].sort());
+    expect(Object.keys(env).filter((k) => /^tf_/i.test(k)).sort()).toEqual(['TF_CLI_CONFIG_FILE', 'TF_IN_AUTOMATION', 'TF_INPUT', 'TF_PLUGIN_CACHE_DIR'].sort());
     expect(env.AWS_REGION).toBe('ap-northeast-2'); expect(env.AWS_DEFAULT_REGION).toBe('ap-northeast-2');
   });
   it('cross-account drops profile/config files', async () => {
@@ -76,5 +79,24 @@ describe('runTerraform', () => {
   it('maxBuffer overflow is 125 not timeout', async () => {
     const exec = vi.fn(async () => { throw Object.assign(new Error('x'), { code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER', killed: true }); });
     expect(await runTerraform(['version'], { ...base, accountId: '111', exec })).toEqual({ code: 125, stdout: '', stderr: 'output too large' });
+  });
+  it('pins CLI config inside cwd and HOME=cwd', async () => {
+    const exec = vi.fn(async () => ok);
+    await runTerraform(['version'], { ...base, accountId: '111', exec });
+    const env = (exec.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
+    expect(env.HOME).toBe(base.cwd); expect(env.TF_CLI_CONFIG_FILE).toBe(path.join(base.cwd, '.terraformrc-awsops'));
+    expect(env.TF_PLUGIN_CACHE_DIR).toBe(PLUGIN_CACHE_DIR);
+    const txt = fs.readFileSync(env.TF_CLI_CONFIG_FILE!, 'utf8');
+    expect(txt).toContain('filesystem_mirror'); expect(txt).toContain('direct');
+    expect(txt.match(/include = \["([^"]+)"\]/g)).toEqual(Array(2).fill('include = ["registry.terraform.io/hashicorp/aws"]'));
+    await runTerraform(['version'], { ...base, accountId: '111', exec }); // second run keeps file / 재실행 시 파일 유지
+    expect(fs.readFileSync(env.TF_CLI_CONFIG_FILE!, 'utf8')).toBe(txt);
+  });
+  it('drops endpoint and proxy overrides', async () => {
+    for (const k of ['AWS_ENDPOINT_URL', 'AWS_ENDPOINT_URL_S3', 'AWS_CA_BUNDLE', 'HTTPS_PROXY', 'HTTP_PROXY', 'https_proxy', 'http_proxy', 'ALL_PROXY']) vi.stubEnv(k, 'x');
+    const exec = vi.fn(async () => ok);
+    await runTerraform(['version'], { ...base, accountId: '111', exec });
+    const env = (exec.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
+    expect(Object.keys(env).filter((k) => /^(aws_endpoint_url|aws_ca_bundle|https?_proxy|all_proxy)/i.test(k))).toEqual([]);
   });
 });

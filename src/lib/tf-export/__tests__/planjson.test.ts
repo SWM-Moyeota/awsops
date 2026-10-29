@@ -22,6 +22,10 @@ describe('judgePlan', () => {
     expect(m.has('data.x.y')).toBe(false);
     expect(m.get('a.new')!.changedPaths).toEqual(['(resource)']);
   });
+  it('real create/delete labelled (resource)', () => {
+    const m = judgePlan({ resource_changes: [{ address: 'a.c', mode: 'managed', change: { actions: ['create'], before: null, after: { x: 1 } } }] });
+    expect(m.get('a.c')!.changedPaths).toEqual(['(resource)']);
+  });
   it('diff paths, unknown skipping, cap, missing', () => {
     const m = judgePlan({
       resource_changes: [{ address: 'a.b', change: { actions: ['update'], before: { tags: { Name: 'x' }, ingress: [{ cidr: 1 }], k: 1 }, after: { tags: { Name: 'y' }, ingress: [{ cidr: 2 }], k: 2 }, after_unknown: { k: true } } },

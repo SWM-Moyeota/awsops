@@ -22,7 +22,7 @@ function diff(before: unknown, after: unknown, unknown_: unknown, path: string, 
     for (let i = 0; i < Math.max(before.length, after.length); i++) diff(before[i], after[i], u[i], `${path}[${i}]`, out);
     return;
   }
-  if (JSON.stringify(before) !== JSON.stringify(after)) out.push(path);
+  if (JSON.stringify(before) !== JSON.stringify(after)) out.push(path || '(resource)');
 }
 
 export function judgePlan(json: unknown): Map<string, Verdict> {

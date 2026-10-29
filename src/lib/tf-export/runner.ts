@@ -1,6 +1,7 @@
 // Allowlisted Terraform executor: the safety boundary for tf-export / 허용 목록 기반 Terraform 실행기: tf-export의 안전 경계
 import { execFile } from 'child_process';
 import path from 'path';
+import { writeFile } from 'fs/promises';
 import { freshCredentials } from '@/lib/cloudtrail-access';
 
 export const TF_BIN = path.join(process.cwd(), '.tools/terraform');
@@ -86,6 +87,14 @@ export async function runTerraform(
     env.AWS_SECRET_ACCESS_KEY = c.secretAccessKey;
     if (c.sessionToken) env.AWS_SESSION_TOKEN = c.sessionToken; else delete env.AWS_SESSION_TOKEN;
   }
+  // Scrub endpoint/proxy overrides / 엔드포인트·프록시 재정의 제거
+  for (const k of Object.keys(env)) if (/^AWS_ENDPOINT_URL/i.test(k) || /^(AWS_CA_BUNDLE|HTTPS?_PROXY|ALL_PROXY)$/i.test(k)) delete env[k];
+  // Pin provider installation to hashicorp/aws and isolate HOME / 프로바이더 설치를 hashicorp/aws로 고정하고 HOME 격리
+  const rc = path.join(opts.cwd, '.terraformrc-awsops');
+  const body = `provider_installation {\n  filesystem_mirror { path = "${PLUGIN_CACHE_DIR}" include = ["registry.terraform.io/hashicorp/aws"] }\n  direct { include = ["registry.terraform.io/hashicorp/aws"] }\n}\n`;
+  try { await writeFile(rc, body, { flag: 'wx' }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+  env.TF_CLI_CONFIG_FILE = rc;
+  env.HOME = opts.cwd;
   const timeout = opts.timeoutMs ?? (cross ? 12 : 10) * 60_000;
   try {
     const r = await (opts.exec ?? defaultExec)('nice', ['-n', '10', TF_BIN, ...args], { cwd: opts.cwd, env, timeout, maxBuffer: 32 * 1024 * 1024 });
