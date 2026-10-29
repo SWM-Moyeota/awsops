@@ -30,4 +30,24 @@ describe('tf-export fixtures', () => {
     const plan = JSON.parse(read('plan.json'));
     expect(plan.resource_changes.length).toBeGreaterThanOrEqual(14);
   });
+  it('has no real EC2 dashed-IP hostnames', () => {
+    for (const f of files) {
+      const hosts = read(f).match(/ec2-\d+-\d+-\d+-\d+/g) ?? [];
+      expect(hosts.filter(h => h !== 'ec2-203-0-113-10'), f).toEqual([]);
+    }
+  });
+  it('has no public IPv4 outside allowed ranges', () => {
+    const ok = (ip: string) => {
+      const [a, b, c] = ip.split('.').map(Number);
+      return ip === '0.0.0.0' || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 203 && b === 0 && c === 113);
+    };
+    for (const f of files) {
+      const ips = read(f).match(/(?<![\d.])\d{1,3}(?:\.\d{1,3}){3}(?![\d.])/g) ?? [];
+      expect(ips.filter(i => !ok(i)), f).toEqual([]);
+    }
+  });
+  it('keeps the fake secret for secret-handling tests', () => {
+    expect(read('generated.raw.tf')).toMatch(/DB_PASSWORD\s*=\s*"fake-secret-1"/);
+    expect(read('plan.json')).toContain('"DB_PASSWORD":"fake-secret-1"');
+  });
 });

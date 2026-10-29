@@ -167,7 +167,7 @@ Terraform planned the following actions, but then encountered a problem:
         private_dns              = "ip-10-10-0-222.ap-northeast-2.compute.internal"
         private_ip               = "10.0.0.222"
         ptr_record               = null
-        public_dns               = "ec2-13-125-103-180.ap-northeast-2.compute.amazonaws.com"
+        public_dns               = "ec2-203-0-113-10.ap-northeast-2.compute.amazonaws.com"
         public_ip                = "203.0.113.10"
         public_ipv4_pool         = "amazon"
         tags                     = {

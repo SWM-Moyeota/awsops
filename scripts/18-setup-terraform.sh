@@ -35,8 +35,12 @@ esac
 
 mkdir -p "$TOOLS_DIR" "$CACHE_DIR"
 
+# Single cleanup for all temp dirs / 모든 임시 디렉터리를 한 번에 정리
+TMP=""; WARM=""
+trap 'rm -rf "${TMP:-}" "${WARM:-}"' EXIT
+
 # Skip the download when the right version is present / 이미 설치되어 있으면 다운로드 생략
-if [ -x "$TF_BIN" ] && "$TF_BIN" version 2>/dev/null | head -1 | grep -q "v${TF_VERSION}\$"; then
+if [ -x "$TF_BIN" ] && CHECKPOINT_DISABLE=1 "$TF_BIN" version 2>/dev/null | head -1 | grep -q "v${TF_VERSION}\$"; then
   echo -e "${CYAN}[1/2] Terraform ${TF_VERSION} 이미 설치됨 / already installed — 건너뜀${NC}"
 else
   echo -e "${CYAN}[1/2] Terraform ${TF_VERSION} (${ARCH}) 다운로드 / download${NC}"
@@ -44,7 +48,6 @@ else
   ZIP="terraform_${TF_VERSION}_linux_${ARCH}.zip"
   SUMS="terraform_${TF_VERSION}_SHA256SUMS"
   TMP="$(mktemp -d)"
-  trap 'rm -rf "$TMP"' EXIT
   curl -fsSL -o "$TMP/$ZIP" "$BASE/$ZIP"
   curl -fsSL -o "$TMP/$SUMS" "$BASE/$SUMS"
 
@@ -74,7 +77,6 @@ terraform {
 }
 TF
 (cd "$WARM" && TF_IN_AUTOMATION=1 CHECKPOINT_DISABLE=1 TF_PLUGIN_CACHE_DIR="$CACHE_DIR" "$TF_BIN" init -input=false >/dev/null)
-rm -rf "$WARM"
 
 echo ""
 echo -e "${GREEN}완료 / Done${NC}"
