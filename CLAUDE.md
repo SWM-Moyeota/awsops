@@ -21,14 +21,14 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 ## 현황 (v1.8.0)
 | 항목 | 수치 |
 |------|------|
-| 페이지 | 46 (/root-cause 추가) |
-| 라우트 | 75 (페이지 46 + API 29) |
+| 페이지 | 47 (/terraform-export 추가) |
+| 라우트 | 77 (페이지 47 + API 30) |
 | SQL 쿼리 파일 | 27 |
-| API 라우트 | 29 (root-cause 추가) |
-| 컴포넌트 | 43 (root-cause 6종 추가) |
+| API 라우트 | 30 (terraform-export 추가) |
+| 컴포넌트 | 49 (tf-export 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 19 (등록표 `src/lib/ai/registry.ts`의 라우트 수 — 아래 우선순위 표는 그중 대표 11개) |
-| ADR | 13 (001-013) |
+| ADR | 14 (001-014) |
 
 ## 필수 규칙
 
@@ -116,9 +116,10 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `change-timeline/` — 변경 기록: 누가 어떤 리소스를 만들고 지웠는지 (CloudTrail 90일 백필 + 10분 증분, `/changes`·만든 사람 배지·Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `dep-graph/` — 의존성 그래프: 리소스 15종의 관계를 Steampipe에서 뽑아 PGlite(재귀 CTE)에 담고 "지우면 뭐가 영향 받는지" 안내 (15분 주기 재빌드, `data/graph/latest.json`, `/dependency-graph`·안전한 AI 실행 카드 참고 줄, 안내만 — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `root-cause/` — 장애 원인 분석: 5분마다 이상(ALB 5xx·비정상 대상·EC2 상태 검사·알람)을 감지하고 직전 CloudTrail 쓰기 이벤트에 시간×그래프 거리×변경 종류 점수로 용의자 순위를 매김. AI는 상위 용의자를 설명만 하고 인용을 검증함 (합친 그래프 이력, `/root-cause`·Slack 알림·질문, 조회만 — ADR-013) — `src/lib/root-cause/CLAUDE.md`
+- `tf-export/` — Terraform 코드 내보내기: 콘솔에서 만든 리소스를 `terraform plan -generate-config-out`으로 코드화하고, 규칙 먼저·AI는 나머지만, plan JSON의 diff 0 리소스만 zip으로 묶음. 허용 목록 실행기(`apply`·상태 없음), 비밀은 sensitive 변수 + `CHANGE_ME`, 30분 상한 (`/terraform-export`, 설치 `scripts/18-setup-terraform.sh` — ADR-014) — `src/lib/tf-export/CLAUDE.md`
 - `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 초당 1회) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
-### API 라우트 (`src/app/api/`, 29개 — 전체 목록은 `src/app/CLAUDE.md`)
+### API 라우트 (`src/app/api/`, 30개 — 전체 목록은 `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI 라우팅 진입점 (얇은 파일: `GET`/`POST`만, 검증 후 `src/lib/ai/`의 JSON·SSE 파이프라인으로 넘김. 등록표 19 라우트, 멀티 라우트, SSE 스트리밍, 도구 추론)
 - `steampipe/route.ts` — Steampipe 쿼리 + Cost 가용성 + 인벤토리 (POST/GET/PUT)
 - `auth/route.ts` — 로그아웃 (HttpOnly 쿠키 서버 사이드 삭제)
@@ -142,6 +143,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `changes/creators/route.ts` — 리소스별 만든 사람 (`?ids=계정:리소스ID[|생성시각]`, 최대 200개)
 - `graph/route.ts` — 의존성 그래프 조회 (읽기 전용 GET: stats/search/hubs/neighborhood/impact/deps/project, 그래프 없으면 `{status:'building'}`)
 - `root-cause/route.ts` — 장애 원인 분석 (GET `?op=list|get`, POST `{op:'analyze'}` 수동 분석, 30초 제한·120초 넘으면 202, 오류 이름만, `no-store`)
+- `terraform-export/route.ts` — Terraform 코드 내보내기 (GET `?op=status|list|stats|job|file|download`, POST `{op:preview|start}`, start는 202 `{jobId}`·429 실행 중·409 미설치, 오류 이름만, `no-store`)
 
 ### 인프라
 - `infra-cdk/lib/awsops-stack.ts` — CDK 인프라 (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
@@ -190,6 +192,7 @@ Step 14: 14-setup-health-alerts.sh        헬스 알림 워치독 (Lambda + Even
 Step 15: 15-setup-slack-chatops.sh        Slack ChatOps 토큰 2개 SSM 저장 + 서버 재시작 (Slack 앱 생성 후, 관리자 Mac에서 실행 — docs/runbooks/slack-chatops.md)
 Step 16: 16-setup-slack-control.sh        Slack 승인 기반 EC2 제어 전용 IAM 역할 (태그 awsops:control=allow만, 관리자 Mac에서 실행 — ADR-010)
 Step 17: 17-setup-action-executor.sh      AI 실행 전용 IAM 역할 (인자로 준 i-/sg- ID + 태그 awsops:control=allow만, awsops:* 태그 Deny, 관리자 Mac에서 실행 — ADR-011)
+Step 18: 18-setup-terraform.sh            Terraform 1.9.8 + AWS 프로바이더 5.100.0 캐시 설치 (tf-export용, 대시보드 서버에서 실행 — ADR-014)
 ```
 ※ Step 13 적용 후 Steampipe는 반드시 `sudo systemctl {start|stop|restart} steampipe`로 관리 — CLI `steampipe service stop`은 Restart=always가 자동으로 되돌림.
 
@@ -242,14 +245,14 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 ## Stats (v1.8.0)
 | Item | Count |
 |------|-------|
-| Pages | 46 (incl. /root-cause) |
-| Routes | 75 (46 pages + 29 APIs) |
+| Pages | 47 (incl. /terraform-export) |
+| Routes | 77 (47 pages + 30 APIs) |
 | SQL Query Files | 27 |
-| API Routes | 29 (incl. root-cause) |
-| Components | 43 (incl. 6 root-cause components) |
+| API Routes | 30 (incl. terraform-export) |
+| Components | 49 (incl. 6 tf-export components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 19 (routes in the registry, `src/lib/ai/registry.ts` — the priority table below shows the main 11) |
-| ADRs | 13 (001-013) |
+| ADRs | 14 (001-014) |
 
 ## Critical Rules
 
@@ -335,9 +338,10 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `change-timeline/` — Change timeline: who created/deleted which resource (CloudTrail 90-day backfill + 10-min incremental; `/changes`, creator badges, Slack) — `src/lib/change-timeline/CLAUDE.md`
 - `dep-graph/` — Dependency graph: extracts relationships of 15 resource kinds from Steampipe into PGlite (recursive CTE) and shows what is affected if one is deleted (rebuilt every 15 min, `data/graph/latest.json`, `/dependency-graph` and a reference line on safe-AI-action cards, guidance only — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `root-cause/` — Incident root cause: detects anomalies every 5 min (ALB 5xx, unhealthy targets, EC2 status checks, alarms) and ranks the preceding CloudTrail write events by time x graph distance x change kind; the AI only explains the top suspects and every citation is verified (merged graph history, `/root-cause`, Slack alert + question, read-only — ADR-013) — `src/lib/root-cause/CLAUDE.md`
+- `tf-export/` — Terraform code export: turns console-made resources into code with `terraform plan -generate-config-out`, rules first and the AI only for leftovers, bundles only diff-0 resources (plan JSON) into a zip. Allowlisted executor (no `apply`, no state), secrets as sensitive variables + `CHANGE_ME`, 30-minute cap (`/terraform-export`, install `scripts/18-setup-terraform.sh` — ADR-014) — `src/lib/tf-export/CLAUDE.md`
 - `cloudtrail-access.ts` — Shared CloudTrail pacing (1 request/s per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
-### API Routes (`src/app/api/`, 29 routes — full list in `src/app/CLAUDE.md`)
+### API Routes (`src/app/api/`, 30 routes — full list in `src/app/CLAUDE.md`)
 - `ai/route.ts` — AI routing entry point (thin: only `GET`/`POST`; validates, then hands off to the JSON/SSE pipelines in `src/lib/ai/`. 19 routes in the registry, multi-route, SSE streaming, tool inference)
 - `steampipe/route.ts` — Steampipe queries + Cost availability + Inventory (POST/GET/PUT)
 - `auth/route.ts` — Logout (server-side HttpOnly cookie deletion)
@@ -361,6 +365,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `changes/creators/route.ts` — Creator per resource (`?ids=account:resourceId[|createdAt]`, max 200)
 - `graph/route.ts` — Dependency graph queries (read-only GET: stats/search/hubs/neighborhood/impact/deps/project; `{status:'building'}` until a graph exists)
 - `root-cause/route.ts` — Incident root cause (GET `?op=list|get`, POST `{op:'analyze'}` manual analysis, 30 s rate limit, 202 after 120 s, error names only, `no-store`)
+- `terraform-export/route.ts` — Terraform code export (GET `?op=status|list|stats|job|file|download`, POST `{op:preview|start}`; start returns 202 `{jobId}`, 429 busy, 409 not installed; error names only; `no-store`)
 
 ### Infrastructure
 - `infra-cdk/lib/awsops-stack.ts` — CDK infra (VPC, EC2, ALB, ACM, Route 53, nginx user-data)
@@ -409,6 +414,7 @@ Step 14: 14-setup-health-alerts.sh        Health-alert watchdog (Lambda + 3 Even
 Step 15: 15-setup-slack-chatops.sh        Slack ChatOps: store 2 tokens in SSM + restart (after creating the Slack app, run from admin Mac — docs/runbooks/slack-chatops.md)
 Step 16: 16-setup-slack-control.sh        Slack approval-gated EC2 control IAM role (tag awsops:control=allow only, run from admin Mac — ADR-010)
 Step 17: 17-setup-action-executor.sh      Safe AI actions executor IAM role (listed i-/sg- IDs + tag awsops:control=allow only, Deny on awsops:* tags, run from admin Mac — ADR-011)
+Step 18: 18-setup-terraform.sh            Terraform 1.9.8 + AWS provider 5.100.0 cache install (for tf-export, run on the dashboard server — ADR-014)
 ```
 Note: after Step 13, manage Steampipe only via `sudo systemctl {start|stop|restart} steampipe` — a bare CLI `steampipe service stop` is auto-undone by Restart=always.
 

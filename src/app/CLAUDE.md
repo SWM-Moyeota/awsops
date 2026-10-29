@@ -31,6 +31,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `topology-view/page.tsx` — 편집 가능한 토폴로지 뷰 + 자연어 채팅 편집
 - `dependency-graph/page.tsx` — 의존성 그래프 (리소스 검색 → React Flow 관계도, 영향 받는 리소스 패널, 프로젝트 정리 미리보기, 안내만)
 - `root-cause/page.tsx` — 장애 원인 분석 (사건 목록·상세, 용의자 표·타임라인, 검증된 AI 설명, 직접 분석, 조회만)
+- `terraform-export/page.tsx` — Terraform 코드 변환 (씨앗 고르기 → 미리 보기 → 코드 만들기 진행 표시 → 통과율·파일·zip, 미설치면 설치 안내만, `apply` 없음)
 - `diagram/page.tsx` — 2D 보고서 스타일 다이어그램 (PNG) + 자연어 채팅
 
 ### Storage & DB (7)
@@ -143,6 +144,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `topology-view/page.tsx` — Editable topology view + natural-language chat edits
 - `dependency-graph/page.tsx` — Dependency graph (resource search -> React Flow map, affected-resources panel, project cleanup preview; guidance only)
 - `root-cause/page.tsx` — Incident root cause (incident list + detail, suspect table + timeline, verified AI explanation, manual analysis; read-only)
+- `terraform-export/page.tsx` — Terraform export (pick seed -> preview -> build progress -> pass rate, files, zip; install notice only when not installed; no `apply`)
 - `diagram/page.tsx` — 2D report-style diagram (PNG) + natural-language chat
 
 ### Storage & DB (7)
