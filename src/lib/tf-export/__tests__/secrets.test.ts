@@ -2,9 +2,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { SECRET_KEY, extractSecrets, variablesTf, tfvarsExample, secretsTfvars, scrubForAi, scrubValue } from '../secrets';
+import { SECRET_KEY, extractSecrets, variablesTf, tfvarsExample, secretsTfvars, scrubForAi, scrubValue, scrubErrorText } from '../secrets';
 
 const raw = readFileSync(join(__dirname, 'fixtures', 'generated.raw.tf'), 'utf-8');
+const planErrors = readFileSync(join(__dirname, 'fixtures', 'plan-errors.txt'), 'utf-8');
 
 const DB = `resource "aws_db_instance" "main" {
   identifier      = "demo-dev-db"
@@ -142,5 +143,67 @@ describe('scrubValue', () => {
     expect(scrubValue('tags.Name', 'demo')).toBe('demo');
     expect(scrubValue('metadata_options.0.http_tokens', 'required')).toBe('required');
     expect(scrubValue('password', null)).toBe(null);
+  });
+});
+
+describe('fix round 1: top-level keys, colon keys, user_data', () => {
+  it('scrubs secrets with no enclosing block', () => {
+    expect(scrubForAi('master_password = "pw"\n')).toBe('master_password = "[숨김]"\n');
+    expect(scrubForAi('      DB_PASSWORD = "fake-secret-1"\n')).not.toContain('fake-secret-1');
+    expect(scrubForAi('      "DB_PASSWORD" = "fake-secret-1"\n')).not.toContain('fake-secret-1');
+    expect(extractSecrets('auth_token = "t0"\n').vars).toMatchObject([{ value: 't0', path: 'auth_token', address: '' }]);
+  });
+  it('accepts `:` as a key separator in object literals, but not a ternary branch', () => {
+    const out = scrubForAi('resource "x" "y" {\n  v = jsonencode({ password: "p1", "api_key": "p2", name: "keep" })\n  w = var.c ? "secret-ish" : "other"\n}\n');
+    expect(out).not.toMatch(/p1|p2/);
+    expect(out).toContain('name: "keep"');
+    expect(out).toContain('"secret-ish"');
+  });
+  it('treats user_data / user_data_base64 as secrets unless it is a 40-hex hash', () => {
+    const src = 'resource "aws_instance" "a" {\n  user_data = "#!/bin/bash\\necho hi"\n}\nresource "aws_instance" "b" {\n  user_data_base64 = "IyEvYmluL2Jhc2g="\n}\nresource "aws_instance" "c" {\n  user_data = "8cc2f65ee9b4737809194b4438df8d69c07a5bdf"\n}\n';
+    const { text, vars } = extractSecrets(src);
+    expect(vars.map(v => [v.name, v.value])).toEqual([['a_user_data', '#!/bin/bash\necho hi'], ['b_user_data_base64', 'IyEvYmluL2Jhc2g=']]);
+    expect(text).toContain('user_data = "8cc2f65ee9b4737809194b4438df8d69c07a5bdf"');
+    const ai = scrubForAi(src);
+    expect(ai).not.toMatch(/echo hi|IyEvYmluL2Jhc2g/);
+    expect(ai).toContain('8cc2f65ee9b4737809194b4438df8d69c07a5bdf');
+    expect(scrubForAi(raw)).toContain('user_data                   = "8cc2f65ee9b4737809194b4438df8d69c07a5bdf"');
+    expect(scrubValue('user_data', 'echo hi')).toBe('[숨김]');
+    expect(scrubValue('user_data', '8cc2f65ee9b4737809194b4438df8d69c07a5bdf')).toBe('8cc2f65ee9b4737809194b4438df8d69c07a5bdf');
+    expect(scrubValue('', { user_data_base64: 'abc', ami: 'ami-1' })).toEqual({ user_data_base64: '[숨김]', ami: 'ami-1' });
+  });
+});
+
+describe('scrubErrorText', () => {
+  const snippet = [
+    'Error: Missing required argument',
+    '',
+    '  with aws_lambda_function.r_lambda,',
+    '  on generated.tf line 345, in resource "aws_lambda_function" "r_lambda":',
+    ' 344:     variables = {',
+    ' 345:       DB_PASSWORD = "fake-secret-1"',
+    ' 346:',
+    '',
+    'The argument "filename" is required.',
+    '      DB_PASSWORD = "fake-secret-1"',
+  ].join('\n');
+  it('replaces source-snippet lines (keeping the number) and scrubs key values', () => {
+    const out = scrubErrorText(snippet);
+    expect(out).not.toContain('fake-secret-1');
+    expect(out).toContain(' 345: [숨김]');
+    expect(out).toContain(' 344: [숨김]');
+    expect(out).toContain(' 346: [숨김]');
+    expect(out).toContain('on generated.tf line 345, in resource "aws_lambda_function" "r_lambda":');
+    expect(out).toContain('The argument "filename" is required.');
+    expect(out.split('\n')).toHaveLength(snippet.split('\n').length);
+  });
+  it('fixture plan-errors.txt: error messages kept, no snippet content, line count kept', () => {
+    const withSecret = planErrors + '\n' + snippet;
+    const out = scrubErrorText(withSecret);
+    expect(out).not.toContain('fake-secret-1');
+    expect(out.split('\n')).toHaveLength(withSecret.split('\n').length);
+    for (const m of planErrors.match(/^Error: .*$/gm) ?? []) expect(out).toContain(m);
+    expect(out).toContain('on generated.tf line 12:');
+    for (const l of out.split('\n')) if (/^\s*\d+:/.test(l)) expect(l).toMatch(/^\s*\d+: \[숨김\]$/);
   });
 });

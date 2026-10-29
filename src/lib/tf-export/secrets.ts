@@ -25,13 +25,22 @@ function isSecretChain(chain: string[]): boolean {
   return false;
 }
 
-// Secret literals in the text / 텍스트 안의 비밀 리터럴
-function secretLiterals(text: string): ValueLit[] {
-  return analyze(text).values.filter(v => isSecretChain(v.chain));
+// user_data keys: secret unless the value is the provider's 40-hex hash / user_data 키: 프로바이더의 40자리 16진 해시가 아니면 비밀
+const USER_DATA_KEY = /^user_data(?:_base64)?$/;
+const SHA1_HEX = /^[0-9a-f]{40}$/i;
+// True when a value under this chain must be hidden / 이 경로 아래 값을 숨겨야 하면 true
+function isSecretValue(chain: string[], value: unknown): boolean {
+  if (isSecretChain(chain)) return true;
+  return chain.some(c => USER_DATA_KEY.test(c)) && !(typeof value === 'string' && SHA1_HEX.test(value));
 }
 
 // Literal token → its value / 리터럴 토큰 → 실제 값
 const valueOf = (v: ValueLit) => (v.tok.k === 'heredoc' ? decodeHeredoc(v.tok.v) : decodeStr(v.tok.v));
+
+// Secret literals in the text / 텍스트 안의 비밀 리터럴
+function secretLiterals(text: string): ValueLit[] {
+  return analyze(text).values.filter(v => isSecretValue(v.chain, valueOf(v)));
+}
 
 // snake_case for variable names / 변수 이름용 snake_case
 const snake = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
@@ -89,6 +98,18 @@ export function scrubForAi(text: string): string {
   return applyEdits(text, edits);
 }
 
+// Source-snippet line in Terraform error output (`  12:   key = ...`) / Terraform 오류 출력의 소스 조각 줄
+const SNIPPET_LINE = /^(\s*)(\d+):(?:\s.*)?$/;
+
+// Hide snippet lines and secret values in Terraform error text before it goes to the AI / AI에 보내기 전 Terraform 오류 텍스트의 조각 줄과 비밀 값 가리기
+export function scrubErrorText(text: string): string {
+  const lines = text.split('\n').map(l => {
+    const m = SNIPPET_LINE.exec(l.replace(/\r$/, ''));
+    return m ? `${m[1]}${m[2]}: ${HIDDEN}` : l;
+  });
+  return scrubForAi(lines.join('\n'));
+}
+
 // Hide every leaf of a secret value / 비밀 값의 모든 잎 가리기
 function hideAll(value: unknown): unknown {
   if (value === null || value === undefined || typeof value === 'boolean') return value;
@@ -101,6 +122,7 @@ function hideAll(value: unknown): unknown {
 export function scrubValue(path: string, value: unknown): unknown {
   const chain = path.split(/[.[\]]+/).filter(s => s && !/^\d+$/.test(s));
   if (isSecretChain(chain)) return hideAll(value);
+  if (typeof value === 'string' && isSecretValue(chain, value)) return HIDDEN; // user_data script / user_data 스크립트
   if (Array.isArray(value)) return value.map(v => scrubValue(path, v));
   if (value && typeof value === 'object') {
     return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, scrubValue(path ? `${path}.${k}` : k, v)]));

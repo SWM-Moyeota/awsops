@@ -150,6 +150,8 @@ interface Frame { open: string; name: string; key: string | null; res?: Resource
 
 const unq = (t: Tok) => (t.k === 'str' ? decodeStr(t.v) : t.v);
 const isP = (t: Tok | undefined, v: string) => !!t && t.k === 'punct' && t.v === v;
+// `=` or object-literal `:` / `=` 또는 객체 리터럴의 `:`
+const isSep = (t: Tok | undefined) => isP(t, '=') || isP(t, ':');
 
 // Walk tokens: resource blocks + value literals with key chains / 토큰을 따라가며 resource 블록과 값 리터럴(키 경로 포함) 수집
 export function analyze(text: string): { toks: Tok[]; resources: ResourceBlock[]; values: ValueLit[] } {
@@ -157,18 +159,20 @@ export function analyze(text: string): { toks: Tok[]; resources: ResourceBlock[]
   const resources: ResourceBlock[] = [];
   const values: ValueLit[] = [];
   const stack: Frame[] = [];
+  // Holder for keys outside any block (snippets, error text) / 블록 밖 키 보관 (조각·오류 텍스트)
+  const root: Frame = { open: '', name: '', key: null };
   for (let i = 0; i < toks.length; i++) {
     const t = toks[i];
     const prev = toks[i - 1];
     const next = toks[i + 1];
-    const top = stack[stack.length - 1];
+    const top = stack[stack.length - 1] ?? root;
     if (t.k === 'punct' && (t.v === '{' || t.v === '[' || t.v === '(')) {
       let name = '';
       let res: ResourceBlock | undefined;
       if (t.v === '(') {
-        if (prev?.k === 'ident' && isP(toks[i - 2], '=')) name = top?.key ?? '';
-      } else if (isP(prev, '=')) {
-        name = top?.key ?? '';
+        if (prev?.k === 'ident' && isSep(toks[i - 2])) name = top.key ?? '';
+      } else if (isSep(prev)) {
+        name = top.key ?? '';
       } else if (t.v === '{' && prev && (prev.k === 'ident' || prev.k === 'str') && prev.line === t.line) {
         let j = i - 1;
         while (j > 0 && toks[j - 1].line === t.line && (toks[j - 1].k === 'ident' || toks[j - 1].k === 'str')) j--;
@@ -189,8 +193,11 @@ export function analyze(text: string): { toks: Tok[]; resources: ResourceBlock[]
       if (f?.res) f.res.end = t.end;
       continue;
     }
-    if ((t.k === 'ident' || t.k === 'str') && isP(next, '=') && !isP(toks[i + 2], '=')) {
-      if (top) top.key = unq(t);
+    // Key before `=` (not `==`) or before `:` (not a ternary branch) / `=`(`==` 제외) 또는 `:`(삼항 분기 제외) 앞의 키
+    const eqKey = isP(next, '=') && !isP(toks[i + 2], '=');
+    const colonKey = isP(next, ':') && !isP(prev, '?');
+    if ((t.k === 'ident' || t.k === 'str') && (eqKey || colonKey)) {
+      top.key = unq(t);
       continue;
     }
     if (t.k === 'str' || t.k === 'heredoc') {
@@ -201,7 +208,7 @@ export function analyze(text: string): { toks: Tok[]; resources: ResourceBlock[]
         if (f.res) { address = f.res.address; continue; }
         if (f.name) chain.push(f.name);
       }
-      if (top?.key && top.open !== '[') chain.push(top.key);
+      if (top.key && top.open !== '[') chain.push(top.key);
       values.push({ tok: t, idx: i, address, chain });
     }
   }
