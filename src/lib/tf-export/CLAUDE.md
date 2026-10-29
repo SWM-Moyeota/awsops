@@ -25,8 +25,8 @@
 - 작업 폴더의 `providers.tf`는 `required_version = "= 1.9.8"`, 묶음의 `providers.tf`는 `">= 1.5.0, < 2.0.0"`(프로바이더는 둘 다 `= 5.100.0`). `scripts/18-setup-terraform.sh`는 ec2-user로만 돈다(root 거부).
 - 호스트 역할은 완전한 읽기 전용이 아니므로 안전 경계는 실행기다. 교차 계정은 자격 증명이 없으면 닫힌 채 실패하고(`NoCredentials`) 명령마다 새 AssumeRole 자격 증명을 쓴다.
 - 비밀은 생성 직후 `sensitive` 변수로 뽑는다. 실제 값은 작업 폴더의 `secrets.auto.tfvars`에만 있고 묶기·실패·상한 때 지운다. 묶음에는 `CHANGE_ME`만 나간다. AI에는 가린 텍스트만 준다.
-- AI 블록은 `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy`, 비ASCII 식별자를 금지하고 `ignore_changes`는 `user_data`·`user_data_base64`·`tags_all`(`aws_lambda_function`은 `filename`·`source_code_hash`도)과 보낸 블록에 이미 있던 항목만 허용한다.
-- 내보내는 묶음은 항상 diff 0인 마지막 단계다. diff 0이 아닌 것을 통과로 표시하지 않는다.
+- AI 블록은 `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy`, 비ASCII 식별자를 금지하고 `ignore_changes`는 `user_data`·`user_data_base64`·`tags_all`(`aws_lambda_function`은 `filename`·`source_code_hash`, `aws_instance`는 `user_data_replace_on_change`도)과 보낸 블록에 이미 있던 항목만 허용한다.
+- 내보내는 묶음은 항상 diff 0인 마지막 단계다. diff 0이 아닌 것을 통과로 표시하지 않는다. 예외 하나: 가져오기이면서 값이 같고 모르는 값도 없이 숨김 표시만 바뀐 `update`(비밀 변수 때문)는 `sensitiveOnly`로 통과시키되 🟡(`pass-ignore`)로 세고 README의 기대 `change` 수에 넣는다.
 - 로그와 API 오류에는 오류 이름만 남긴다. 작업은 한 번에 하나, 30분 상한.
 - 규칙을 바꾸면 테스트를 돌리고, 사전 시험 수치는 탐색용이라 출하 파이프라인 수치로 쓰지 않는다.
 
@@ -59,7 +59,7 @@ Moves resources created by hand in the console into Terraform code. Generates co
 - The job folder's `providers.tf` has `required_version = "= 1.9.8"`; the bundle's has `">= 1.5.0, < 2.0.0"` (provider `= 5.100.0` in both). `scripts/18-setup-terraform.sh` runs as ec2-user only (refuses root).
 - The host role is not fully read-only, so the executor is the safety boundary. Cross-account fails closed (`NoCredentials`) and uses fresh AssumeRole credentials per command.
 - Secrets become `sensitive` variables right after generation. Real values live only in `secrets.auto.tfvars` in the job folder and are deleted at packaging, failure and cap. Only `CHANGE_ME` ships in the bundle. The AI gets scrubbed text only.
-- AI blocks may not contain `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy` or non-ASCII identifiers; `ignore_changes` may list only `user_data`, `user_data_base64`, `tags_all` (plus `filename`, `source_code_hash` for `aws_lambda_function`) and entries already in the block sent.
-- The shipped bundle is always the last diff-0 level. Never show a non-diff-0 resource as passed.
+- AI blocks may not contain `provisioner`, `data external/http`, `module`, `provider`, `count`, `for_each`, `prevent_destroy` or non-ASCII identifiers; `ignore_changes` may list only `user_data`, `user_data_base64`, `tags_all` (plus `filename`, `source_code_hash` for `aws_lambda_function`, `user_data_replace_on_change` for `aws_instance`) and entries already in the block sent.
+- The shipped bundle is always the last diff-0 level. Never show a non-diff-0 resource as passed. One exception: an import `update` whose values are identical, with nothing unknown, where only sensitivity marks change (from secret variables) passes as `sensitiveOnly`, counted yellow (`pass-ignore`) and included in the README's expected `change` count.
 - Logs and API errors carry error names only. One job at a time, 30-minute cap.
 - After changing a rule, rerun the tests; the pre-test numbers are probe numbers and must not be quoted as the shipped pipeline's.

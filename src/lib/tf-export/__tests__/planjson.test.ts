@@ -15,6 +15,24 @@ describe('judgePlan', () => {
     expect(m.get('aws_instance.r_instance')!.changedPaths).toContain('user_data_replace_on_change');
     expect(vals.some((v) => v.outcome === 'missing')).toBe(false);
   });
+  it('passes an import whose only change is sensitivity marks, and nothing looser', () => {
+    const imp = { id: 'f' };
+    const sens = { before_sensitive: { environment: [{}] }, after_sensitive: { environment: [{ variables: true }] } };
+    const v = { environment: [{ variables: { A: '1' } }] };
+    const m = judgePlan({ resource_changes: [
+      { address: 'a.sens', change: { actions: ['update'], importing: imp, before: v, after: v, after_unknown: {}, ...sens } },
+      { address: 'a.unknown', change: { actions: ['update'], importing: imp, before: v, after: v, after_unknown: { arn: true }, ...sens } },
+      { address: 'a.noimport', change: { actions: ['update'], before: v, after: v, after_unknown: {}, ...sens } },
+      { address: 'a.valuechange', change: { actions: ['update'], importing: imp, before: v, after: { environment: [{ variables: { A: '2' } }] }, after_unknown: {}, ...sens } },
+      { address: 'a.replace', change: { actions: ['delete', 'create'], importing: imp, before: v, after: v, after_unknown: {}, ...sens } },
+      { address: 'a.samemarks', change: { actions: ['update'], importing: imp, before: v, after: v, after_unknown: {}, before_sensitive: {}, after_sensitive: false } },
+    ] });
+    expect(m.get('a.sens')).toEqual({ outcome: 'pass', actions: ['update'], changedPaths: [], sensitiveOnly: ['environment[0].variables'] });
+    for (const a of ['a.unknown', 'a.noimport', 'a.valuechange', 'a.replace', 'a.samemarks']) {
+      expect(m.get(a)!.outcome).toBe('changed');
+      expect(m.get(a)!.sensitiveOnly).toBeUndefined();
+    }
+  });
   it('skips data sources and labels whole-resource change', () => {
     const m = judgePlan({ resource_changes: [
       { address: 'data.x.y', mode: 'data', change: { actions: ['read'] } },

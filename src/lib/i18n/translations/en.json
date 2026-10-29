@@ -1992,6 +1992,7 @@
   "tfExport.result.changeMe": "Secret values were replaced with CHANGE_ME. Fill them in before you run plan.",
   "tfExport.result.lambdaCode": "Lambda function code is not in the bundle. Get the code separately and add it.",
   "tfExport.result.ignored": "ignore_changes: {attrs}",
+  "tfExport.result.sensitiveOnly": "Only sensitivity marks change (same values): {attrs}",
   "tfExport.bundle.refactored": "References and names are tidied up.",
   "tfExport.bundle.named": "Switching to references broke the plan, so only names and files were tidied. IDs stay as-is.",
   "tfExport.bundle.raw": "Tidying broke the plan, so you get the code as first pulled.",

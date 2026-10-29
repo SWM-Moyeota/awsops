@@ -56,6 +56,8 @@ interface Script {
   // Is a resource still changed? (default: the instance until the AI marks it) / 리소스가 아직 바뀌는지
   changed?: (address: string, body: string, files: Array<{ f: string; t: string }>) => boolean;
   hang?: Promise<void>;
+  // Resources whose plan is an update with only sensitivity marks changed / 숨김 표시만 바뀐 update가 나오는 리소스
+  sensitive?: (address: string) => boolean;
 }
 
 // Fake terraform: generate writes the raw fixture + fixture errors; later plans/shows are built from the folder / 가짜 terraform
@@ -93,6 +95,12 @@ function fakeTf(script: Script = {}) {
             rc.change.after.environment = [{ variables: { APP_MODE: 'demo-value', DB_PASSWORD: 'x' } }];
           }
           else if (b.type !== 'aws_instance') rc.change.after.tags = { changed: 'yes' };
+        } else if (script.sensitive?.(b.address)) {
+          rc.change.actions = ['update'];
+          rc.change.after = rc.change.before;
+          rc.change.after_unknown = {};
+          rc.change.before_sensitive = {};
+          rc.change.after_sensitive = { environment: [{ variables: true }] };
         } else {
           rc.change.actions = ['no-op'];
           rc.change.after = rc.change.before;
@@ -148,7 +156,7 @@ describe('runPipeline — happy path on the fixtures', () => {
     expect(job.results.filter(r => r.passedAt === 'rules').length).toBe(job.stats!.passRules);
     expect(job.stats!.byType.aws_instance).toEqual({ total: 1, pass: 1 });
     const inst = job.results.find(r => r.tfType === 'aws_instance')!;
-    expect(inst).toMatchObject({ outcome: 'pass-ignore', passedAt: 'ai', ignored: ['user_data'] });
+    expect(inst).toMatchObject({ outcome: 'pass-ignore', passedAt: 'ai', ignored: ['user_data', 'user_data_replace_on_change'] });
     expect(job.results.find(r => r.tfType === 'aws_vpc')).toMatchObject({ outcome: 'pass', passedAt: 'rules', address: 'aws_vpc.demo_vpc' });
     expect(job.results.find(r => r.tfType === 'aws_lambda_function')).toMatchObject({ outcome: 'pass-ignore', ignored: ['filename', 'source_code_hash'] });
     // Bundle files / 묶음 파일
@@ -244,6 +252,20 @@ describe('runPipeline — failures and fallbacks', () => {
     await runPipeline(job, deps(tf.fn, ai.fn));
     expect(ai.inputs.find(i => i.address.startsWith('aws_lambda_function.'))!.block).toMatch(/ignore_changes\s*=\s*\[filename, source_code_hash\]/);
     expect(job.results.find(r => r.tfType === 'aws_lambda_function')).toMatchObject({ outcome: 'pass-ignore', passedAt: 'ai' });
+  });
+
+  it('passes a sensitivity-only lambda update as yellow without the AI, and the README expects that change count', async () => {
+    const tf = fakeTf({ sensitive: a => a.startsWith('aws_lambda_function.') });
+    const ai = fakeAi();
+    const job = makeJob();
+    await runPipeline(job, deps(tf.fn, ai.fn));
+    expect(job.error).toBeUndefined();
+    expect(ai.inputs.some(i => i.address.startsWith('aws_lambda_function.'))).toBe(false);
+    expect(job.results.find(r => r.tfType === 'aws_lambda_function')).toMatchObject({ outcome: 'pass-ignore', sensitiveOnly: ['environment[0].variables'] });
+    expect(job.stats).toMatchObject({ total: 14, failed: 0 });
+    const readme = (await readBundleFile(job.id, 'README.md'))!;
+    expect(readme).toContain('Plan: 14 to import, 0 to add, 1 to change, 0 to destroy.');
+    expect(readme).toContain('## 숨김 표시만 바뀌는 리소스');
   });
 
   it('rejects an AI block with a provisioner (counted as a failed fix)', async () => {

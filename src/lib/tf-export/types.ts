@@ -14,7 +14,7 @@ export type ExcludeReason = 'attached-to-instance'|'unsupported'|'over-limit'|'o
 export interface Excluded { nodeArn: string; name: string; nodeType: string; reason: ExcludeReason }
 // Per-item verdict of the diff-0 gate / diff-0 관문의 항목별 결과
 export type ItemOutcome = 'pass' | 'pass-ignore' | 'failed';
-export interface ItemResult { address: string; tfType: TfType; name: string; outcome: ItemOutcome; passedAt?: 'rules'|'ai'|'final'; reason?: string; ignored?: string[]; changedPaths?: string[] }
+export interface ItemResult { address: string; tfType: TfType; name: string; outcome: ItemOutcome; passedAt?: 'rules'|'ai'|'final'; reason?: string; ignored?: string[]; sensitiveOnly?: string[]; changedPaths?: string[] }
 // Job totals shown in the report / 리포트에 표시할 작업 통계
 export interface JobStats { total: number; passRules: number; passAi: number; passFinal: number; pure: number; ignore: number; failed: number; byType: Partial<Record<TfType, { total: number; pass: number }>>; aiCalls: number; inputTokens: number; outputTokens: number }
 // Persisted job record / 저장되는 작업 기록

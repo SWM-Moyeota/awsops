@@ -86,6 +86,9 @@ export default function JobResult({ job }: { job: JobRecord }) {
                     {r.ignored && r.ignored.length > 0 && (
                       <span className="block text-accent-orange">{t('tfExport.result.ignored', { attrs: r.ignored.join(', ') })}</span>
                     )}
+                    {r.sensitiveOnly && r.sensitiveOnly.length > 0 && (
+                      <span className="block text-accent-orange">{t('tfExport.result.sensitiveOnly', { attrs: r.sensitiveOnly.join(', ') })}</span>
+                    )}
                   </td>
                 </tr>
               ))}

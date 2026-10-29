@@ -1992,6 +1992,7 @@
   "tfExport.result.changeMe": "비밀 값은 CHANGE_ME로 바뀌어 있어요. 채운 뒤에 plan을 돌리세요.",
   "tfExport.result.lambdaCode": "Lambda 함수 코드는 묶음에 들어 있지 않아요. 코드는 따로 받아서 넣어 주세요.",
   "tfExport.result.ignored": "ignore_changes: {attrs}",
+  "tfExport.result.sensitiveOnly": "숨김 표시만 바뀜 (값은 같음): {attrs}",
   "tfExport.bundle.refactored": "참조와 이름까지 정리한 코드예요.",
   "tfExport.bundle.named": "참조로 바꾸면 plan이 깨져서, 이름과 파일만 정리했어요. ID는 그대로 남아 있어요.",
   "tfExport.bundle.raw": "정리하면 plan이 깨져서, 처음 뽑은 모양 그대로 드려요.",

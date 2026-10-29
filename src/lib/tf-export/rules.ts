@@ -10,7 +10,7 @@ export interface PlanError { title: string; address?: string; line?: number; fil
 // Every rule, in the order applied / 모든 규칙 (적용 순서)
 export const RULE_IDS = [
   'drop-null', 'default-value', 'conflict-computed', 'empty-required-block',
-  'lb-subnet-mapping', 'lambda-placeholder', 'instance-user-data-hash',
+  'lb-subnet-mapping', 'lambda-placeholder', 'instance-user-data-hash', 'instance-replace-flag',
 ] as const;
 export type RuleId = typeof RULE_IDS[number];
 
@@ -24,6 +24,7 @@ const NULL_LINE = /^\s*[A-Za-z_][\w-]*\s*=\s*null\s*((#|\/\/).*)?$/;
 const DEFAULT_LINE = /^\s*[A-Za-z_][\w-]*\s*=\s*(0|false|""|\[\]|\{\})\s*((#|\/\/).*)?$/;
 const HASH_USER_DATA = /^\s*user_data\s*=\s*"[0-9a-fA-F]{40}"\s*((#|\/\/).*)?$/;
 const EMPTY_LIST = /=\s*\[\s*\]\s*((#|\/\/).*)?$/;
+const REPLACE_FLAG_IGNORED = /ignore_changes\s*=\s*\[[^\]]*\buser_data_replace_on_change\b/;
 
 // Parse `Error:` blocks from plan output (plain or box-drawn, ANSI stripped) / plan 출력에서 오류 블록 파싱 (일반·상자 형식, ANSI 제거)
 export function parsePlanErrors(log: string): PlanError[] {
@@ -158,6 +159,13 @@ export function applyRules(generated: string, errors: PlanError[]): { text: stri
         text = setLifecycleIgnore(text, r.address, ['user_data']);
         addIgnored(r.address, ['user_data']);
         mark('instance-user-data-hash', r.address);
+      }
+      // instance-replace-flag: import leaves this Terraform-only flag null while config defaults it to false / 가져오기는 이 Terraform 전용 설정을 null로 두고 설정은 기본값 false라 ignore
+      const now = splitResources(text).find(x => x.address === r.address);
+      if (now && !REPLACE_FLAG_IGNORED.test(now.body)) {
+        text = setLifecycleIgnore(text, r.address, ['user_data_replace_on_change']);
+        addIgnored(r.address, ['user_data_replace_on_change']);
+        mark('instance-replace-flag', r.address);
       }
     }
   }

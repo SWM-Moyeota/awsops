@@ -62,7 +62,7 @@ describe('parsePlanErrors', () => {
 
 describe('applyRules — each rule on a minimal snippet', () => {
   it('lists every rule id', () => {
-    expect([...RULE_IDS]).toEqual(['drop-null', 'default-value', 'conflict-computed', 'empty-required-block', 'lb-subnet-mapping', 'lambda-placeholder', 'instance-user-data-hash']);
+    expect([...RULE_IDS]).toEqual(['drop-null', 'default-value', 'conflict-computed', 'empty-required-block', 'lb-subnet-mapping', 'lambda-placeholder', 'instance-user-data-hash', 'instance-replace-flag']);
   });
 
   it('drop-null: drops attribute = null lines (with comments) but not inside heredocs or object values', () => {
@@ -125,7 +125,7 @@ describe('applyRules — each rule on a minimal snippet', () => {
     const log2 = absErr('aws_instance.i', 2, 'Conflicting configuration arguments', '"cpu_core_count": conflicts with cpu_options')
       + absErr('aws_instance.i', 3, 'Conflicting configuration arguments', '"cpu_threads_per_core": conflicts with cpu_options')
       + absErr('aws_instance.i', 4, 'Conflicting configuration arguments', '"ipv6_address_count": conflicts with ipv6_addresses');
-    expect(applyRules(i, parsePlanErrors(log2)).text).toBe('resource "aws_instance" "i" {\n}\n');
+    expect(applyRules(i, parsePlanErrors(log2)).text).toBe('resource "aws_instance" "i" {\n  lifecycle {\n    ignore_changes = [user_data_replace_on_change]\n  }\n}\n');
     const n = 'resource "aws_nat_gateway" "n" {\n  secondary_private_ip_address_count = 2\n}\n';
     const log3 = absErr('aws_nat_gateway.n', 2, 'Conflicting configuration arguments', '"secondary_private_ip_addresses": conflicts with\nsecondary_private_ip_address_count');
     expect(applyRules(n, parsePlanErrors(log3)).text).toBe('resource "aws_nat_gateway" "n" {\n}\n');
@@ -162,9 +162,9 @@ describe('applyRules — each rule on a minimal snippet', () => {
   it('instance-user-data-hash: drops a 40-hex user_data and ignores it, keeps real scripts', () => {
     const t = 'resource "aws_instance" "i" {\n  ami       = "ami-1"\n  user_data = "8cc2f65ee9b4737809194b4438df8d69c07a5bdf"\n}\nresource "aws_instance" "j" {\n  user_data = "#!/bin/bash"\n}\n';
     const r = applyRules(t, []);
-    expect(block(r.text, 'aws_instance.i')).toBe('resource "aws_instance" "i" {\n  ami       = "ami-1"\n  lifecycle {\n    ignore_changes = [user_data]\n  }\n}');
+    expect(block(r.text, 'aws_instance.i')).toBe('resource "aws_instance" "i" {\n  ami       = "ami-1"\n  lifecycle {\n    ignore_changes = [user_data, user_data_replace_on_change]\n  }\n}');
     expect(block(r.text, 'aws_instance.j')).toContain('#!/bin/bash');
-    expect(r.ignored).toEqual({ 'aws_instance.i': ['user_data'] });
+    expect(r.ignored).toEqual({ 'aws_instance.i': ['user_data', 'user_data_replace_on_change'], 'aws_instance.j': ['user_data_replace_on_change'] });
   });
 });
 
@@ -215,7 +215,7 @@ describe('applyRules — real fixture', () => {
     expect(block(r.text, 'aws_instance.r_instance')).not.toContain('8cc2f65ee9b4737809194b4438df8d69c07a5bdf');
     expect(r.ignored).toEqual({
       'aws_lambda_function.r_lambda': ['filename', 'source_code_hash'],
-      'aws_instance.r_instance': ['user_data'],
+      'aws_instance.r_instance': ['user_data', 'user_data_replace_on_change'],
     });
     for (const id of RULE_IDS) expect(r.applied.some(a => a.startsWith(`${id}:`)), id).toBe(true);
   });

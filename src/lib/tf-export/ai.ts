@@ -9,8 +9,8 @@ const PROMPT_CAP = 16_000;
 const PROBLEM_CAP = 4_000;
 const CALL_CAP_MS = 120_000;
 const ALLOWED_IGNORE = ['user_data', 'user_data_base64', 'tags_all'];
-// Extra ignore_changes entries per resource type (the lambda placeholder rule) / 종류별 추가 허용 (Lambda 자리표시 규칙)
-const TYPE_IGNORE: { [type: string]: string[] } = { aws_lambda_function: ['filename', 'source_code_hash'] };
+// Extra ignore_changes entries per resource type (lambda placeholder and instance replace-flag rules) / 종류별 추가 허용 (Lambda 자리표시·인스턴스 교체 설정 규칙)
+const TYPE_IGNORE: { [type: string]: string[] } = { aws_lambda_function: ['filename', 'source_code_hash'], aws_instance: ['user_data_replace_on_change'] };
 
 // System prompt with the fixing rules / 수정 규칙을 담은 시스템 프롬프트
 export const FIX_SYSTEM_PROMPT = `You fix ONE Terraform resource block so that "terraform plan" shows no changes. / Terraform 리소스 블록 하나를 고쳐 plan에 변경이 없게 만든다.
@@ -19,7 +19,7 @@ Rules / 규칙:
 - Return exactly one \`\`\`hcl code block and nothing else of value. / \`\`\`hcl 코드 블록 하나만 돌려준다.
 - Never add provisioners, providers, modules, terraform blocks or data sources. / provisioner, provider, module, terraform 블록, data source는 추가하지 않는다.
 - Prefer deleting computed or conflicting attributes, or matching the remote value. / 계산되는 속성이나 충돌하는 속성을 지우거나 원격 값에 맞추는 쪽을 택한다.
-- lifecycle.ignore_changes may list only user_data, user_data_base64, tags_all (plus filename, source_code_hash for aws_lambda_function) and entries already in the given block; keep those existing entries. / lifecycle.ignore_changes에는 user_data, user_data_base64, tags_all(aws_lambda_function은 filename, source_code_hash도)과 받은 블록에 이미 있던 항목만 쓸 수 있고, 있던 항목은 그대로 둔다.
+- lifecycle.ignore_changes may list only user_data, user_data_base64, tags_all (plus filename, source_code_hash for aws_lambda_function, user_data_replace_on_change for aws_instance) and entries already in the given block; keep those existing entries. / lifecycle.ignore_changes에는 user_data, user_data_base64, tags_all(aws_lambda_function은 filename, source_code_hash, aws_instance는 user_data_replace_on_change도)과 받은 블록에 이미 있던 항목만 쓸 수 있고, 있던 항목은 그대로 둔다.
 - Values shown as [숨김] are redacted; keep references or leave them out. / [숨김]은 가려진 값이다.`;
 
 // Take the first ```hcl (or plain ```) block / 첫 번째 ```hcl 또는 ``` 블록만 꺼낸다

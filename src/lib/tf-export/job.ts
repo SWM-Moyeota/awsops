@@ -161,6 +161,8 @@ interface Ctx {
   imports: string;
   secrets: SecretVar[];
   ruleIgnored: Record<string, string[]>;
+  // Diff-stage passes where only sensitivity marks changed (original addresses) / diff 단계에서 숨김 표시만 바뀐 통과 (원래 주소)
+  sensitiveOnly: Map<string, string[]>;
   placeholder: boolean;
   failed: Map<string, { reason: string; changedPaths?: string[] }>;
   passedAtRules: Set<string>;
@@ -440,7 +442,10 @@ async function diffStage(ctx: Ctx, reuse: Check | null): Promise<void> {
     }
     edits = new Map();
     const changed = present(ctx).filter(i => c.verdicts.get(i.address)?.outcome !== 'pass');
-    if (!changed.length) return;
+    if (!changed.length) {
+      ctx.sensitiveOnly = sensitiveOf(present(ctx).map(i => i.address), c.verdicts, a => a);
+      return;
+    }
     if (dropped) throw named('DiffUnstable');
     if (aiRounds >= AI_ROUNDS) {
       for (const i of changed) {
@@ -465,7 +470,14 @@ async function diffStage(ctx: Ctx, reuse: Check | null): Promise<void> {
   }
 }
 
-type Bundle = { level: 'refactored' | 'named' | 'raw'; files: Record<string, string>; addresses: Record<string, string>; vars: SecretVar[] };
+type Bundle = { level: 'refactored' | 'named' | 'raw'; files: Record<string, string>; addresses: Record<string, string>; vars: SecretVar[]; sensitive: Map<string, string[]> };
+
+// Sensitivity-only passes keyed by original address / 숨김 표시만 바뀐 통과 (원래 주소 기준)
+function sensitiveOf(addresses: string[], verdicts: Map<string, Verdict>, to: (a: string) => string): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const a of addresses) { const sp = verdicts.get(to(a))?.sensitiveOnly; if (sp) m.set(a, sp); }
+  return m;
+}
 type LevelResult = { ok: true; bundle: Bundle } | { ok: false; whole: boolean; failed: Map<string, string[]> };
 
 // Replace the files in the job folder with a candidate bundle / 작업 폴더의 파일을 후보 묶음으로 바꾸기
@@ -500,7 +512,8 @@ async function tryLevel(ctx: Ctx, level: 'refactored' | 'named', base: { generat
   if (failed.size) return { ok: false, whole: false, failed };
   const files: Record<string, string> = {};
   for (const f of Object.keys(b.files)) files[f] = await fs.promises.readFile(path.join(ctx.dir, f), 'utf8');
-  return { ok: true, bundle: { level, files, addresses: b.addresses, vars } };
+  const sensitive = sensitiveOf(items.map(i => i.address), c.verdicts, a => b.addresses[a] ?? a);
+  return { ok: true, bundle: { level, files, addresses: b.addresses, vars, sensitive } };
 }
 
 // refactored → (undo refs of failed ones) → (drop) → named → raw; the shipped bundle is always the last diff-0 one / 정리 단계 폴백, 내주는 묶음은 언제나 마지막 diff 0
@@ -519,7 +532,7 @@ async function refactorAndVerify(ctx: Ctx): Promise<Bundle> {
   // Raw: the diff-0 working set from the diff stage, not planned again / 원본: diff 단계에서 diff 0이었던 세트 (다시 plan하지 않음)
   const files = { 'imports.tf': base.imports, 'main.tf': base.generated };
   const vars = usedSecrets(ctx.secrets, [base.generated]);
-  return { level: 'raw', files, addresses: Object.fromEntries(present(ctx).map(i => [i.address, i.address])), vars };
+  return { level: 'raw', files, addresses: Object.fromEntries(present(ctx).map(i => [i.address, i.address])), vars, sensitive: ctx.sensitiveOnly };
 }
 
 // Item results and job stats / 항목 결과와 작업 지표
@@ -539,8 +552,10 @@ function finalize(ctx: Ctx, bundle: Bundle | null, passAi: number, text: string)
     t.pass++;
     const ign = Array.from(new Set((ctx.ruleIgnored[i.address] ?? []).concat(ignoreChangesOf(text, i.address))));
     const passedAt = ctx.passedAtRules.has(i.address) && !ctx.aiTouched.has(i.address) ? 'rules' : 'ai';
-    if (ign.length) ignore++; else pure++;
-    results.push({ address: bundle.addresses[i.address] ?? i.address, tfType: i.tfType, name: i.name, outcome: ign.length ? 'pass-ignore' : 'pass', passedAt, ...(ign.length ? { ignored: ign } : {}) });
+    const sens = bundle.sensitive.get(i.address);
+    const yellow = ign.length > 0 || !!sens;
+    if (yellow) ignore++; else pure++;
+    results.push({ address: bundle.addresses[i.address] ?? i.address, tfType: i.tfType, name: i.name, outcome: yellow ? 'pass-ignore' : 'pass', passedAt, ...(ign.length ? { ignored: ign } : {}), ...(sens ? { sensitiveOnly: sens } : {}) });
   }
   ctx.job.results = results;
   return {
@@ -617,7 +632,7 @@ export async function runPipeline(job: JobRecord, deps: JobDeps = {}): Promise<v
   st.jobs.set(job.id, job);
   const info = await accountInfo(job.accountId, deps).catch(() => null);
   const ctx: Ctx = {
-    job, dir: jobDir(job.id), deps, hostAccountId: info?.hostAccountId ?? '', generated: '', imports: '', secrets: [], ruleIgnored: {},
+    job, dir: jobDir(job.id), deps, hostAccountId: info?.hostAccountId ?? '', generated: '', imports: '', secrets: [], ruleIgnored: {}, sensitiveOnly: new Map(),
     placeholder: false, failed: new Map(), passedAtRules: new Set(), aiTouched: new Set(), bundleFiles: new Set(),
     ai: { calls: 0, inputTokens: 0, outputTokens: 0 }, logN: 0, cancelled: false, abort: new AbortController(),
   };

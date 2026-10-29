@@ -23,7 +23,8 @@ const LEVEL_LABEL = {
 export function buildReadme(job: JobRecord, files: string[]): string {
   const passed = job.results.filter(r => r.outcome !== 'failed');
   const failed = job.results.filter(r => r.outcome === 'failed');
-  const ignored = job.results.filter(r => r.outcome === 'pass-ignore');
+  const ignored = job.results.filter(r => r.outcome === 'pass-ignore' && r.ignored?.length);
+  const sensitive = job.results.filter(r => r.outcome === 'pass-ignore' && r.sensitiveOnly?.length);
   const hasSecrets = files.includes('terraform.tfvars.example');
   const L: string[] = [];
   L.push('# Terraform 코드 변환 결과', '');
@@ -37,9 +38,14 @@ export function buildReadme(job: JobRecord, files: string[]): string {
   let n = 1;
   if (hasSecrets) L.push(`${n++}. \`terraform.tfvars.example\`을 \`terraform.tfvars\`로 복사하고 \`CHANGE_ME\`를 실제 값으로 채웁니다.`);
   L.push(`${n++}. \`terraform init\``);
-  L.push(`${n++}. \`terraform plan\` 결과의 마지막 줄이 다음과 같은지 확인합니다.`, '', '   ```', `   Plan: ${passed.length} to import, 0 to add, 0 to change, 0 to destroy.`, '   ```', '');
+  L.push(`${n++}. \`terraform plan\` 결과의 마지막 줄이 다음과 같은지 확인합니다.`, '', '   ```', `   Plan: ${passed.length} to import, 0 to add, ${sensitive.length} to change, 0 to destroy.`, '   ```', '');
   L.push(`${n++}. 위와 같을 때만 \`terraform apply\`로 리소스를 state에 가져옵니다. AWS 리소스는 바뀌지 않습니다.`, '');
-  L.push('`add`, `change`, `destroy` 중 하나라도 0이 아니면 `apply`하지 마세요.', '');
+  if (sensitive.length) {
+    L.push(`\`add\`나 \`destroy\`가 0이 아니거나 \`change\`가 ${sensitive.length}보다 크면 \`apply\`하지 마세요.`);
+    L.push(`\`change\` ${sensitive.length}개는 아래 "숨김 표시만 바뀌는 리소스"예요. 값은 같고 비밀 값에 숨김 표시만 붙어서 Terraform이 변경으로 셉니다.`, '');
+  } else {
+    L.push('`add`, `change`, `destroy` 중 하나라도 0이 아니면 `apply`하지 마세요.', '');
+  }
   if (hasSecrets) {
     L.push('## 비밀 값 (CHANGE_ME)', '');
     L.push('비밀번호·토큰 같은 값과 Lambda 환경 변수 값은 묶음에 넣지 않았습니다. `sensitive = true` 변수로 바뀌어 있습니다.');
@@ -61,6 +67,14 @@ export function buildReadme(job: JobRecord, files: string[]): string {
   if (!ignored.length) L.push('없음');
   for (const r of ignored) L.push(`- \`${r.address}\`: ${(r.ignored ?? []).join(', ')}`);
   L.push('');
+
+  if (sensitive.length) {
+    L.push('## 숨김 표시만 바뀌는 리소스', '');
+    L.push('아래 속성은 비밀 값이라 `sensitive` 변수로 옮겼습니다. 값은 지금 AWS와 같지만 Terraform은 숨김 표시가 생긴 것을 `update`로 셉니다.');
+    L.push('`plan`에서 이 리소스에 `(sensitive value)` 말고 다른 변경이 없으면 `apply`해도 실제 설정은 바뀌지 않습니다.', '');
+    for (const r of sensitive) L.push(`- \`${r.address}\`: ${(r.sensitiveOnly ?? []).join(', ')}`);
+    L.push('');
+  }
 
   if (files.includes(LAMBDA_PLACEHOLDER)) {
     L.push('## Lambda 코드', '');
