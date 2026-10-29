@@ -56,9 +56,41 @@ Chosen: the diff-0 gate is the only check that tells the user the code matches r
 | Plus type rules for those two / 두 종류 규칙 추가 | 0 | 13/14 |
 | Remaining one: `aws_instance` `user_data` stored as a SHA1 hash / 남은 하나: SHA1 해시로 저장된 `user_data` | 0 | now a rule (remove + `ignore_changes [user_data]`), counted as "ignore 사용" / 이제 규칙, "ignore 사용"으로 센다 |
 
-These are probe numbers, not the shipped pipeline's. The full evaluation (all 15 types, the real pipeline) runs after deploy and needs user approval; its numbers will be added here later. Until then no pass rate for the shipped pipeline is claimed.
+These are probe numbers, not the shipped pipeline's.
 
-이 수치는 탐색용이며 출하한 파이프라인의 수치가 아니다. 전체 평가(15종 전부, 실제 파이프라인)는 배포 뒤 사용자 승인을 받아 돌리고 수치는 나중에 여기에 더한다. 그때까지 출하한 파이프라인의 통과율은 주장하지 않는다.
+이 수치는 탐색용이며 출하한 파이프라인의 수치가 아니다.
+
+**First real run (shipped pipeline, d5dc49e).** Server, 2026-10-29, user-approved, seed prefix `awsops` on account 116662357283: 35 resources of 9 types (11 excluded as shared/attached/unsupported). Finished in 6 min 18 s, bundle level `refactored`. Mirror-only init, relative error lines and plan-JSON `importing` all worked on real Terraform.
+
+**첫 실제 실행(출하 파이프라인, d5dc49e).** 서버, 2026-10-29, 사용자 승인, 계정 116662357283에서 접두어 `awsops`: 9종 35개(공유·부착·미지원 11개 제외). 6분 18초에 끝났고 묶음 단계는 `refactored`. 미러 전용 init, 상대 오류 줄 번호, plan JSON `importing` 판정은 실제 Terraform에서 모두 동작했다.
+
+| Type / 종류 | diff 0 |
+|---|---|
+| `aws_subnet` | 1/1 |
+| `aws_eip` | 2/2 |
+| `aws_security_group` | 3/3 |
+| `aws_iam_role` | 3/3 |
+| `aws_lb_target_group` | 2/2 |
+| `aws_lb` | 1/1 |
+| `aws_lb_listener` | 2/2 (1 by AI / 1개는 AI) |
+| `aws_instance` | 0/1 |
+| `aws_lambda_function` | 0/20 |
+| **Total / 합계** | **14/35 (40%)** — rules 13, AI 1 |
+
+AI: 64 calls, 60,429 input / 28,628 output tokens, almost all spent on the 21 failures below, which the AI cannot fix.
+
+AI: 64회 호출, 입력 60,429 / 출력 28,628 토큰. 거의 전부 아래 21개 실패에 쓰였고, AI로는 고칠 수 없는 원인이다.
+
+Both failure causes were confirmed with a separate read-only plan on one Lambda and the instance:
+
+두 실패 원인은 Lambda 하나와 인스턴스로 따로 돌린 읽기 전용 plan으로 확인했다.
+
+1. **Lambda (20):** with environment values left as literals the plan is `no-op`; after moving them into `sensitive` variables (step 6) it is `update` with identical before/after values. Terraform counts a change in sensitivity marks alone as an update. 환경 변수 값을 그대로 두면 `no-op`, `sensitive` 변수로 옮기면(6번) 값은 같은데 `update`가 된다. Terraform은 숨김 표시만 바뀌어도 update로 센다.
+2. **Instance (1):** the imported state leaves `user_data_replace_on_change` null while the config defaults to `false`, so the plan adds it. Adding it to `ignore_changes` gives `no-op`. 가져온 상태에는 `user_data_replace_on_change`가 null이고 설정은 기본값 `false`라 plan이 이를 추가한다. `ignore_changes`에 넣으면 `no-op`.
+
+Both are fixable without the AI; see follow-up 1.
+
+둘 다 AI 없이 고칠 수 있다. 후속 과제 1 참고.
 
 ## Consequences / 결과
 
@@ -76,13 +108,15 @@ These are probe numbers, not the shipped pipeline's. The full evaluation (all 15
 
 ## Follow-ups / 후속 과제
 
-1. Full evaluation after deploy: all 15 types through the real pipeline (needs user approval; creates no AWS resources but runs against real ones). Add the numbers here.
-2. Evaluate OpenTofu as a drop-in replacement for the BSL binary.
-3. Decide whether Lambda code and `user_data` content can be exported safely.
+1. Fix the two causes found in the first real run: an `aws_instance` rule for `ignore_changes = [user_data_replace_on_change]`, and a way for sensitivity-only updates to stop failing the gate (decision pending). Then rerun and add the numbers here.
+2. Cover the remaining types (VPC, NAT, EBS, RDS, S3, CloudFront) with a seed that includes them.
+3. Evaluate OpenTofu as a drop-in replacement for the BSL binary.
+4. Decide whether Lambda code and `user_data` content can be exported safely.
 
-1. 배포 뒤 전체 평가: 15종을 실제 파이프라인으로(사용자 승인 필요, AWS 리소스를 만들지는 않지만 실제 리소스를 대상으로 돈다). 수치는 여기에 더한다.
-2. BSL 바이너리를 대신할 OpenTofu 평가.
-3. Lambda 코드와 `user_data` 내용을 안전하게 내보낼 수 있는지 결정.
+1. 첫 실제 실행에서 찾은 두 원인 고치기: `aws_instance`에 `ignore_changes = [user_data_replace_on_change]` 규칙, 숨김 표시만 바뀐 update가 관문에서 실패하지 않게 하는 방법(결정 대기). 그 뒤 다시 돌려 수치를 여기에 더한다.
+2. 남은 종류(VPC, NAT, EBS, RDS, S3, CloudFront)를 포함하는 씨앗으로 평가.
+3. BSL 바이너리를 대신할 OpenTofu 평가.
+4. Lambda 코드와 `user_data` 내용을 안전하게 내보낼 수 있는지 결정.
 
 ## When to revisit / 다시 검토할 때
 
