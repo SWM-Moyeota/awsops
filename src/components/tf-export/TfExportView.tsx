@@ -15,7 +15,8 @@ import JobProgress from './JobProgress';
 import JobResult from './JobResult';
 import { TfExportError, previewSeed, startJob, useJobPoll, useJobs, useStats, useStatus, type PreviewBody } from './api';
 import {
-  byTypeRows, effectiveAccount, isSettled, localDateTime, passRates, percent, seedKey, seedLabel, splitCode, stageLabel,
+  byTypeRows, effectiveAccount, isSettled, localDateTime, passRates, percent, previewErrorText, seedKey, seedLabel, splitCode, stageLabel,
+  startErrorText,
 } from './format';
 
 const SCRIPT = 'scripts/18-setup-terraform.sh';
@@ -62,7 +63,9 @@ export default function TfExportView() {
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  const ctrlRef = useRef<AbortController | null>(null);
+  // Separate controllers so a preview never aborts an in-flight start / 미리 보기가 진행 중인 시작 요청을 끊지 않도록 따로 둔다
+  const previewCtrl = useRef<AbortController | null>(null);
+  const startCtrl = useRef<AbortController | null>(null);
   const jobRef = useRef<HTMLDivElement | null>(null);
 
   // A finished job refreshes status, list and totals. / 작업이 끝나면 상태·목록·누적 지표를 다시 읽는다.
@@ -74,14 +77,17 @@ export default function TfExportView() {
   // Previews and requests belong to one account; abort on change and on unmount. / 미리 보기와 요청은 계정마다 — 바뀌거나 떠나면 끊는다.
   useEffect(() => {
     setPreview(null); setPreviewError(null); setStartError(null); setPreviewing(false); setStarting(false);
-    return () => { ctrlRef.current?.abort(); ctrlRef.current = null; };
+    return () => {
+      previewCtrl.current?.abort(); previewCtrl.current = null;
+      startCtrl.current?.abort(); startCtrl.current = null;
+    };
   }, [accountId]);
 
-  const newCtrl = () => { ctrlRef.current?.abort(); const c = new AbortController(); ctrlRef.current = c; return c; };
+  const fresh = (ref: { current: AbortController | null }) => { ref.current?.abort(); const c = new AbortController(); ref.current = c; return c; };
 
   const runPreview = async () => {
-    if (!accountId || !seed) return;
-    const c = newCtrl();
+    if (!accountId || !seed || starting) return;
+    const c = fresh(previewCtrl);
     setPreviewing(true); setPreviewError(null); setStartError(null);
     try {
       const data = await previewSeed(accountId, seed, c.signal);
@@ -90,15 +96,15 @@ export default function TfExportView() {
       if (c.signal.aborted) return;
       setPreview(null);
       const err = e instanceof TfExportError ? e : null;
-      setPreviewError(err?.status === 404 ? t('tfExport.preview.noGraph') : err?.status === 400 ? err.message : t('tfExport.preview.failed'));
+      setPreviewError(previewErrorText(err?.status ?? 0, err?.message ?? '', t));
     } finally {
       if (!c.signal.aborted) setPreviewing(false);
     }
   };
 
   const runStart = async () => {
-    if (!preview) return;
-    const c = newCtrl();
+    if (!preview || starting) return;
+    const c = fresh(startCtrl);
     setStarting(true); setStartError(null);
     try {
       const id = await startJob(preview.accountId, preview.seed, c.signal);
@@ -109,10 +115,9 @@ export default function TfExportView() {
     } catch (e) {
       if (c.signal.aborted) return;
       const err = e instanceof TfExportError ? e : null;
-      if (err?.status === 429) { setStartError(t('tfExport.start.busy')); refresh(); }
-      else if (err?.status === 409) { setStartError(t('tfExport.notInstalled')); refresh(); }
-      else if (err?.status === 400) setStartError(err.message);
-      else setStartError(t('tfExport.start.failed'));
+      setStartError(startErrorText(err?.status ?? 0, err?.message ?? '', t));
+      // Busy / not installed: re-read status so the running job or the setup box shows / 상태를 다시 읽어 도는 작업이나 설치 안내를 보여 준다
+      if (err?.status === 429 || err?.status === 409) refresh();
     } finally {
       if (!c.signal.aborted) setStarting(false);
     }
@@ -174,7 +179,7 @@ export default function TfExportView() {
           {accountId && (
             <>
               <p className="text-xs text-gray-400">{t('tfExport.account.using', { account: account ? `${account.alias} (${accountId})` : accountId, region: account?.region ?? '—' })}</p>
-              <SeedPicker key={accountId} accountId={accountId} onChange={setSeed} onPreview={runPreview} loading={previewing} />
+              <SeedPicker key={accountId} accountId={accountId} onChange={setSeed} onPreview={runPreview} loading={previewing || starting} />
               {previewError && <p className="rounded-lg border border-accent-red/40 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">{previewError}</p>}
               {preview && preview.accountId === accountId && (
                 <PreviewList data={preview.data} region={account?.region} onStart={runStart} starting={starting} blocked={blocked} />
@@ -188,6 +193,11 @@ export default function TfExportView() {
             {jobId && poll.error && !poll.data && (
               <p className="rounded-lg border border-accent-red/40 bg-accent-red/10 px-4 py-3 text-sm text-accent-red">
                 {poll.error.status === 404 ? t('tfExport.job.notFound') : t('tfExport.loadFailed')}
+              </p>
+            )}
+            {poll.data && poll.error && (
+              <p className="rounded-lg border border-accent-orange/40 bg-accent-orange/10 px-4 py-2 text-xs text-accent-orange" role="status">
+                {poll.error.status === 404 ? t('tfExport.job.notFound') : `${t('tfExport.loadFailed')} ${t('tfExport.progress.polling')}`}
               </p>
             )}
             {poll.data && <JobProgress job={poll.data} lastStage={poll.lastStage} />}

@@ -4,7 +4,7 @@ import path from 'node:path';
 import {
   STEPS, addArn, arnTail, buildSeed, byTypeRows, downloadUrl, effectiveAccount, elapsed, excludeReasonLabel, fileUrl, hasSecretVars,
   isSettled, outcomeColor, outcomeLabel, passRates, passedAtLabel, percent, seedKey, seedLabel, splitCode, stageLabel, stepStates,
-  typeLabel, viewableFiles, type SeedForm,
+  typeLabel, viewableFiles, blocksSubmit, previewErrorText, startErrorText, type SeedForm,
 } from '../format';
 
 const dir = path.resolve(__dirname, '../../../lib/i18n/translations');
@@ -174,6 +174,29 @@ describe('files / urls / account / text', () => {
     expect(elapsed('bad', undefined, t)).toBe('');
     expect(typeLabel('listener', t)).toBe('로드밸런서 리스너');
     expect(typeLabel('subnet', t)).toBe('서브넷');
+  });
+});
+
+describe('blocksSubmit / error texts', () => {
+  it('blocks Enter only in inputs', () => {
+    expect(blocksSubmit('Enter', 'INPUT')).toBe(true);
+    expect(blocksSubmit('Enter', 'input')).toBe(true);
+    expect(blocksSubmit('Enter', 'BUTTON')).toBe(false);
+    expect(blocksSubmit('a', 'INPUT')).toBe(false);
+    expect(blocksSubmit('Enter', undefined)).toBe(false);
+  });
+  it('maps start errors to plain Korean', () => {
+    expect(startErrorText(429, 'Busy', t)).toBe(ko['tfExport.start.busy']);
+    expect(startErrorText(409, 'NotInstalled', t)).toBe('설치가 필요해요: scripts/18-setup-terraform.sh');
+    expect(startErrorText(400, 'Empty', t)).toBe(ko['tfExport.preview.empty']);
+    expect(startErrorText(400, '이름 접두어는 1~64자여야 합니다', t)).toBe('이름 접두어는 1~64자여야 합니다');
+    expect(startErrorText(404, 'NotFound', t)).toBe(ko['tfExport.preview.noGraph']);
+    expect(startErrorText(500, 'TypeError', t)).toBe(ko['tfExport.start.failed']);
+  });
+  it('maps preview errors', () => {
+    expect(previewErrorText(404, 'no-graph', t)).toBe(ko['tfExport.preview.noGraph']);
+    expect(previewErrorText(400, 'VPC ARN 형식이 올바르지 않습니다', t)).toBe('VPC ARN 형식이 올바르지 않습니다');
+    expect(previewErrorText(500, 'Error', t)).toBe(ko['tfExport.preview.failed']);
   });
 });
 

@@ -2,7 +2,7 @@
 // /api/terraform-export 클라이언트 + 지난 요청을 끊고, 도는 작업을 3초마다 확인하는 훅.
 import { useEffect, useRef, useState } from 'react';
 import type { ExportItem, ExportSeed, Excluded, JobRecord, JobStats, Stage } from '@/lib/tf-export/types';
-import { POLL_MS, isSettled } from './format';
+import { POLL_MS, isSettled, toWireSeed } from './format';
 
 export interface StatusBody { installed: boolean; version?: string; running: string | null }
 export interface PreviewBody { items: ExportItem[]; excluded: Excluded[] }
@@ -38,36 +38,72 @@ async function post(body: Record<string, unknown>, signal?: AbortSignal): Promis
   });
 }
 
+// ---- Envelope parsers (pure; shapes match src/lib/tf-export/api.ts) / 응답 봉투 해석(순수, 서버 api.ts와 같은 모양) ----
+type Body = Record<string, unknown>;
+const obj = (v: unknown): Body | null => (v && typeof v === 'object' && !Array.isArray(v) ? (v as Body) : null);
+
+/** {installed, version: string|null, running: string|null} / 상태 응답 */
+export function parseStatus(b: unknown): StatusBody {
+  const o = obj(b) ?? {};
+  return { installed: o.installed === true, version: typeof o.version === 'string' ? o.version : undefined, running: typeof o.running === 'string' ? o.running : null };
+}
+/** {items, excluded} / 미리 보기 응답 */
+export function parsePreview(b: unknown): PreviewBody {
+  const o = obj(b) ?? {};
+  return { items: Array.isArray(o.items) ? (o.items as ExportItem[]) : [], excluded: Array.isArray(o.excluded) ? (o.excluded as Excluded[]) : [] };
+}
+/** 202 {jobId} / 작업 시작 응답 */
+export function parseStart(b: unknown): string {
+  const o = obj(b);
+  if (!o || typeof o.jobId !== 'string') throw new TfExportError('NoJobId', 0);
+  return o.jobId;
+}
+/** {job} / 작업 하나 */
+export function parseJob(b: unknown): JobRecord {
+  const j = obj(obj(b)?.job);
+  if (!j) throw new TfExportError('NoJob', 0);
+  return j as unknown as JobRecord;
+}
+/** {jobs} / 최근 작업 */
+export function parseJobs(b: unknown): JobRecord[] {
+  const o = obj(b);
+  return o && Array.isArray(o.jobs) ? (o.jobs as JobRecord[]) : [];
+}
+/** {stats: StatsTotals} — numbers default to 0 so the cards never see undefined / 누적 지표(숫자 기본 0) */
+export function parseStats(b: unknown): StatsTotals {
+  const s = obj(obj(b)?.stats) ?? {};
+  const n = (k: string) => (typeof s[k] === 'number' && Number.isFinite(s[k]) ? (s[k] as number) : 0);
+  return {
+    jobs: n('jobs'), total: n('total'), passRules: n('passRules'), passAi: n('passAi'), passFinal: n('passFinal'),
+    pure: n('pure'), ignore: n('ignore'), failed: n('failed'), aiCalls: n('aiCalls'), inputTokens: n('inputTokens'), outputTokens: n('outputTokens'),
+    byType: (obj(s.byType) ?? {}) as JobStats['byType'],
+    updatedAt: typeof s.updatedAt === 'string' ? s.updatedAt : null,
+  };
+}
+
 export async function getStatus(signal?: AbortSignal): Promise<StatusBody> {
-  const b = await get({ op: 'status' }, signal);
-  return { installed: b.installed === true, version: typeof b.version === 'string' ? b.version : undefined, running: typeof b.running === 'string' ? b.running : null };
+  return parseStatus(await get({ op: 'status' }, signal));
 }
 
 export async function previewSeed(accountId: string, seed: ExportSeed, signal?: AbortSignal): Promise<PreviewBody> {
-  const b = await readJson(await post({ op: 'preview', accountId, seed }, signal));
-  return { items: Array.isArray(b.items) ? (b.items as ExportItem[]) : [], excluded: Array.isArray(b.excluded) ? (b.excluded as Excluded[]) : [] };
+  return parsePreview(await readJson(await post({ op: 'preview', accountId, seed: toWireSeed(seed) }, signal)));
 }
 
-/** Start a job; 202 → jobId. 429 busy, 409 not installed, 400 bad seed throw TfExportError. / 작업 시작. */
+/** Start a job; 202 → jobId. 429 Busy, 409 NotInstalled, 400 Empty/invalid throw TfExportError. / 작업 시작. */
 export async function startJob(accountId: string, seed: ExportSeed, signal?: AbortSignal): Promise<string> {
-  const b = await readJson(await post({ op: 'start', accountId, seed }, signal));
-  if (typeof b.jobId !== 'string') throw new TfExportError('NoJobId', 0);
-  return b.jobId;
+  return parseStart(await readJson(await post({ op: 'start', accountId, seed: toWireSeed(seed) }, signal)));
 }
 
 export async function getJob(id: string, signal?: AbortSignal): Promise<JobRecord> {
-  const b = await get({ op: 'job', id }, signal);
-  if (!b.job || typeof b.job !== 'object') throw new TfExportError('NoJob', 0);
-  return b.job as JobRecord;
+  return parseJob(await get({ op: 'job', id }, signal));
 }
 
 export async function listJobs(signal?: AbortSignal): Promise<JobRecord[]> {
-  const b = await get({ op: 'list' }, signal);
-  return Array.isArray(b.jobs) ? (b.jobs as JobRecord[]) : [];
+  return parseJobs(await get({ op: 'list' }, signal));
 }
 
 export async function getStats(signal?: AbortSignal): Promise<StatsTotals> {
-  return (await get({ op: 'stats' }, signal)) as unknown as StatsTotals;
+  return parseStats(await get({ op: 'stats' }, signal));
 }
 
 export async function getFile(id: string, name: string, signal?: AbortSignal): Promise<string> {

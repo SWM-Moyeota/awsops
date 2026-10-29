@@ -198,3 +198,38 @@ export function typeLabel(nodeType: string, t: T): string {
   const text = t(key);
   return text === key ? nodeType : text;
 }
+
+/** Seed in the API's request shape: {tag:{key,value}} | {prefix} | {vpc} | {arns}. / API 요청 모양의 씨앗. */
+export function toWireSeed(seed: ExportSeed): Record<string, unknown> {
+  if (seed.kind === 'tag') return { tag: { key: seed.key, value: seed.value } };
+  if (seed.kind === 'prefix') return { prefix: seed.prefix };
+  if (seed.kind === 'vpc') return { vpc: seed.arn };
+  return { arns: seed.arns };
+}
+
+/**
+ * Enter in a search input must not submit the surrounding form; Enter on a result button still clicks it.
+ * 검색 입력창의 Enter는 바깥 form을 제출하지 않게 막고, 결과 버튼 위의 Enter는 그대로 눌리게 둔다.
+ */
+export function blocksSubmit(key: string, tagName: string | undefined): boolean {
+  return key === 'Enter' && (tagName ?? '').toUpperCase() === 'INPUT';
+}
+
+// A bare error name (e.g. "Empty", "Busy") rather than a Korean sentence / 한국어 문장이 아닌 오류 이름인지
+const ERROR_NAME = /^[A-Za-z][A-Za-z0-9-]*$/;
+
+/** Message for a failed preview (404 no-graph, 400 server text). / 미리 보기 실패 문구. */
+export function previewErrorText(status: number, message: string, t: T): string {
+  if (status === 404) return t('tfExport.preview.noGraph');
+  if (status === 400 && message && !ERROR_NAME.test(message)) return message;
+  return t('tfExport.preview.failed');
+}
+
+/** Message for a failed start: 429 Busy, 409 NotInstalled, 404 no graph, 400 Empty or the server's Korean text. / 작업 시작 실패 문구. */
+export function startErrorText(status: number, message: string, t: T): string {
+  if (status === 429) return t('tfExport.start.busy');
+  if (status === 409) return t('tfExport.notInstalled');
+  if (status === 404) return t('tfExport.preview.noGraph');
+  if (status === 400) return message === 'Empty' ? t('tfExport.preview.empty') : message && !ERROR_NAME.test(message) ? message : t('tfExport.start.failed');
+  return t('tfExport.start.failed');
+}

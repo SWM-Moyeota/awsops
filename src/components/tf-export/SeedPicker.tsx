@@ -2,14 +2,14 @@
 
 // Step 1 — pick resources: tabs for tag / name prefix / VPC / one-by-one search (chips, up to 60), then "미리 보기".
 // 1단계 고르기 — 태그 / 이름 접두어 / VPC / 개별 검색(칩, 최대 60개) 탭, 그다음 "미리 보기".
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { X } from 'lucide-react';
 import type { GraphNode } from '@/lib/dep-graph/types';
 import type { ExportSeed } from '@/lib/tf-export/types';
 import { useLanguage } from '@/lib/i18n/LanguageContext';
 import SearchBox from '@/components/dep-graph/SearchBox';
 import { typeColor } from '@/components/dep-graph/layout';
-import { MAX_ARNS, addArn, buildSeed, seedKey, type SeedKind } from './format';
+import { MAX_ARNS, addArn, blocksSubmit, buildSeed, seedKey, type SeedKind } from './format';
 
 const TABS: SeedKind[] = ['tag', 'prefix', 'vpc', 'arns'];
 const inputCls = 'w-full rounded-lg border border-navy-600 bg-navy-800 px-3 py-2 text-sm text-gray-200 placeholder-gray-600 focus:border-accent-cyan focus:outline-none';
@@ -64,6 +64,10 @@ export default function SeedPicker({ accountId, onChange, onPreview, loading }: 
     setPicked((l) => addArn(l, n.arn));
   };
   const full = picked.length >= MAX_ARNS;
+  // Enter in a search input must not submit the preview form (result buttons still click) / 검색창의 Enter로 미리 보기 form이 제출되지 않게
+  const guardEnter = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (blocksSubmit(e.key, (e.target as HTMLElement | null)?.tagName)) e.preventDefault();
+  };
 
   return (
     <form
@@ -108,7 +112,9 @@ export default function SeedPicker({ accountId, onChange, onPreview, loading }: 
       {kind === 'vpc' && (
         <div className="space-y-2">
           <p className="text-xs text-gray-500">{t('tfExport.pick.vpcHint')}</p>
-          <SearchBox placeholder={t('tfExport.pick.vpcSearch')} accountId={accountId} onlyType="vpc" onPick={(n) => { setVpc(n); setVpcArn(''); }} />
+          <div onKeyDown={guardEnter}>
+            <SearchBox placeholder={t('tfExport.pick.vpcSearch')} accountId={accountId} onlyType="vpc" onPick={(n) => { setVpc(n); setVpcArn(''); }} />
+          </div>
           {vpc && !vpcArn.trim() && (
             <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
               {t('tfExport.pick.vpcSelected')}: <Chip node={vpc} arn={vpc.arn} onRemove={() => setVpc(null)} />
@@ -120,7 +126,11 @@ export default function SeedPicker({ accountId, onChange, onPreview, loading }: 
       {kind === 'arns' && (
         <div className="space-y-2">
           <p className="text-xs text-gray-500">{t('tfExport.pick.arnsHint', { max: MAX_ARNS })}</p>
-          {!full && <SearchBox placeholder={t('tfExport.pick.search')} accountId={accountId} onPick={pickNode} />}
+          {!full && (
+            <div onKeyDown={guardEnter}>
+              <SearchBox placeholder={t('tfExport.pick.search')} accountId={accountId} onPick={pickNode} />
+            </div>
+          )}
           {full && <p className="text-xs text-accent-orange">{t('tfExport.pick.full', { max: MAX_ARNS })}</p>}
           <div className="flex flex-wrap items-center gap-1">
             <span className="mr-1 text-xs text-gray-500">{t('tfExport.pick.count', { count: picked.length, max: MAX_ARNS })}</span>
