@@ -5,7 +5,7 @@ import { join } from 'path';
 
 const dir = join(__dirname, 'fixtures');
 const read = (f: string) => readFileSync(join(dir, f), 'utf-8');
-const files = ['generated.raw.tf', 'plan-errors.log', 'plan.json'];
+const files = ['generated.raw.tf', 'plan-errors.txt', 'plan.json'];
 
 describe('tf-export fixtures', () => {
   it('contains no real account ids (only 111122223333)', () => {
@@ -19,7 +19,7 @@ describe('tf-export fixtures', () => {
   });
   it('error log line refs exist in generated.raw.tf', () => {
     const total = read('generated.raw.tf').split('\n').length;
-    const refs = (read('plan-errors.log').match(/on generated\.tf line \d+/g) ?? []).map(m => Number(m.replace(/\D/g, '')));
+    const refs = (read('plan-errors.txt').match(/on generated\.tf line \d+/g) ?? []).map(m => Number(m.replace(/\D/g, '')));
     expect(refs.length).toBeGreaterThan(0);
     for (const n of refs) {
       expect(n).toBeGreaterThanOrEqual(1);

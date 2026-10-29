@@ -1,0 +1,533 @@
+aws_security_group.r_sg: Preparing import... [id=sg-417b37380b1865e9e]
+aws_subnet.r_subnet: Preparing import... [id=subnet-6436d1848ff7efdab]
+aws_lb.r_lb: Preparing import... [id=arn:aws:elasticloadbalancing:ap-northeast-2:111122223333:loadbalancer/app/demo-alb/4c11af5cecf3de0f]
+aws_iam_role.r_role: Preparing import... [id=DemoAgentCoreRole]
+aws_cloudfront_distribution.r_cloudfront: Preparing import... [id=ER7GOROQANTN7Z]
+aws_lb_target_group.r_tg: Preparing import... [id=arn:aws:elasticloadbalancing:ap-northeast-2:111122223333:targetgroup/Demo-Dashb-HCI90ZEZCMOQ/72ead790848e2cf4]
+aws_ebs_volume.r_ebs: Preparing import... [id=vol-9ed4b4567123ca05b]
+aws_eip.r_eip: Preparing import... [id=eipalloc-dc9bb635f2d5abe20]
+aws_lambda_function.r_lambda: Preparing import... [id=DemoStack-CustomVpcRestrictDefaultSGCustomResour-FGWjcIQN9Okp]
+aws_s3_bucket.r_s3: Preparing import... [id=demo-deploy-bucket]
+aws_iam_role.r_role: Refreshing state... [id=DemoAgentCoreRole]
+aws_eip.r_eip: Refreshing state... [id=eipalloc-dc9bb635f2d5abe20]
+aws_s3_bucket.r_s3: Refreshing state... [id=demo-deploy-bucket]
+aws_lb_target_group.r_tg: Refreshing state... [id=arn:aws:elasticloadbalancing:ap-northeast-2:111122223333:targetgroup/Demo-Dashb-HCI90ZEZCMOQ/72ead790848e2cf4]
+aws_cloudfront_distribution.r_cloudfront: Refreshing state... [id=ER7GOROQANTN7Z]
+aws_subnet.r_subnet: Refreshing state... [id=subnet-6436d1848ff7efdab]
+aws_lb.r_lb: Refreshing state... [id=arn:aws:elasticloadbalancing:ap-northeast-2:111122223333:loadbalancer/app/demo-alb/4c11af5cecf3de0f]
+aws_security_group.r_sg: Refreshing state... [id=sg-417b37380b1865e9e]
+aws_lambda_function.r_lambda: Refreshing state... [id=DemoStack-CustomVpcRestrictDefaultSGCustomResour-FGWjcIQN9Okp]
+aws_ebs_volume.r_ebs: Refreshing state... [id=vol-9ed4b4567123ca05b]
+aws_db_instance.r_rds: Preparing import... [id=demo-dev-db]
+aws_db_instance.r_rds: Refreshing state... [id=demo-dev-db]
+aws_instance.r_instance: Preparing import... [id=i-b66fe5cb52952bbef]
+aws_instance.r_instance: Refreshing state... [id=i-b66fe5cb52952bbef]
+aws_nat_gateway.r_nat: Preparing import... [id=nat-638a2b90cbb311283]
+aws_nat_gateway.r_nat: Refreshing state... [id=nat-638a2b90cbb311283]
+aws_vpc.r_vpc: Preparing import... [id=vpc-c5b546ea856d69318]
+aws_vpc.r_vpc: Refreshing state... [id=vpc-c5b546ea856d69318]
+
+Terraform planned the following actions, but then encountered a problem:
+
+  # aws_cloudfront_distribution.r_cloudfront will be imported
+  # (config will be generated)
+    resource "aws_cloudfront_distribution" "r_cloudfront" {
+        aliases                         = [
+            "cdn.example.com",
+        ]
+        arn                             = "arn:aws:cloudfront::111122223333:distribution/ER7GOROQANTN7Z"
+        caller_reference                = "f5db022e-49bb-f938-d60d-e406edd2c7a2"
+        comment                         = "demo media CDN"
+        continuous_deployment_policy_id = null
+        default_root_object             = null
+        domain_name                     = "dt8ccov0daau49.cloudfront.net"
+        enabled                         = true
+        etag                            = "E4A6KMTSAKHZ9"
+        hosted_zone_id                  = "Z2FDTNDATAQYW2"
+        http_version                    = "http2"
+        id                              = "ER7GOROQANTN7Z"
+        in_progress_validation_batches  = 0
+        is_ipv6_enabled                 = true
+        last_modified_time              = "2026-10-14 07:55:30.96 +0000 UTC"
+        price_class                     = "PriceClass_All"
+        retain_on_delete                = false
+        staging                         = false
+        status                          = "Deployed"
+        tags                            = {
+            "Name"    = "demo-media-cdn"
+            "project" = "demo"
+        }
+        tags_all                        = {
+            "Name"    = "demo-media-cdn"
+            "project" = "demo"
+        }
+        trusted_key_groups              = [
+            {
+                enabled = false
+                items   = []
+            },
+        ]
+        trusted_signers                 = [
+            {
+                enabled = false
+                items   = []
+            },
+        ]
+        wait_for_deployment             = true
+        web_acl_id                      = null
+
+        default_cache_behavior {
+            allowed_methods            = [
+                "GET",
+                "HEAD",
+            ]
+            cache_policy_id            = "9f030d79-6b91-aed2-7847-b3d6052652bb"
+            cached_methods             = [
+                "GET",
+                "HEAD",
+            ]
+            compress                   = true
+            default_ttl                = 0
+            field_level_encryption_id  = null
+            max_ttl                    = 0
+            min_ttl                    = 0
+            origin_request_policy_id   = null
+            realtime_log_config_arn    = null
+            response_headers_policy_id = null
+            smooth_streaming           = false
+            target_origin_id           = "demo-media.s3.ap-northeast-2.amazonaws.com-e046rahnfjr"
+            trusted_key_groups         = []
+            trusted_signers            = []
+            viewer_protocol_policy     = "redirect-to-https"
+
+            grpc_config {
+                enabled = false
+            }
+        }
+
+        origin {
+            connection_attempts      = 3
+            connection_timeout       = 10
+            domain_name              = "demo-media.s3.ap-northeast-2.amazonaws.com"
+            origin_access_control_id = "E1ID7ZON3O1XL"
+            origin_id                = "demo-media.s3.ap-northeast-2.amazonaws.com-e046rahnfjr"
+            origin_path              = null
+        }
+
+        restrictions {
+            geo_restriction {
+                locations        = []
+                restriction_type = "none"
+            }
+        }
+
+        viewer_certificate {
+            acm_certificate_arn            = "arn:aws:acm:us-east-1:111122223333:certificate/ecbd5372-5ca5-0ff5-0c18-20a0bcefa52b"
+            cloudfront_default_certificate = false
+            iam_certificate_id             = null
+            minimum_protocol_version       = "TLSv1.2_2021"
+            ssl_support_method             = "sni-only"
+        }
+    }
+
+  # aws_ebs_volume.r_ebs will be imported
+  # (config will be generated)
+    resource "aws_ebs_volume" "r_ebs" {
+        arn                  = "arn:aws:ec2:ap-northeast-2:111122223333:volume/vol-9ed4b4567123ca05b"
+        availability_zone    = "ap-northeast-2a"
+        create_time          = "2026-09-17T09:21:06Z"
+        encrypted            = true
+        id                   = "vol-9ed4b4567123ca05b"
+        iops                 = 3000
+        kms_key_id           = "arn:aws:kms:ap-northeast-2:111122223333:key/27fbf101-98f0-240d-65fe-dbda42ca1738"
+        multi_attach_enabled = false
+        outpost_arn          = null
+        size                 = 100
+        snapshot_id          = "snap-32b5b441f9a8fdc7b"
+        tags                 = {}
+        tags_all             = {}
+        throughput           = 125
+        type                 = "gp3"
+    }
+
+  # aws_eip.r_eip will be imported
+  # (config will be generated)
+    resource "aws_eip" "r_eip" {
+        allocation_id            = "eipalloc-dc9bb635f2d5abe20"
+        arn                      = "arn:aws:ec2:ap-northeast-2:111122223333:elastic-ip/eipalloc-dc9bb635f2d5abe20"
+        association_id           = "eipassoc-b0bb067be91a4bb35"
+        carrier_ip               = null
+        customer_owned_ip        = null
+        customer_owned_ipv4_pool = null
+        domain                   = "vpc"
+        id                       = "eipalloc-dc9bb635f2d5abe20"
+        instance                 = null
+        network_border_group     = "ap-northeast-2"
+        network_interface        = "eni-1b9a2781d9dbc9bc3"
+        private_dns              = "ip-10-10-0-222.ap-northeast-2.compute.internal"
+        private_ip               = "10.0.0.222"
+        ptr_record               = null
+        public_dns               = "ec2-13-125-103-180.ap-northeast-2.compute.amazonaws.com"
+        public_ip                = "203.0.113.10"
+        public_ipv4_pool         = "amazon"
+        tags                     = {
+            "Environment"      = "sandbox"
+            "Name"             = "DemoStack/VPC/PublicSubnet1"
+            "Realm"            = "demo"
+            "ServiceComponent" = "demo-poc"
+            "ServiceDomain"    = "aws"
+        }
+        tags_all                 = {
+            "Environment"      = "sandbox"
+            "Name"             = "DemoStack/VPC/PublicSubnet1"
+            "Realm"            = "demo"
+            "ServiceComponent" = "demo-poc"
+            "ServiceDomain"    = "aws"
+        }
+        vpc                      = true
+    }
+
+  # aws_iam_role.r_role will be imported
+  # (config will be generated)
+    resource "aws_iam_role" "r_role" {
+        arn                   = "arn:aws:iam::111122223333:role/DemoAgentCoreRole"
+        assume_role_policy    = jsonencode(
+            {
+                Statement = [
+                    {
+                        Action    = "sts:AssumeRole"
+                        Effect    = "Allow"
+                        Principal = {
+                            Service = "bedrock.amazonaws.com"
+                        }
+                    },
+                    {
+                        Action    = "sts:AssumeRole"
+                        Effect    = "Allow"
+                        Principal = {
+                            Service = "bedrock-agentcore.amazonaws.com"
+                        }
+                    },
+                ]
+                Version   = "2012-10-17"
+            }
+        )
+        create_date           = "2026-09-17T16:28:22Z"
+        description           = null
+        force_detach_policies = false
+        id                    = "DemoAgentCoreRole"
+        managed_policy_arns   = [
+            "arn:aws:iam::aws:policy/AmazonBedrockFullAccess",
+        ]
+        max_session_duration  = 3600
+        name                  = "DemoAgentCoreRole"
+        name_prefix           = null
+        path                  = "/"
+        permissions_boundary  = null
+        tags                  = {
+            "Environment"      = "sandbox"
+            "Realm"            = "demo"
+            "ServiceComponent" = "demo-poc"
+            "ServiceDomain"    = "aws"
+        }
+        tags_all              = {
+            "Environment"      = "sandbox"
+            "Realm"            = "demo"
+            "ServiceComponent" = "demo-poc"
+            "ServiceDomain"    = "aws"
+        }
+        unique_id             = "AROAD4WVLIYBCY5DGOIIY"
+
+        inline_policy {
+            name   = "ECRAndLambda"
+            policy = jsonencode(
+                {
+                    Statement = [
+                        {
+                            Action   = [
+                                "ecr:*",
+                                "lambda:InvokeFunction",
+                                "lambda:GetFunction",
+                                "bedrock-agentcore:*",
+                            ]
+                            Effect   = "Allow"
+                            Resource = "*"
+                        },
+                    ]
+                    Version   = "2012-10-17"
+                }
+            )
+        }
+    }
+
+  # aws_s3_bucket.r_s3 will be imported
+  # (config will be generated)
+    resource "aws_s3_bucket" "r_s3" {
+        acceleration_status         = null
+        arn                         = "arn:aws:s3:::demo-deploy-bucket"
+        bucket                      = "demo-deploy-bucket"
+        bucket_domain_name          = "demo-deploy-bucket.s3.amazonaws.com"
+        bucket_prefix               = null
+        bucket_regional_domain_name = "demo-deploy-bucket.s3.ap-northeast-2.amazonaws.com"
+        hosted_zone_id              = "Z3W03O7B5YMIYP"
+        id                          = "demo-deploy-bucket"
+        object_lock_enabled         = false
+        policy                      = null
+        region                      = "ap-northeast-2"
+        request_payer               = "BucketOwner"
+        tags                        = {}
+        tags_all                    = {}
+
+        grant {
+            id          = "41340473401b763808bd351dc129da636d248d366be6277da4761a4a92890eff"
+            permissions = [
+                "FULL_CONTROL",
+            ]
+            type        = "CanonicalUser"
+            uri         = null
+        }
+
+        server_side_encryption_configuration {
+            rule {
+                bucket_key_enabled = true
+
+                apply_server_side_encryption_by_default {
+                    kms_master_key_id = null
+                    sse_algorithm     = "AES256"
+                }
+            }
+        }
+
+        versioning {
+            enabled    = false
+            mfa_delete = false
+        }
+    }
+
+  # aws_security_group.r_sg will be imported
+  # (config will be generated)
+    resource "aws_security_group" "r_sg" {
+        arn         = "arn:aws:ec2:ap-northeast-2:111122223333:security-group/sg-417b37380b1865e9e"
+        description = "Demo ALB SG - HTTPS with Cognito auth"
+        egress      = [
+            {
+                cidr_blocks      = [
+                    "0.0.0.0/0",
+                ]
+                description      = "Allow all outbound traffic by default"
+                from_port        = 0
+                ipv6_cidr_blocks = []
+                prefix_list_ids  = []
+                protocol         = "-1"
+                security_groups  = []
+                self             = false
+                to_port          = 0
+            },
+        ]
+        id          = "sg-417b37380b1865e9e"
+        ingress     = [
+            {
+                cidr_blocks      = [
+                    "0.0.0.0/0",
+                ]
+                description      = "HTTP redirect to HTTPS"
+                from_port        = 80
+                ipv6_cidr_blocks = []
+                prefix_list_ids  = []
+                protocol         = "tcp"
+                security_groups  = []
+                self             = false
+                to_port          = 80
+            },
+            {
+                cidr_blocks      = [
+                    "0.0.0.0/0",
+                ]
+                description      = "HTTPS"
+                from_port        = 443
+                ipv6_cidr_blocks = []
+                prefix_list_ids  = []
+                protocol         = "tcp"
+                security_groups  = []
+                self             = false
+                to_port          = 443
+            },
+        ]
+        name        = "demo-alb-sg"
+        name_prefix = null
+        owner_id    = "111122223333"
+        tags        = {
+            "Environment"      = "sandbox"
+            "Realm"            = "demo"
+            "ServiceComponent" = "demo-poc"
+            "ServiceDomain"    = "aws"
+        }
+        tags_all    = {
+            "Environment"      = "sandbox"
+            "Realm"            = "demo"
+            "ServiceComponent" = "demo-poc"
+            "ServiceDomain"    = "aws"
+        }
+        vpc_id      = "vpc-928b1a8ef13830697"
+    }
+
+Plan: 6 to import, 0 to add, 0 to change, 0 to destroy.
+
+Warning: Config generation is experimental
+
+Generating configuration during import is currently experimental, and the
+generated configuration format may change in future versions.
+
+Error: Invalid combination of arguments
+
+  with aws_lb.r_lb,
+  on generated.tf line 1:
+  (source code not available)
+
+"subnet_mapping": only one of `subnet_mapping,subnets` can be specified, but
+`subnet_mapping,subnets` were specified.
+
+Error: Conflicting configuration arguments
+
+  with aws_subnet.r_subnet,
+  on generated.tf line 2:
+  (source code not available)
+
+"availability_zone": conflicts with availability_zone_id
+
+Error: Conflicting configuration arguments
+
+  with aws_subnet.r_subnet,
+  on generated.tf line 3:
+  (source code not available)
+
+"availability_zone_id": conflicts with availability_zone
+
+Error: Conflicting configuration arguments
+
+  with aws_nat_gateway.r_nat,
+  on generated.tf line 5:
+  (source code not available)
+
+"secondary_private_ip_address_count": conflicts with
+secondary_private_ip_addresses
+
+Error: Invalid combination of arguments
+
+  with aws_lambda_function.r_lambda,
+  on generated.tf line 4:
+  (source code not available)
+
+"filename": one of `filename,image_uri,s3_bucket` must be specified
+
+Error: Conflicting configuration arguments
+
+  with aws_nat_gateway.r_nat,
+  on generated.tf line 6:
+  (source code not available)
+
+"secondary_private_ip_addresses": conflicts with
+secondary_private_ip_address_count
+
+Error: enable_lni_at_device_index must not be zero, got 0
+
+  with aws_subnet.r_subnet,
+  on generated.tf line 7:
+  (source code not available)
+
+
+Error: Invalid combination of arguments
+
+  with aws_lambda_function.r_lambda,
+  on generated.tf line 7:
+  (source code not available)
+
+"image_uri": one of `filename,image_uri,s3_bucket` must be specified
+
+Error: Missing required argument
+
+  with aws_vpc.r_vpc,
+  on generated.tf line 12:
+  (source code not available)
+
+"ipv6_netmask_length": all of `ipv6_ipam_pool_id,ipv6_netmask_length` must be
+specified
+
+Error: Missing required argument
+
+  with aws_subnet.r_subnet,
+  on generated.tf line 12:
+  (source code not available)
+
+"map_customer_owned_ip_on_launch": all of
+`customer_owned_ipv4_pool,map_customer_owned_ip_on_launch,outpost_arn` must
+be specified
+
+Error: Conflicting configuration arguments
+
+  with aws_instance.r_instance,
+  on generated.tf line 15:
+  (source code not available)
+
+"ipv6_address_count": conflicts with ipv6_addresses
+
+Error: Conflicting configuration arguments
+
+  with aws_instance.r_instance,
+  on generated.tf line 16:
+  (source code not available)
+
+"ipv6_addresses": conflicts with ipv6_address_count
+
+Error: Invalid combination of arguments
+
+  with aws_lambda_function.r_lambda,
+  on generated.tf line 18:
+  (source code not available)
+
+"s3_bucket": one of `filename,image_uri,s3_bucket` must be specified
+
+Error: Not enough list items
+
+  with aws_db_instance.r_rds,
+  on generated.tf line 22:
+  (source code not available)
+
+Attribute domain_dns_ips requires 2 item minimum, but config has only 0
+declared.
+
+Error: Missing required argument
+
+  with aws_lb_target_group.r_tg,
+  on generated.tf line 48:
+  (source code not available)
+
+The argument "target_failover.0.on_deregistration" is required, but no
+definition was found.
+
+Error: Missing required argument
+
+  with aws_lb_target_group.r_tg,
+  on generated.tf line 49:
+  (source code not available)
+
+The argument "target_failover.0.on_unhealthy" is required, but no definition
+was found.
+
+Error: Invalid combination of arguments
+
+  with aws_lb.r_lb,
+  on generated.tf line 22:
+  (source code not available)
+
+"subnets": only one of `subnet_mapping,subnets` can be specified, but
+`subnet_mapping,subnets` were specified.
+
+Error: Missing required argument
+
+  with aws_lb_target_group.r_tg,
+  on generated.tf line 62:
+  (source code not available)
+
+The argument "target_health_state.0.enable_unhealthy_connection_termination"
+is required, but no definition was found.
