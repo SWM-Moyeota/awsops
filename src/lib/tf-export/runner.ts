@@ -32,12 +32,12 @@ function forbidden(msg: string): never {
 /** Throw ForbiddenCommand unless argv is explicitly allowed. / 명시 허용된 argv가 아니면 ForbiddenCommand 발생. */
 export function assertAllowed(args: string[]): void {
   const [sub, ...rest] = args;
-  if (!sub || !(sub in FLAGS)) forbidden('subcommand');
+  if (!sub || !Object.hasOwn(FLAGS, sub)) forbidden('subcommand'); // own keys only / 자체 키만
   for (const a of args) {
     if (FORBIDDEN.has(a) || a.startsWith('-target') || a.includes('/') || a.includes('\0')) forbidden('arg');
   }
   for (const a of rest) {
-    if (FLAGS[sub].includes(a)) continue;
+    if (Object.hasOwn(FLAGS, sub) && FLAGS[sub].includes(a)) continue;
     if (sub === 'plan') {
       const m = /^(-out|-generate-config-out)=(.*)$/.exec(a);
       if (m && isFile(m[2])) continue;
@@ -51,6 +51,7 @@ const defaultExec: ExecFn = (file, args, o) => new Promise((resolve) => {
   execFile(file, args, { cwd: o.cwd, env: o.env, timeout: o.timeout, maxBuffer: o.maxBuffer }, (err, stdout, stderr) => {
     if (!err) return resolve({ code: 0, stdout, stderr });
     const e = err as NodeJS.ErrnoException & { killed?: boolean };
+    if (String(e.code) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return resolve({ code: 125, stdout, stderr: 'output too large' });
     if (e.killed) return resolve({ code: 124, stdout, stderr: 'timeout' });
     resolve({ code: typeof e.code === 'number' ? e.code : 1, stdout, stderr });
   });
@@ -68,28 +69,29 @@ export async function isInstalled(exec: ExecFn = defaultExec): Promise<{ install
 
 export async function runTerraform(
   args: string[],
-  opts: { cwd: string; accountId: string; hostAccountId: string; timeoutMs?: number; exec?: ExecFn },
+  opts: { cwd: string; accountId: string; hostAccountId: string; region: string; timeoutMs?: number; exec?: ExecFn },
 ): Promise<ExecResult> {
   assertAllowed(args);
   const cross = opts.accountId !== opts.hostAccountId;
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    TF_IN_AUTOMATION: '1', TF_INPUT: '0', CHECKPOINT_DISABLE: '1', TF_PLUGIN_CACHE_DIR: PLUGIN_CACHE_DIR,
-  };
+  // Drop every inherited TF_* var so env cannot bypass the argv allowlist / 상속된 TF_* 환경변수를 모두 제거해 허용 목록 우회를 막는다
+  const env = {} as NodeJS.ProcessEnv;
+  for (const [k, v] of Object.entries(process.env)) if (!k.toUpperCase().startsWith('TF_')) env[k] = v;
+  Object.assign(env, { TF_IN_AUTOMATION: '1', TF_INPUT: '0', CHECKPOINT_DISABLE: '1', TF_PLUGIN_CACHE_DIR: PLUGIN_CACHE_DIR, AWS_REGION: opts.region, AWS_DEFAULT_REGION: opts.region });
   if (cross) {
-    delete env.AWS_PROFILE;
+    // Fail closed: never fall back to host credentials / 호스트 자격증명으로 대체하지 않고 실패
     const c = await freshCredentials(opts.accountId, 'awsops-tf-export');
-    if (c) {
-      env.AWS_ACCESS_KEY_ID = c.accessKeyId;
-      env.AWS_SECRET_ACCESS_KEY = c.secretAccessKey;
-      if (c.sessionToken) env.AWS_SESSION_TOKEN = c.sessionToken; else delete env.AWS_SESSION_TOKEN;
-    }
+    if (!c) { const e = new Error('NoCredentials'); e.name = 'NoCredentials'; throw e; }
+    delete env.AWS_PROFILE; delete env.AWS_CONFIG_FILE; delete env.AWS_SHARED_CREDENTIALS_FILE;
+    env.AWS_ACCESS_KEY_ID = c.accessKeyId;
+    env.AWS_SECRET_ACCESS_KEY = c.secretAccessKey;
+    if (c.sessionToken) env.AWS_SESSION_TOKEN = c.sessionToken; else delete env.AWS_SESSION_TOKEN;
   }
   const timeout = opts.timeoutMs ?? (cross ? 12 : 10) * 60_000;
   try {
     const r = await (opts.exec ?? defaultExec)('nice', ['-n', '10', TF_BIN, ...args], { cwd: opts.cwd, env, timeout, maxBuffer: 32 * 1024 * 1024 });
     return r.code === 124 ? { ...r, stderr: 'timeout' } : r;
   } catch (err) {
+    if (String((err as { code?: unknown }).code) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return { code: 125, stdout: '', stderr: 'output too large' };
     if ((err as { killed?: boolean }).killed) return { code: 124, stdout: '', stderr: 'timeout' };
     throw err;
   }

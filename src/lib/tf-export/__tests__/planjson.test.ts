@@ -12,7 +12,15 @@ describe('judgePlan', () => {
     const ch = vals.filter((v) => v.outcome === 'changed');
     expect(ch).toHaveLength(1);
     expect(m.get('aws_instance.r_instance')!.changedPaths).toContain('user_data');
+    expect(m.get('aws_instance.r_instance')!.changedPaths).toContain('user_data_replace_on_change');
     expect(vals.some((v) => v.outcome === 'missing')).toBe(false);
+  });
+  it('skips data sources and labels whole-resource change', () => {
+    const m = judgePlan({ resource_changes: [
+      { address: 'data.x.y', mode: 'data', change: { actions: ['read'] } },
+      { address: 'a.new', mode: 'managed', change: { actions: ['create'], before: null, after: null } }] });
+    expect(m.has('data.x.y')).toBe(false);
+    expect(m.get('a.new')!.changedPaths).toEqual(['(resource)']);
   });
   it('diff paths, unknown skipping, cap, missing', () => {
     const m = judgePlan({

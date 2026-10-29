@@ -30,18 +30,21 @@ export function judgePlan(json: unknown): Map<string, Verdict> {
   const root = isObj(json) ? json : {};
   const changes = Array.isArray(root.resource_changes) ? (root.resource_changes as Obj[]) : [];
   for (const rc of changes) {
+    if (rc.mode !== undefined && rc.mode !== 'managed') continue; // managed only / managed만
     const address = String(rc.address ?? '');
     const ch = isObj(rc.change) ? rc.change : {};
     const actions = Array.isArray(ch.actions) ? (ch.actions as string[]) : [];
     const noop = actions.length === 1 && actions[0] === 'no-op';
     const changedPaths: string[] = [];
     if (!noop) diff(ch.before, ch.after, ch.after_unknown, '', changedPaths);
+    if (!noop && changedPaths.length === 0 && actions.length > 0) changedPaths.push('(resource)'); // whole-resource change / 리소스 전체 변경
     const pass = noop && ch.importing !== undefined && ch.importing !== null;
     res.set(address, { outcome: pass ? 'pass' : 'changed', actions, changedPaths });
   }
   const cfg = isObj(root.configuration) && isObj(root.configuration.root_module) ? root.configuration.root_module : {};
   const resources = Array.isArray(cfg.resources) ? (cfg.resources as Obj[]) : [];
   for (const r of resources) {
+    if (r.mode !== undefined && r.mode !== 'managed') continue;
     const address = String(r.address ?? '');
     if (address && !res.has(address)) res.set(address, { outcome: 'missing', actions: [], changedPaths: [] });
   }
