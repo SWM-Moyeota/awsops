@@ -92,6 +92,22 @@ Both are fixed without the AI: rule `instance-replace-flag` for (2), and the `se
 
 둘 다 AI 없이 고쳤다. (2)는 `instance-replace-flag` 규칙, (1)은 4번의 `sensitiveOnly` 통과다. `sensitive`를 끄는 방법(plan에 비밀 값이 보임) 대신 사용자가 이쪽을 골랐다.
 
+**Second real run (after the fixes, 4b1b261).** Same seed and account, 2026-10-29, user-approved. Finished in 1 min 48 s, bundle level `refactored`.
+
+**두 번째 실제 실행(수정 뒤, 4b1b261).** 같은 씨앗과 계정, 2026-10-29, 사용자 승인. 1분 48초에 끝났고 묶음 단계는 `refactored`.
+
+| | 1st / 1차 | 2nd / 2차 |
+|---|---|---|
+| diff 0 | 14/35 (40%) | **34/35 (97%)** |
+| Pure pass / 순수 통과 | 14 | 13 |
+| Yellow (ignore or sensitivity-only) / 🟡 | 0 | 21 (20 Lambda sensitivity-only + instance ignore) |
+| Passed by rules alone / 규칙만으로 | 13 | 34 |
+| AI calls, tokens in/out / AI 호출·토큰 | 64, 60,429 / 28,628 | 4, 5,069 / 2,764 |
+
+The one failure is the HTTPS listener (`aws_lb_listener` :443, Cognito auth then forward): a diff remains at `default_action[1].forward[0]`. In the first run the AI fixed this resource; in the second its 4 attempts did not, so AI fixes are not deterministic. A rule for a single-target `forward` block is follow-up 1. The README's expected plan line came out as `Plan: 34 to import, 0 to add, 20 to change, 0 to destroy.` and no `secrets.auto.tfvars` was left on disk.
+
+유일한 실패는 HTTPS 리스너(`aws_lb_listener` :443, Cognito 인증 후 전달)로 `default_action[1].forward[0]`에 diff가 남았다. 1차에서는 AI가 이 리소스를 고쳤지만 2차에서는 4번 시도에 실패했다. AI 수정은 결정적이지 않다. 대상 하나인 `forward` 블록 규칙은 후속 과제 1이다. README의 기대 plan 줄은 `Plan: 34 to import, 0 to add, 20 to change, 0 to destroy.`였고 디스크에 `secrets.auto.tfvars`는 남지 않았다.
+
 ## Consequences / 결과
 
 - **Cost:** no AWS cost (plan only reads); Bedrock tokens only for AI fix rounds.
@@ -108,12 +124,12 @@ Both are fixed without the AI: rule `instance-replace-flag` for (2), and the `se
 
 ## Follow-ups / 후속 과제
 
-1. Rerun after the two fixes from the first real run (`instance-replace-flag` rule, `sensitiveOnly` pass) and add the numbers here.
+1. A rule for `aws_lb_listener` default actions whose `forward` block points at a single target group (the second run's only failure), so it no longer depends on the AI.
 2. Cover the remaining types (VPC, NAT, EBS, RDS, S3, CloudFront) with a seed that includes them.
 3. Evaluate OpenTofu as a drop-in replacement for the BSL binary.
 4. Decide whether Lambda code and `user_data` content can be exported safely.
 
-1. 첫 실제 실행에서 나온 두 수정(`instance-replace-flag` 규칙, `sensitiveOnly` 통과) 뒤 다시 돌려 수치를 여기에 더한다.
+1. `forward` 블록이 대상 그룹 하나를 가리키는 `aws_lb_listener` 기본 동작 규칙(2차의 유일한 실패). AI에 기대지 않게 한다.
 2. 남은 종류(VPC, NAT, EBS, RDS, S3, CloudFront)를 포함하는 씨앗으로 평가.
 3. BSL 바이너리를 대신할 OpenTofu 평가.
 4. Lambda 코드와 `user_data` 내용을 안전하게 내보낼 수 있는지 결정.
