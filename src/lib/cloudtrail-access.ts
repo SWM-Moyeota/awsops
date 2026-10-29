@@ -56,6 +56,22 @@ export async function accountCredentials(accountId: string, sessionName: string)
   return creds;
 }
 
+/** Uncached AssumeRole credentials (15 min) for long jobs; undefined for host/unknown account. / 캐시 없는 AssumeRole 자격증명, 호스트·미등록 계정은 undefined. */
+export async function freshCredentials(accountId: string, sessionName: string): Promise<Creds | undefined> {
+  const cfg = getConfig();
+  const acct = cfg.accounts?.find((a) => a.accountId === accountId);
+  if (!acct || acct.isHost) return undefined;
+  const res = await new STSClient({ region: STS_REGION }).send(new AssumeRoleCommand({
+    RoleArn: `arn:aws:iam::${accountId}:role/${ROLE}`,
+    RoleSessionName: sessionName,
+    DurationSeconds: 900,
+    ...(cfg.crossAccountExternalId ? { ExternalId: cfg.crossAccountExternalId } : {}),
+  }), { abortSignal: AbortSignal.timeout(STS_TIMEOUT_MS) });
+  const c = res.Credentials;
+  if (!c?.AccessKeyId || !c.SecretAccessKey) throw new Error('NoCredentials');
+  return { accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken };
+}
+
 /** Test hook: clear shared state. / 테스트용 초기화. */
 export function resetCloudTrailAccess(): void {
   const s = state();
