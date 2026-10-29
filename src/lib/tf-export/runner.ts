@@ -1,5 +1,5 @@
 // Allowlisted Terraform executor: the safety boundary for tf-export / 허용 목록 기반 Terraform 실행기: tf-export의 안전 경계
-import { execFile } from 'child_process';
+import { spawn } from 'child_process';
 import path from 'path';
 import { writeFile } from 'fs/promises';
 import { freshCredentials } from '@/lib/cloudtrail-access';
@@ -50,22 +50,56 @@ export function assertAllowed(args: string[]): void {
   }
 }
 
-/** execFile wrapper; on abort the child gets SIGKILL and we resolve only after it has exited. / 중단되면 SIGKILL을 보내고 자식이 끝난 뒤에만 돌려준다. */
-export const defaultExec: ExecFn = (file, args, o) => new Promise((resolve) => {
+function named(name: string): Error { const e = new Error(name); e.name = name; return e; }
+
+/** spawn wrapper in its own process group: abort/timeout SIGKILL the whole group (provider plugins too) and resolve only after exit. / 별도 프로세스 그룹으로 실행: 중단·시간 초과 때 그룹 전체(프로바이더 플러그인 포함)를 SIGKILL하고 끝난 뒤에만 돌려준다. */
+export const defaultExec: ExecFn = (file, args, o) => new Promise((resolve, reject) => {
   if (o.signal?.aborted) return resolve({ code: ABORTED_CODE, stdout: '', stderr: 'aborted' });
-  const child = execFile(file, args, { cwd: o.cwd, env: o.env, timeout: o.timeout, maxBuffer: o.maxBuffer, signal: o.signal, killSignal: 'SIGKILL' }, (err, stdout, stderr) => {
-    if (!err) return resolve({ code: 0, stdout, stderr });
-    const e = err as NodeJS.ErrnoException & { killed?: boolean };
-    if (e.name === 'AbortError' || o.signal?.aborted) {
-      const done = () => resolve({ code: ABORTED_CODE, stdout: String(stdout ?? ''), stderr: 'aborted' });
-      if (child.exitCode !== null || child.signalCode !== null) return done();
-      child.once('exit', done);
-      return;
-    }
-    if (String(e.code) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return resolve({ code: 125, stdout, stderr: 'output too large' });
-    if (e.killed) return resolve({ code: 124, stdout, stderr: 'timeout' });
-    resolve({ code: typeof e.code === 'number' ? e.code : 1, stdout, stderr });
-  });
+  const child = spawn(file, args, { cwd: o.cwd, env: o.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  let size = 0;
+  let why: 'abort' | 'timeout' | 'overflow' | null = null;
+  let settled = false;
+  // Kill the group, falling back to the child alone / 그룹을 죽이고, 안 되면 자식만
+  const killGroup = () => {
+    try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); }
+    catch { try { child.kill('SIGKILL'); } catch { /* already gone / 이미 끝남 */ } }
+  };
+  const stop = (w: 'abort' | 'timeout' | 'overflow') => { why ??= w; killGroup(); };
+  const onAbort = () => stop('abort');
+  o.signal?.addEventListener('abort', onAbort, { once: true });
+  const timer = setTimeout(() => stop('timeout'), o.timeout);
+  const take = (into: Buffer[]) => (d: Buffer) => {
+    if (why) return;
+    size += d.length;
+    if (size > o.maxBuffer) return stop('overflow');
+    into.push(d);
+  };
+  child.stdout!.on('data', take(out));
+  child.stderr!.on('data', take(err));
+  const settle = (fn: () => void) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    o.signal?.removeEventListener('abort', onAbort);
+    fn();
+  };
+  child.once('error', (e: NodeJS.ErrnoException) => settle(() => {
+    killGroup();
+    reject(e.code === 'ENOENT' ? named('NotInstalled') : e);
+  }));
+  // Leftover group members (orphaned plugins) are killed so the pipes close / 남은 그룹 구성원(고아 플러그인)도 죽여 파이프가 닫히게 함
+  child.once('exit', () => { if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* group empty / 그룹 비었음 */ } } });
+  // 'close' fires after the child exited and its pipes closed / 'close'는 자식이 끝나고 파이프가 닫힌 뒤에 온다
+  child.once('close', (code) => settle(() => {
+    const stdout = Buffer.concat(out).toString('utf8');
+    const stderr = Buffer.concat(err).toString('utf8');
+    if (why === 'abort') return resolve({ code: ABORTED_CODE, stdout, stderr: 'aborted' });
+    if (why === 'timeout') return resolve({ code: 124, stdout, stderr: 'timeout' });
+    if (why === 'overflow') return resolve({ code: 125, stdout, stderr: 'output too large' });
+    resolve({ code: typeof code === 'number' ? code : 1, stdout, stderr });
+  }));
 });
 
 export async function isInstalled(exec: ExecFn = defaultExec): Promise<{ installed: boolean; version?: string }> {
@@ -87,29 +121,34 @@ export async function runTerraform(
   // Drop every inherited TF_* var so env cannot bypass the argv allowlist / 상속된 TF_* 환경변수를 모두 제거해 허용 목록 우회를 막는다
   const env = {} as NodeJS.ProcessEnv;
   for (const [k, v] of Object.entries(process.env)) if (!k.toUpperCase().startsWith('TF_')) env[k] = v;
-  Object.assign(env, { TF_IN_AUTOMATION: '1', TF_INPUT: '0', CHECKPOINT_DISABLE: '1', TF_PLUGIN_CACHE_DIR: PLUGIN_CACHE_DIR, AWS_REGION: opts.region, AWS_DEFAULT_REGION: opts.region });
+  // No TF_PLUGIN_CACHE_DIR: the cache folder is the filesystem mirror, and Terraform forbids both being the same / TF_PLUGIN_CACHE_DIR 없음: 캐시 폴더가 곧 미러이고 둘이 같으면 Terraform이 거부한다
+  Object.assign(env, { TF_IN_AUTOMATION: '1', TF_INPUT: '0', CHECKPOINT_DISABLE: '1', AWS_REGION: opts.region, AWS_DEFAULT_REGION: opts.region });
+  // Credentials come from IMDS (host) or AssumeRole (cross), never a profile file / 자격 증명은 IMDS(호스트) 또는 AssumeRole(교차)에서만, 프로필 파일은 안 씀
+  delete env.AWS_PROFILE; delete env.AWS_CONFIG_FILE; delete env.AWS_SHARED_CREDENTIALS_FILE;
   if (cross) {
     // Fail closed: never fall back to host credentials / 호스트 자격증명으로 대체하지 않고 실패
     const c = await freshCredentials(opts.accountId, 'awsops-tf-export');
     if (!c) { const e = new Error('NoCredentials'); e.name = 'NoCredentials'; throw e; }
-    delete env.AWS_PROFILE; delete env.AWS_CONFIG_FILE; delete env.AWS_SHARED_CREDENTIALS_FILE;
     env.AWS_ACCESS_KEY_ID = c.accessKeyId;
     env.AWS_SECRET_ACCESS_KEY = c.secretAccessKey;
     if (c.sessionToken) env.AWS_SESSION_TOKEN = c.sessionToken; else delete env.AWS_SESSION_TOKEN;
   }
   // Scrub endpoint/proxy overrides / 엔드포인트·프록시 재정의 제거
   for (const k of Object.keys(env)) if (/^AWS_ENDPOINT_URL/i.test(k) || /^(AWS_CA_BUNDLE|HTTPS?_PROXY|ALL_PROXY)$/i.test(k)) delete env[k];
-  // Pin provider installation to hashicorp/aws and isolate HOME / 프로바이더 설치를 hashicorp/aws로 고정하고 HOME 격리
+  // Install hashicorp/aws only from the pre-warmed local mirror (no registry, no download) and isolate HOME / 미리 받아 둔 로컬 미러에서만 hashicorp/aws 설치(레지스트리·다운로드 없음), HOME 격리
   const rc = path.join(opts.cwd, '.terraformrc-awsops');
-  const body = `provider_installation {\n  filesystem_mirror { path = "${PLUGIN_CACHE_DIR}" include = ["registry.terraform.io/hashicorp/aws"] }\n  direct { include = ["registry.terraform.io/hashicorp/aws"] }\n}\n`;
+  const body = `provider_installation {\n  filesystem_mirror {\n    path    = "${PLUGIN_CACHE_DIR}"\n    include = ["registry.terraform.io/hashicorp/aws"]\n  }\n}\n`;
   try { await writeFile(rc, body, { flag: 'wx' }); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
   env.TF_CLI_CONFIG_FILE = rc;
   env.HOME = opts.cwd;
   const timeout = opts.timeoutMs ?? (cross ? 12 : 10) * 60_000;
   try {
     const r = await (opts.exec ?? defaultExec)('nice', ['-n', '10', TF_BIN, ...args], { cwd: opts.cwd, env, timeout, maxBuffer: 32 * 1024 * 1024, signal: opts.signal });
+    // nice exits 127 when it cannot find the terraform binary / nice는 terraform 바이너리를 못 찾으면 127로 끝난다
+    if (r.code === 127) throw named('NotInstalled');
     return r.code === 124 ? { ...r, stderr: 'timeout' } : r;
   } catch (err) {
+    if ((err as { name?: unknown }).name === 'NotInstalled' || String((err as { code?: unknown }).code) === 'ENOENT') throw named('NotInstalled');
     if (String((err as { code?: unknown }).code) === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return { code: 125, stdout: '', stderr: 'output too large' };
     if ((err as { killed?: boolean }).killed) return { code: 124, stdout: '', stderr: 'timeout' };
     throw err;

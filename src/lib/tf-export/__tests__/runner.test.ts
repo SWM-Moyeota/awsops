@@ -61,15 +61,21 @@ describe('runTerraform', () => {
     const exec = vi.fn(async () => ok);
     await runTerraform(['version'], { ...base, accountId: '111', exec });
     const env = (exec.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
-    expect(Object.keys(env).filter((k) => /^tf_/i.test(k)).sort()).toEqual(['TF_CLI_CONFIG_FILE', 'TF_IN_AUTOMATION', 'TF_INPUT', 'TF_PLUGIN_CACHE_DIR'].sort());
+    expect(Object.keys(env).filter((k) => /^tf_/i.test(k)).sort()).toEqual(['TF_CLI_CONFIG_FILE', 'TF_IN_AUTOMATION', 'TF_INPUT'].sort());
     expect(env.AWS_REGION).toBe('ap-northeast-2'); expect(env.AWS_DEFAULT_REGION).toBe('ap-northeast-2');
   });
-  it('cross-account drops profile/config files', async () => {
+  it.each([['111'], ['222']])('drops profile/config files (account %s)', async (accountId) => {
     vi.stubEnv('AWS_PROFILE', 'p'); vi.stubEnv('AWS_CONFIG_FILE', '/c'); vi.stubEnv('AWS_SHARED_CREDENTIALS_FILE', '/s');
     const exec = vi.fn(async () => ok);
-    await runTerraform(['version'], { ...base, accountId: '222', exec });
+    await runTerraform(['version'], { ...base, accountId, exec });
     const env = (exec.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
     expect(env.AWS_PROFILE).toBeUndefined(); expect(env.AWS_CONFIG_FILE).toBeUndefined(); expect(env.AWS_SHARED_CREDENTIALS_FILE).toBeUndefined();
+  });
+  it('missing nice or terraform binary throws NotInstalled', async () => {
+    const enoent = vi.fn(async () => { throw Object.assign(new Error('spawn nice ENOENT'), { code: 'ENOENT' }); });
+    await expect(runTerraform(['version'], { ...base, accountId: '111', exec: enoent })).rejects.toMatchObject({ name: 'NotInstalled' });
+    const noTf = vi.fn(async () => ({ code: 127, stdout: '', stderr: 'nice: terraform: No such file or directory' }));
+    await expect(runTerraform(['version'], { ...base, accountId: '111', exec: noTf })).rejects.toMatchObject({ name: 'NotInstalled' });
   });
   it('cross-account without credentials throws NoCredentials and never spawns', async () => {
     const exec = vi.fn(async () => ok);
@@ -85,10 +91,11 @@ describe('runTerraform', () => {
     await runTerraform(['version'], { ...base, accountId: '111', exec });
     const env = (exec.mock.calls[0] as unknown as [string, string[], { env: NodeJS.ProcessEnv }])[2].env;
     expect(env.HOME).toBe(base.cwd); expect(env.TF_CLI_CONFIG_FILE).toBe(path.join(base.cwd, '.terraformrc-awsops'));
-    expect(env.TF_PLUGIN_CACHE_DIR).toBe(PLUGIN_CACHE_DIR);
+    // The cache dir must not also be a mirror, and there is no registry fallback / 캐시 폴더를 미러와 겹쳐 쓰지 않고, 레지스트리 대체도 없음
+    expect(env.TF_PLUGIN_CACHE_DIR).toBeUndefined();
     const txt = fs.readFileSync(env.TF_CLI_CONFIG_FILE!, 'utf8');
-    expect(txt).toContain('filesystem_mirror'); expect(txt).toContain('direct');
-    expect(txt.match(/include = \["([^"]+)"\]/g)).toEqual(Array(2).fill('include = ["registry.terraform.io/hashicorp/aws"]'));
+    expect(txt).toBe(`provider_installation {\n  filesystem_mirror {\n    path    = "${PLUGIN_CACHE_DIR}"\n    include = ["registry.terraform.io/hashicorp/aws"]\n  }\n}\n`);
+    expect(txt).not.toContain('direct');
     await runTerraform(['version'], { ...base, accountId: '111', exec }); // second run keeps file / 재실행 시 파일 유지
     expect(fs.readFileSync(env.TF_CLI_CONFIG_FILE!, 'utf8')).toBe(txt);
   });
@@ -123,5 +130,28 @@ describe('abort', () => {
     expect(await p).toMatchObject({ code: ABORTED_CODE, stderr: 'aborted' });
     expect(Date.now() - t0).toBeLessThan(3000);
     expect(await defaultExec('sleep', ['1'], { cwd: os.tmpdir(), env: process.env, timeout: 10_000, maxBuffer: 1 << 20, signal: ac.signal })).toMatchObject({ code: ABORTED_CODE });
+  });
+  it('defaultExec kills the whole process group, so grandchildren die too', async () => {
+    const d = fs.mkdtempSync(path.join(os.tmpdir(), 'tfr-pg-'));
+    const pidFile = path.join(d, 'pid');
+    const ac = new AbortController();
+    const p = defaultExec('sh', ['-c', `sleep 30 & echo $! > ${pidFile}.tmp && mv ${pidFile}.tmp ${pidFile}; wait`], { cwd: d, env: process.env, timeout: 10_000, maxBuffer: 1 << 20, signal: ac.signal });
+    for (let k = 0; k < 200 && !fs.existsSync(pidFile); k++) await new Promise(r => setTimeout(r, 10));
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+    expect(pid).toBeGreaterThan(0);
+    ac.abort();
+    expect(await p).toMatchObject({ code: ABORTED_CODE, stderr: 'aborted' });
+    let alive = true;
+    for (let k = 0; k < 200 && alive; k++) {
+      try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 10)); } catch { alive = false; }
+    }
+    expect(alive).toBe(false);
+  });
+  it('defaultExec returns output and exit code, maps timeout, overflow and a missing binary', async () => {
+    const o = { cwd: os.tmpdir(), env: process.env, timeout: 10_000, maxBuffer: 1 << 20 };
+    expect(await defaultExec('sh', ['-c', 'echo hi; echo err >&2; exit 3'], o)).toEqual({ code: 3, stdout: 'hi\n', stderr: 'err\n' });
+    expect(await defaultExec('sleep', ['5'], { ...o, timeout: 50 })).toMatchObject({ code: 124, stderr: 'timeout' });
+    expect(await defaultExec('sh', ['-c', 'head -c 100000 /dev/zero'], { ...o, maxBuffer: 1000 })).toMatchObject({ code: 125, stderr: 'output too large' });
+    await expect(defaultExec(path.join(os.tmpdir(), 'no-such-binary-awsops'), [], o)).rejects.toMatchObject({ name: 'NotInstalled' });
   });
 });
