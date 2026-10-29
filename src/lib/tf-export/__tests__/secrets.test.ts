@@ -197,6 +197,17 @@ describe('scrubErrorText', () => {
     expect(out).toContain('The argument "filename" is required.');
     expect(out.split('\n')).toHaveLength(snippet.split('\n').length);
   });
+  it('handles box-drawing prefixes and ANSI escapes', () => {
+    const boxed = scrubErrorText('│   13:   other = "leak5"\n╷ 14: x\n| 15: y = "leak6"');
+    expect(boxed).not.toMatch(/leak5|leak6/);
+    expect(boxed).toContain('│   13: [숨김]');
+    expect(boxed).toContain('| 15: [숨김]');
+    const ansi = scrubErrorText('\x1b[1m  12:\x1b[0m   password = "x2"\n\x1b[31mError:\x1b[0m bad');
+    expect(ansi).not.toContain('x2');
+    expect(ansi).not.toContain('\x1b');
+    expect(ansi).toContain('  12: [숨김]');
+    expect(ansi).toContain('Error: bad');
+  });
   it('fixture plan-errors.txt: error messages kept, no snippet content, line count kept', () => {
     const withSecret = planErrors + '\n' + snippet;
     const out = scrubErrorText(withSecret);

@@ -99,11 +99,13 @@ export function scrubForAi(text: string): string {
 }
 
 // Source-snippet line in Terraform error output (`  12:   key = ...`) / Terraform 오류 출력의 소스 조각 줄
-const SNIPPET_LINE = /^(\s*)(\d+):(?:\s.*)?$/;
+const SNIPPET_LINE = /^((?:[│|╷╵]\s*)?\s*)(\d+):(?:\s.*)?$/;
+// ANSI colour/style escapes / ANSI 색·스타일 이스케이프
+const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g;
 
 // Hide snippet lines and secret values in Terraform error text before it goes to the AI / AI에 보내기 전 Terraform 오류 텍스트의 조각 줄과 비밀 값 가리기
 export function scrubErrorText(text: string): string {
-  const lines = text.split('\n').map(l => {
+  const lines = text.replace(ANSI, '').split('\n').map(l => {
     const m = SNIPPET_LINE.exec(l.replace(/\r$/, ''));
     return m ? `${m[1]}${m[2]}: ${HIDDEN}` : l;
   });
