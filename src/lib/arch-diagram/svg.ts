@@ -7,9 +7,9 @@ import type { DiagramModel, Direction, Res } from './types';
 export type Lang = 'ko' | 'en' | 'zh';
 
 const TEXT = {
-  ko: { title: '아키텍처', azs: 'AZ', subnets: '서브넷', res: '리소스', legend: '범례', traffic: '요청 흐름', outbound: '아웃바운드·복제', hidden: (n: number) => `빈 서브넷 ${n}개 숨김`, skipped: (s: string) => `조회 못 한 항목: ${s}`, noRel: 'EC2와 RDS·캐시 사이의 연결은 데이터로 확인할 수 없어 그리지 않았어요', lbScope: '로드밸런서는 ALB·NLB만 표시해요 (Gateway LB·Classic LB 제외)', dropped: (n: number) => `연결선이 너무 많아 ${n}개는 생략했어요`, also: (n: string) => `${n}번도 이 서브넷을 함께 사용`, lb: '로드밸런서 노드', empty: '리소스 없음', account: '계정 공통 (이 VPC 전용 아님)', group: 'Auto Scaling 그룹', stopped: '흐리게 = 정지됨', generated: '생성' },
-  en: { title: 'Architecture', azs: 'AZs', subnets: 'subnets', res: 'resources', legend: 'Legend', traffic: 'Request flow', outbound: 'Outbound / replication', hidden: (n: number) => `${n} empty subnets hidden`, skipped: (s: string) => `Could not read: ${s}`, noRel: 'Links between EC2 and RDS/cache cannot be proven from this data, so they are not drawn', lbScope: 'Only ALB and NLB are shown (not Gateway or Classic load balancers)', dropped: (n: number) => `${n} connections left out, too many to draw`, also: (n: string) => `#${n} also use this subnet`, lb: 'Load balancer nodes', empty: 'No resources', account: 'Account-wide, not only this VPC', group: 'Auto Scaling group', stopped: 'Faded = stopped', generated: 'Generated' },
-  zh: { title: '架构', azs: '可用区', subnets: '子网', res: '资源', legend: '图例', traffic: '请求流', outbound: '出站 / 复制', hidden: (n: number) => `已隐藏 ${n} 个空子网`, skipped: (s: string) => `无法读取：${s}`, noRel: 'EC2 与 RDS/缓存之间的连接无法从数据确认，因此未绘制', lbScope: '仅显示 ALB 和 NLB（不含 Gateway LB、Classic LB）', dropped: (n: number) => `连接过多，已省略 ${n} 条`, also: (n: string) => `${n} 号也使用此子网`, lb: '负载均衡器节点', empty: '无资源', account: '账户通用（不仅限此 VPC）', group: 'Auto Scaling 组', stopped: '淡色 = 已停止', generated: '生成于' },
+  ko: { title: '아키텍처', azs: 'AZ', subnets: '서브넷', res: '리소스', legend: '범례', traffic: '요청 흐름', outbound: '아웃바운드·복제', hidden: (n: number) => `빈 서브넷 ${n}개 숨김`, skipped: (s: string) => `조회 못 한 항목: ${s}`, noRel: 'EC2와 RDS·캐시 사이의 연결은 데이터로 확인할 수 없어 그리지 않았어요', lbScope: '로드밸런서는 ALB·NLB만 표시해요 (Gateway LB·Classic LB 제외)', dropped: (n: number) => `연결선이 너무 많아 ${n}개는 생략했어요`, also: (n: string) => `${n}번도 이 서브넷을 함께 사용`, lb: '로드밸런서 노드', empty: '리소스 없음', none: '켜져 있는 리소스가 없어요', account: '계정 공통 (이 VPC 전용 아님)', group: 'Auto Scaling 그룹', hiddenStopped: (n: number) => `정지된 서버 ${n}대 숨김`, generated: '생성' },
+  en: { title: 'Architecture', azs: 'AZs', subnets: 'subnets', res: 'resources', legend: 'Legend', traffic: 'Request flow', outbound: 'Outbound / replication', hidden: (n: number) => `${n} empty subnets hidden`, skipped: (s: string) => `Could not read: ${s}`, noRel: 'Links between EC2 and RDS/cache cannot be proven from this data, so they are not drawn', lbScope: 'Only ALB and NLB are shown (not Gateway or Classic load balancers)', dropped: (n: number) => `${n} connections left out, too many to draw`, also: (n: string) => `#${n} also use this subnet`, lb: 'Load balancer nodes', empty: 'No resources', none: 'Nothing is running here', account: 'Account-wide, not only this VPC', group: 'Auto Scaling group', hiddenStopped: (n: number) => `${n} stopped servers hidden`, generated: 'Generated' },
+  zh: { title: '架构', azs: '可用区', subnets: '子网', res: '资源', legend: '图例', traffic: '请求流', outbound: '出站 / 复制', hidden: (n: number) => `已隐藏 ${n} 个空子网`, skipped: (s: string) => `无法读取：${s}`, noRel: 'EC2 与 RDS/缓存之间的连接无法从数据确认，因此未绘制', lbScope: '仅显示 ALB 和 NLB（不含 Gateway LB、Classic LB）', dropped: (n: number) => `连接过多，已省略 ${n} 条`, also: (n: string) => `${n} 号也使用此子网`, lb: '负载均衡器节点', empty: '无资源', none: '没有正在运行的资源', account: '账户通用（不仅限此 VPC）', group: 'Auto Scaling 组', hiddenStopped: (n: number) => `已隐藏 ${n} 台已停止的服务器`, generated: '生成于' },
 } as const;
 
 const FONT = "'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic','Segoe UI',Helvetica,Arial,sans-serif";
@@ -50,7 +50,7 @@ function drawBox(b: Box, lang: Lang): string {
   out += `<text x="${tx}" y="${y + 23}" font-size="${st.size}" font-weight="${st.weight}" fill="${st.title}">${esc(b.title)}${b.sub ? `<tspan font-weight="400" fill="${MUTED}" dx="8">${esc(b.sub)}</tspan>` : ''}</text>`;
   if (b.kind === 'rail' && b.title === 'Account') out = out.replace('</text>', `</text><text x="${x + 12}" y="${y + 37}" font-size="9.5" fill="${MUTED}">${esc(TEXT[lang].account.split(' (')[0].split(',')[0].split('（')[0])}</text>`);
   if (b.note) {
-    const note = b.note === 'also' ? TEXT[lang].also((b.also ?? []).map(r => r.n ?? '').join(', ')) : b.note === 'lb' ? TEXT[lang].lb : TEXT[lang].empty;
+    const note = b.note === 'also' ? TEXT[lang].also((b.also ?? []).map(r => r.n ?? '').join(', ')) : b.note === 'none' ? TEXT[lang].none : b.note === 'lb' ? TEXT[lang].lb : TEXT[lang].empty;
     out += `<text x="${x + w / 2}" y="${y + Math.round((h + 36) / 2) + 4}" text-anchor="middle" font-size="11" font-style="italic" fill="${MUTED}">${esc(note)}</text>`;
   }
   return out;
@@ -96,7 +96,7 @@ function drawIcon(res: Res, x: number, y: number, size: number): string {
 
 function drawNode(n: PlacedNode): string {
   const { res, icon, label } = n;
-  let out = res.faded ? '<g opacity="0.45">' : '<g>';
+  let out = '<g>';
   // Halo so border-straddling icons stay readable / 경계에 걸친 아이콘이 잘 보이도록 흰 바탕
   if (res.kind === 'igw' || res.kind === 'internet') out += `<rect x="${icon.x - 3}" y="${icon.y - 3}" width="${icon.w + 6}" height="${icon.h + 6}" rx="8" fill="#fff"/>`;
   if (res.group) out += `<rect x="${label.x + 4}" y="${icon.y - 9}" width="${label.w - 8}" height="${label.y + label.h + 5 - (icon.y - 9)}" rx="6" fill="none" stroke="#ED7100" stroke-width="1.3" stroke-dasharray="5 3"/>`;
@@ -155,11 +155,11 @@ function drawLegend(m: DiagramModel, y0: number, width: number, lang: Lang, drop
   key(`<line x1="@X" y1="@Y" x2="@E" y2="@Y" stroke="${LINE}" stroke-width="1.5" marker-end="url(#arrow)"/>`, T.traffic, 22);
   key(`<line x1="@X" y1="@Y" x2="@E" y2="@Y" stroke="${LINE_SOFT}" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#arrow-soft)"/>`, T.outbound, 22);
   key(`<rect x="@G" y="${y - 7}" width="24" height="14" rx="3" fill="none" stroke="#ED7100" stroke-width="1.3" stroke-dasharray="4 2"/>`, T.group, 22);
-  out += `<text x="${x}" y="${y + 4}" font-size="10.5" fill="${MUTED}">${esc(T.stopped)}</text>`;
   y += 20;
   const notes: string[] = [T.noRel, T.lbScope];
   if (droppedEdges) notes.unshift(T.dropped(droppedEdges));
   if (m.hiddenEmpty) notes.unshift(T.hidden(m.hiddenEmpty));
+  if (m.hiddenStopped) notes.unshift(T.hiddenStopped(m.hiddenStopped));
   if (m.skipped.length) notes.push(T.skipped(m.skipped.join(', ')));
   for (const note of notes) {
     out += `<text x="${MARGIN}" y="${y + 4}" font-size="10.5" fill="${MUTED}">· ${esc(note)}</text>`;

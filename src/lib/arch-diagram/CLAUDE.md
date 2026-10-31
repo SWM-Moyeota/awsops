@@ -15,6 +15,7 @@
 ## 규칙
 - 데이터로 확인되는 관계만 그린다: 대상 그룹(인스턴스 id, 정확한 사설 IP, draining·unused 제외), 라우트 테이블(서브넷 → NAT), 원본 DNS(CloudFront → 로드밸런서), Multi-AZ 대기. EC2와 DB·캐시 사이의 선은 추측하지 않고, 범례에 그렇게 적는다.
 - S3·Route 53·DynamoDB와 이 VPC에 안 붙은 CloudFront는 계정 전체 개수다. `Account` 레일로 나누고 VPC 소속처럼 보이게 하지 않는다.
+- 정지된 EC2와 RDS는 그리지 않고 범례에 개수만 적는다(사용자 결정). 그 때문에 비는 서브넷은 빈 서브넷으로 숨겨진다.
 - 여러 서브넷을 쓰는 리소스는 첫 서브넷에 그리고, 다른 서브넷은 `also`로 남겨 빈 서브넷으로 숨기지 않는다.
 - ElastiCache는 AZ만 알 수 있어 그 AZ의 첫 프라이빗 서브넷에 놓고, 없으면 VPC 띠에 놓는다. RDS는 주 AZ가 맞는 서브넷에만 놓는다.
 - 퍼블릭은 기본 경로(0.0.0.0/0)가 IGW일 때만이다. IPv6 `::/0`은 IPv4 기본 경로가 없을 때만 본다.
@@ -41,6 +42,7 @@ Draws the `/diagram` picture. Turns Steampipe rows into a VPC > AZ > subnet mode
 ## Rules
 - Draw only relations the data proves: target groups (instance id, exact private IP, not draining or unused), route tables (subnet to NAT), origin DNS (CloudFront to load balancer), Multi-AZ standby. Do not guess links between EC2 and databases or caches; the legend says so.
 - S3, Route 53, DynamoDB and CloudFront not attached to this VPC are account-wide counts. They go in the `Account` rail and must not look like VPC members.
+- Stopped EC2 and RDS are not drawn; the legend gives their count (user decision). A subnet left empty by this is hidden as empty.
 - A multi-subnet resource is drawn in its first subnet; the others keep it in `also`, so they are not hidden as empty.
 - ElastiCache only reports an AZ, so it goes in that AZ's first private subnet, else the VPC band. RDS goes only in a subnet matching its primary AZ.
 - Public means the default route (0.0.0.0/0) goes to an IGW; IPv6 `::/0` counts only when there is no IPv4 default route.

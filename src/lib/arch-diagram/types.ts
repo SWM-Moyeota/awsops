@@ -16,8 +16,6 @@ export interface Res {
   count?: number;
   // Auto Scaling group: drawn with an orange dashed frame / 오토 스케일링 그룹: 주황 점선 테두리
   group?: boolean;
-  // Stopped: drawn faded / 정지됨: 흐리게 그림
-  faded?: boolean;
   // Legend number, set at the end of buildModel / 범례 번호, buildModel 끝에서 매김
   n?: number;
 }
@@ -54,6 +52,8 @@ export interface DiagramModel {
   services: Res[];
   edges: EdgeModel[];
   hiddenEmpty: number;
+  // Stopped servers and databases left out / 그리지 않은 정지 상태의 서버·DB 수
+  hiddenStopped: number;
   skipped: string[];
 }
 

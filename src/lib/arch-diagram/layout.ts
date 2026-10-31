@@ -3,7 +3,7 @@ import { routeAll, type Port, type Pt, type Rect, type RouteRequest } from './ro
 import type { DiagramModel, Direction, Res, SubnetModel, Tier } from './types';
 
 export type BoxKind = 'cloud' | 'region' | 'vpc' | 'az' | 'public' | 'private' | 'rail';
-export interface Box { kind: BoxKind; rect: Rect; title: string; sub?: string; titleRect: Rect; id?: string; note?: 'also' | 'lb' | 'empty'; also?: Res[] }
+export interface Box { kind: BoxKind; rect: Rect; title: string; sub?: string; titleRect: Rect; id?: string; note?: 'also' | 'lb' | 'empty' | 'none'; also?: Res[] }
 export interface PlacedNode { res: Res; icon: Rect; label: Rect; lines: string[]; labelSide: 'below' | 'right' }
 export interface PlacedEdge { points: Pt[]; dashed: boolean; label?: string }
 export interface Layout { width: number; height: number; boxes: Box[]; nodes: PlacedNode[]; edges: PlacedEdge[]; contentBottom: number; droppedEdges: number }
@@ -183,7 +183,7 @@ export function computeLayout(m: DiagramModel, dir: Direction): Layout {
   };
   box('cloud', { x: cloudX, y: cloudY, w: cloudW, h: cloudH }, 'AWS Cloud', {}, 14);
   box('region', { x: regionX, y: regionY, w: regionW, h: regionH }, m.vpc.region ? `Region · ${m.vpc.region}` : 'Region');
-  box('vpc', { x: vpcX, y: vpcY, w: vpcW, h: vpcH }, vpcTitle, { sub: m.vpc.cidr });
+  box('vpc', { x: vpcX, y: vpcY, w: vpcW, h: vpcH }, vpcTitle, { sub: m.vpc.cidr, note: m.azs.length ? undefined : 'none' });
 
   const gridX = vpcX + VPC_PAD + (dir === 'LR' ? bandThick + 24 : 0);
   const gridY = vpcY + VPC_HEAD + (dir === 'TB' ? bandThick : 0);

@@ -58,12 +58,15 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   // EC2: ASG and EKS instances fold into one icon per subnet / EC2: ASG·EKS 인스턴스는 서브넷별 아이콘 하나로 접음
   const instanceIcon = new Map<string, string>();
   const groups = new Map<string, { res: Res; running: number; types: Set<string> }>();
-  const instances = rows.ec2.filter(r => inVpc(r) && r.instance_state !== 'terminated').sort((a, b) => String(a.instance_id).localeCompare(String(b.instance_id)));
+  // Stopped servers are left out and only counted / 정지된 서버는 그리지 않고 개수만 셈
+  const isOff = (state: unknown) => state === 'stopped' || state === 'stopping' || state === 'shutting-down';
+  const liveEc2 = rows.ec2.filter(r => inVpc(r) && r.instance_state !== 'terminated');
+  let hiddenStopped = liveEc2.filter(r => isOff(r.instance_state) && subnetById.has(r.subnet_id)).length;
+  const instances = liveEc2.filter(r => !isOff(r.instance_state)).sort((a, b) => String(a.instance_id).localeCompare(String(b.instance_id)));
   for (const r of instances) {
     const s = subnetById.get(r.subnet_id);
     if (!s) continue;
     const down = r.instance_state !== 'running';
-    const stopped = r.instance_state === 'stopped' || r.instance_state === 'stopping' || r.instance_state === 'shutting-down';
     const grpName: string | null = r.eks_cluster || r.asg_name || null;
     if (grpName) {
       const key = `${s.id}|${grpName}`;
@@ -77,10 +80,9 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
       if (!down) g.running++;
       if (r.instance_type) g.types.add(r.instance_type);
       g.res.detail = `${Array.from(g.types).join(', ')} · ${r.eks_cluster ? 'EKS' : 'Auto Scaling'} ${g.running}/${g.res.count}`;
-      g.res.faded = g.running === 0;
       instanceIcon.set(r.instance_id, g.res.id);
     } else {
-      s.resources.push({ id: r.instance_id, kind: 'ec2', name: r.name || shortId(r.instance_id), detail: [r.instance_type, down ? r.instance_state : null].filter(Boolean).join(' · '), faded: stopped });
+      s.resources.push({ id: r.instance_id, kind: 'ec2', name: r.name || shortId(r.instance_id), detail: [r.instance_type, down ? r.instance_state : null].filter(Boolean).join(' · ') });
       instanceIcon.set(r.instance_id, r.instance_id);
     }
   }
@@ -102,15 +104,15 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
     const inAz = (az: string | null | undefined) => privateFirst(group.filter(s => s.az === az))[0];
     const id = `rds:${r.db_instance_identifier}`;
     const detail = [r.engine, r.db_instance_class, r.status && r.status !== 'available' ? r.status : null].filter(Boolean).join(' · ');
-    const faded = r.status === 'stopped' || r.status === 'stopping';
-    const res: Res = { id, kind: 'rds', name: r.db_instance_identifier, detail: r.multi_az ? `${detail} · Multi-AZ` : detail, faded };
+    if (isOff(r.status)) { hiddenStopped++; continue; }
+    const res: Res = { id, kind: 'rds', name: r.db_instance_identifier, detail: r.multi_az ? `${detail} · Multi-AZ` : detail };
     // Only the primary AZ's subnet proves the place; else VPC level, unless the user hid subnets / 주 AZ 서브넷만 위치의 근거. 없으면 VPC 수준 (사용자가 서브넷을 뺀 경우는 그리지 않음)
     const home = inAz(r.availability_zone);
     if (!home) { if (!exclude.size) attachments.push(res); continue; }
     home.resources.push(res);
     const standby = r.multi_az && r.secondary_availability_zone ? inAz(r.secondary_availability_zone) : undefined;
     if (standby && standby !== home) {
-      standby.resources.push({ id: `${id}:standby`, kind: 'rds', name: `${r.db_instance_identifier} standby`, detail: `${r.engine} · Multi-AZ standby`, faded });
+      standby.resources.push({ id: `${id}:standby`, kind: 'rds', name: `${r.db_instance_identifier} standby`, detail: `${r.engine} · Multi-AZ standby` });
       edges.push({ from: id, to: `${id}:standby`, dashed: true, label: 'Multi-AZ' });
     }
   }
@@ -230,7 +232,7 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   const model: DiagramModel = {
     vpc: { id: vpcId, name: meta.vpc_name || vpcId, cidr: meta.vpc_cidr || '', accountId: meta.account_id || '', region: meta.region || opt.region || '' },
     internet: edges.some(e => e.from === internet.id) ? internet : undefined,
-    igw, lbs, attachments, azs, edgeServices, services, edges, hiddenEmpty, skipped: opt.skipped ?? [],
+    igw, lbs, attachments, azs, edgeServices, services, edges, hiddenEmpty, hiddenStopped, skipped: opt.skipped ?? [],
   };
   const known = new Set<string>(allResources(model).map(r => r.id).concat(shown.map(s => `subnet:${s.id}`)));
   model.edges = edges.filter(e => known.has(e.from) && known.has(e.to));

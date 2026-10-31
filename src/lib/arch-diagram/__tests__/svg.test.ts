@@ -14,6 +14,7 @@ describe('renderSvg', () => {
     expect(svg).toContain('범례');
     expect(svg).toContain('api-server-with-a-very-long-name-for');
     expect(svg).toContain('빈 서브넷 1개 숨김');
+    expect(svg).toContain('정지된 서버 1대 숨김');
   });
   it('defines only the icons it uses, once each, and every use resolves', () => {
     const svg = render();
@@ -35,6 +36,12 @@ describe('renderSvg', () => {
     expect(svg).not.toContain('"onload=');
     expect(svg).not.toContain('\u0007');
     expect(svg).toContain('&lt;script&gt;');
+  });
+  it('says so when nothing is running in the VPC', () => {
+    const r = bigRows();
+    r.ec2 = []; r.elb = []; r.nat = []; r.rds = []; r.elasticache = []; r.lambda = [];
+    expect(render(r)).toContain('켜져 있는 리소스가 없어요');
+    expect(render()).not.toContain('켜져 있는 리소스가 없어요');
   });
   it('escapes all XML specials', () => {
     expect(esc(`a<b>&"'`)).toBe('a&lt;b&gt;&amp;&quot;&#39;');

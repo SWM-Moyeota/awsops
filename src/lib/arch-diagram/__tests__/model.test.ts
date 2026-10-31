@@ -31,11 +31,13 @@ describe('buildModel', () => {
       expect(ids.has(e.to)).toBe(true);
     }
   });
-  it('folds an ASG into one icon per subnet and fades stopped instances', () => {
+  it('folds an ASG into one icon per subnet and leaves stopped instances out, counted', () => {
     const m = build();
     const app = subnet(m, 'subnet-app-a').resources;
     expect(app.filter(r => r.group)).toEqual([expect.objectContaining({ name: 'web-asg', count: 2, kind: 'ec2' })]);
-    expect(subnet(m, 'subnet-app-c').resources.find(r => r.name === 'api-2')).toMatchObject({ faded: true });
+    expect(allResources(m).some(r => r.name === 'api-2')).toBe(false);
+    expect(m.hiddenStopped).toBe(1);
+    expect(m.edges.some(e => e.to === 'i-api00000c')).toBe(false);
     expect(allResources(m).some(r => r.name === 'gone')).toBe(false);
   });
   it('draws only the relations the data proves', () => {
@@ -106,7 +108,7 @@ describe('buildModel', () => {
     expect(subnet(m, 'subnet-db-c')?.resources.some(x => x.kind === 'rds') ?? false).toBe(false);
     expect(m.edges.some(e => e.from === 'arn:alb' && e.to !== 'igw-demo')).toBe(false);
   });
-  it('fades only stopped things and skips unusable NAT and TGW states', () => {
+  it('hides only stopped things and skips unusable NAT and TGW states', () => {
     const r = bigRows();
     r.ec2[1].instance_state = 'pending';
     r.ec2[1].asg_name = null;
@@ -115,9 +117,14 @@ describe('buildModel', () => {
     r.rds![0].status = 'backing-up';
     const m = buildModel(r, { vpc: DEMO_VPC });
     const all = allResources(m);
-    expect(all.find(x => x.id === 'i-web00000a')).toMatchObject({ faded: false, detail: 't3.medium · pending' });
+    expect(all.find(x => x.id === 'i-web00000a')).toMatchObject({ detail: 't3.medium · pending' });
     expect(all.some(x => x.id === 'nat-a' || x.kind === 'tgw')).toBe(false);
-    expect(all.find(x => x.id === 'rds:demo-mysql')!.faded).toBe(false);
+    expect(all.some(x => x.id === 'rds:demo-mysql')).toBe(true);
+    const off = bigRows();
+    off.rds![0].status = 'stopped';
+    const m2 = buildModel(off, { vpc: DEMO_VPC });
+    expect(allResources(m2).some(x => x.kind === 'rds')).toBe(false);
+    expect(m2.hiddenStopped).toBe(2);
   });
   it('keeps account-wide counts to the VPC account, reads the VPC region, and dedupes subnets', () => {
     const r = bigRows();
