@@ -28,7 +28,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 | 컴포넌트 | 49 (tf-export 6종 추가) |
 | MCP 도구 | 125 (8 Gateway, 19 Lambda) |
 | AI 라우트 | 19 (등록표 `src/lib/ai/registry.ts`의 라우트 수 — 아래 우선순위 표는 그중 대표 11개) |
-| ADR | 14 (001-014) |
+| ADR | 15 (001-015) |
 
 ## 필수 규칙
 
@@ -117,6 +117,7 @@ Steampipe, Next.js 14, Amazon Bedrock AgentCore로 구축.
 - `dep-graph/` — 의존성 그래프: 리소스 15종의 관계를 Steampipe에서 뽑아 PGlite(재귀 CTE)에 담고 "지우면 뭐가 영향 받는지" 안내 (15분 주기 재빌드, `data/graph/latest.json`, `/dependency-graph`·안전한 AI 실행 카드 참고 줄, 안내만 — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `root-cause/` — 장애 원인 분석: 5분마다 이상(ALB 5xx·비정상 대상·EC2 상태 검사·알람)을 감지하고 직전 CloudTrail 쓰기 이벤트에 시간×그래프 거리×변경 종류 점수로 용의자 순위를 매김. AI는 상위 용의자를 설명만 하고 인용을 검증함 (합친 그래프 이력, `/root-cause`·Slack 알림·질문, 조회만 — ADR-013) — `src/lib/root-cause/CLAUDE.md`
 - `tf-export/` — Terraform 코드 내보내기: 콘솔에서 만든 리소스를 `terraform plan -generate-config-out`으로 코드화하고, 규칙 먼저·AI는 나머지만, plan JSON의 diff 0 리소스만 zip으로 묶음. 허용 목록 실행기(`apply`·상태 없음), 비밀은 sensitive 변수 + `CHANGE_ME`, 30분 상한 (`/terraform-export`, 설치 `scripts/18-setup-terraform.sh` — ADR-014) — `src/lib/tf-export/CLAUDE.md`
+- `arch-diagram/` — 아키텍처 다이어그램: VPC > AZ > 서브넷을 계산된 격자로 놓고 선은 아이콘을 피해 직각으로 그린 SVG. 공식 AWS 아이콘, 번호 범례, 데이터로 확인되는 관계만 (`/diagram`, Graphviz 대체 — ADR-015) — `src/lib/arch-diagram/CLAUDE.md`
 - `cloudtrail-access.ts` — CloudTrail 공용 호출 간격(계정·리전당 초당 1회) + 교차 계정 자격 증명 (변경 기록·비용 레이더 공유)
 
 ### API 라우트 (`src/app/api/`, 30개 — 전체 목록은 `src/app/CLAUDE.md`)
@@ -252,7 +253,7 @@ AWS + Kubernetes operations dashboard with real-time resource monitoring, networ
 | Components | 49 (incl. 6 tf-export components) |
 | MCP Tools | 125 (8 Gateways, 19 Lambda) |
 | AI Routes | 19 (routes in the registry, `src/lib/ai/registry.ts` — the priority table below shows the main 11) |
-| ADRs | 14 (001-014) |
+| ADRs | 15 (001-015) |
 
 ## Critical Rules
 
@@ -339,6 +340,7 @@ The registry (`src/lib/ai/registry.ts`) holds 19 routes: the 11 below + topology
 - `dep-graph/` — Dependency graph: extracts relationships of 15 resource kinds from Steampipe into PGlite (recursive CTE) and shows what is affected if one is deleted (rebuilt every 15 min, `data/graph/latest.json`, `/dependency-graph` and a reference line on safe-AI-action cards, guidance only — ADR-012) — `src/lib/dep-graph/CLAUDE.md`
 - `root-cause/` — Incident root cause: detects anomalies every 5 min (ALB 5xx, unhealthy targets, EC2 status checks, alarms) and ranks the preceding CloudTrail write events by time x graph distance x change kind; the AI only explains the top suspects and every citation is verified (merged graph history, `/root-cause`, Slack alert + question, read-only — ADR-013) — `src/lib/root-cause/CLAUDE.md`
 - `tf-export/` — Terraform code export: turns console-made resources into code with `terraform plan -generate-config-out`, rules first and the AI only for leftovers, bundles only diff-0 resources (plan JSON) into a zip. Allowlisted executor (no `apply`, no state), secrets as sensitive variables + `CHANGE_ME`, 30-minute cap (`/terraform-export`, install `scripts/18-setup-terraform.sh` — ADR-014) — `src/lib/tf-export/CLAUDE.md`
+- `arch-diagram/` — Architecture diagram: VPC > AZ > subnet on a computed grid with orthogonal edges routed around icons, as SVG. Official AWS icons, numbered legend, only relations the data proves (`/diagram`, replaces Graphviz — ADR-015) — `src/lib/arch-diagram/CLAUDE.md`
 - `cloudtrail-access.ts` — Shared CloudTrail pacing (1 request/s per account+region) + cross-account credentials (used by change timeline and Cost Radar)
 
 ### API Routes (`src/app/api/`, 30 routes — full list in `src/app/CLAUDE.md`)

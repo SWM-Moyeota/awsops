@@ -190,6 +190,42 @@ export const queries = {
     SELECT name, private_zone FROM aws_route53_zone
   `,
 
+  // Architecture diagram: instances with their Auto Scaling group / 아키텍처 다이어그램: 오토 스케일링 그룹이 있는 인스턴스
+  diagramEc2: `
+    SELECT
+      instance_id,
+      instance_type,
+      instance_state,
+      vpc_id,
+      subnet_id,
+      private_ip_address,
+      public_ip_address,
+      tags ->> 'Name' AS name,
+      COALESCE(tags ->> 'eks:cluster-name', tags ->> 'aws:eks:cluster-name') AS eks_cluster,
+      tags ->> 'aws:autoscaling:groupName' AS asg_name
+    FROM aws_ec2_instance
+  `,
+
+  // Architecture diagram: RDS placement and Multi-AZ standby / 아키텍처 다이어그램: RDS 위치와 Multi-AZ 대기
+  diagramRds: `
+    SELECT
+      db_instance_identifier,
+      engine,
+      class AS db_instance_class,
+      vpc_id,
+      availability_zone,
+      multi_az,
+      secondary_availability_zone,
+      status,
+      subnets
+    FROM aws_rds_db_instance
+  `,
+
+  // Architecture diagram: CloudFront origins, to link a distribution to a load balancer / 아키텍처 다이어그램: CloudFront 원본 (로드밸런서 연결 확인용)
+  diagramCloudfront: `
+    SELECT id, domain_name, aliases, origins FROM aws_cloudfront_distribution
+  `,
+
   // EKS nodes -> instances
   eksNodes: `
     SELECT name, namespace, pod_ip, node_name, phase

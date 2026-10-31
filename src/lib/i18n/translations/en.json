@@ -456,6 +456,8 @@
   "diagram.subtitle": "2D report-style infrastructure diagram",
   "diagram.selectVpc": "Select VPC",
   "diagram.download": "Download",
+  "diagram.emptySubnets": "Empty subnets",
+  "diagram.accountServices": "Account services",
   "diagram.rendering": "Rendering diagram...",
   "diagram.vertical": "Vertical",
   "diagram.horizontal": "Horizontal",

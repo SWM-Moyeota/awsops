@@ -1900,6 +1900,8 @@
   "tfExport.result.changeMe": "密钥值已替换为 CHANGE_ME。请先填好再运行 plan。",
   "tfExport.result.lambdaCode": "打包中不含 Lambda 函数代码。请另外获取代码并放入。",
   "tfExport.result.ignored": "ignore_changes：{attrs}",
+  "diagram.emptySubnets": "空子网",
+  "diagram.accountServices": "账户服务",
   "tfExport.result.sensitiveOnly": "仅敏感标记变化（值相同）：{attrs}",
   "tfExport.bundle.refactored": "引用和名称都已整理好。",
   "tfExport.bundle.named": "改成引用会导致 plan 出错，所以只整理了名称和文件，ID 保持原样。",

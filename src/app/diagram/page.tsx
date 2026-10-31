@@ -17,6 +17,7 @@ interface DiagramOptions {
   direction: 'TB' | 'LR';
   includeEmpty: boolean;
   excludeSubnets: string[];
+  includeServices: boolean;
 }
 
 function DiagramContent() {
@@ -29,8 +30,9 @@ function DiagramContent() {
     direction: 'TB',
     includeEmpty: false,
     excludeSubnets: [],
+    includeServices: true,
   });
-  const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [svgText, setSvgText] = useState<string | null>(null);
   const [imgFull, setImgFull] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
@@ -95,23 +97,21 @@ function DiagramContent() {
           direction: options.direction,
           includeEmpty: options.includeEmpty,
           excludeSubnets: options.excludeSubnets,
+          includeServices: options.includeServices,
+          lang,
         }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
-      const blob = await res.blob();
-      setImgUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return URL.createObjectURL(blob);
-      });
+      setSvgText(await res.text());
     } catch (err: any) {
       setRenderError(err.message);
     } finally {
       setRendering(false);
     }
-  }, [activeVpc, currentAccountId, options]);
+  }, [activeVpc, currentAccountId, options, lang]);
 
   useEffect(() => {
     render();
@@ -121,12 +121,33 @@ function DiagramContent() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatMsgs, chatBusy]);
 
-  const download = () => {
-    if (!imgUrl) return;
+  // Shown through <img>: scripts in an SVG image never run / <img>로 보여 주므로 SVG 안의 스크립트는 실행되지 않음
+  const imgUrl = useMemo(() => (svgText ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}` : null), [svgText]);
+  const fileBase = `awsops-${activeVpcName.replace(/[^A-Za-z0-9._-]+/g, '-')}-diagram`;
+
+  const save = (href: string, name: string) => {
     const a = document.createElement('a');
-    a.href = imgUrl;
-    a.download = `awsops-${activeVpcName.replace(/[^A-Za-z0-9._-]+/g, '-')}-diagram.png`;
+    a.href = href;
+    a.download = name;
     a.click();
+  };
+  const downloadSvg = () => {
+    if (imgUrl) save(imgUrl, `${fileBase}.svg`);
+  };
+  // PNG at twice the size so it stays sharp in reports / 보고서에서도 선명하도록 2배 크기 PNG
+  const downloadPng = () => {
+    if (!imgUrl) return;
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth * 2;
+      canvas.height = img.naturalHeight * 2;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      save(canvas.toDataURL('image/png'), `${fileBase}.png`);
+    };
+    img.src = imgUrl;
   };
 
   const sendChat = async () => {
@@ -162,6 +183,7 @@ function DiagramContent() {
           excludeSubnets: Array.isArray(o.excludeSubnets)
             ? o.excludeSubnets.filter((s: any) => typeof s === 'string')
             : p.excludeSubnets,
+          includeServices: o.includeServices !== undefined ? Boolean(o.includeServices) : p.includeServices,
         }));
         setChatMsgs((m) => [...m, { role: 'assistant', content: out.message || 'OK' }]);
       } else {
@@ -219,15 +241,32 @@ function DiagramContent() {
             onChange={(e) => setOptions((p) => ({ ...p, includeEmpty: e.target.checked }))}
             className="accent-cyan-400"
           />
-          Empty subnets
+          {t('diagram.emptySubnets')}
+        </label>
+        <label className="flex items-center gap-2 text-xs text-gray-400 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={options.includeServices}
+            onChange={(e) => setOptions((p) => ({ ...p, includeServices: e.target.checked }))}
+            className="accent-cyan-400"
+          />
+          {t('diagram.accountServices')}
         </label>
         <button
-          onClick={download}
+          onClick={downloadPng}
           disabled={!imgUrl || rendering}
           className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border bg-navy-800 text-gray-300 border-navy-600 hover:text-white disabled:opacity-40"
         >
           <Download size={15} />
-          {t('diagram.download')}
+          PNG
+        </button>
+        <button
+          onClick={downloadSvg}
+          disabled={!imgUrl || rendering}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border bg-navy-800 text-gray-300 border-navy-600 hover:text-white disabled:opacity-40"
+        >
+          <Download size={15} />
+          SVG
         </button>
         <button
           onClick={() => setChatOpen((v) => !v)}

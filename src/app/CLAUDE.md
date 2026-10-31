@@ -32,7 +32,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 - `dependency-graph/page.tsx` — 의존성 그래프 (리소스 검색 → React Flow 관계도, 영향 받는 리소스 패널, 프로젝트 정리 미리보기, 안내만)
 - `root-cause/page.tsx` — 장애 원인 분석 (사건 목록·상세, 용의자 표·타임라인, 검증된 AI 설명, 직접 분석, 조회만)
 - `terraform-export/page.tsx` — Terraform 코드 변환 (씨앗 고르기 → 미리 보기 → 코드 만들기 진행 표시 → 통과율·파일·zip, 미설치면 설치 안내만, `apply` 없음)
-- `diagram/page.tsx` — 2D 보고서 스타일 다이어그램 (PNG) + 자연어 채팅
+- `diagram/page.tsx` — 아키텍처 다이어그램 (SVG, PNG·SVG 내려받기) + 자연어 채팅
 
 ### Storage & DB (7)
 - `ebs/page.tsx` — EBS 볼륨/스냅샷 (암호화, EC2 어태치먼트 매핑)
@@ -98,7 +98,7 @@ Next.js 14 App Router 페이지 및 API 라우트. 각 하위 디렉토리는 �
 | `api/terraform-export/route.ts` | Terraform 코드 내보내기 (GET `?op=status\|list\|stats\|job&id=\|file&id=&name=\|download&id=` — file은 job.files에 있는 이름만 `text/plain`, download는 `application/zip` + `attachment; filename="terraform-<id>.zip"`, POST `{op:'preview'\|'start',accountId,seed:{tag:{key,value}}\|{prefix}\|{vpc}\|{arns}}` → start 202 `{jobId}`·429 실행 중·409 미설치·404·400, 그래프 없으면 preview 404 `no-graph`, 500은 오류 이름만, `no-store`) |
 | `api/graph/route.ts` | 의존성 그래프 (읽기 전용 GET: `?op=stats\|search\|hubs\|neighborhood\|impact\|deps\|project`, `arn`(`arn:` 시작, 1024자 이하)·`depth`(범위 밖은 기본값)·`q`/`prefix`(100자 이하)·`tag=키=값`·`vpc=<arn>`(태그 키·값·접두어는 앞뒤 공백 제거, 공백뿐이면 400), `search`의 `type`(15종 중 하나, 아니면 400 "알 수 없는 리소스 종류예요"), `project` 응답에 `managed`·`edges`(후보끼리)·`warnings`(못 읽은 쿼리), 응답에 `builtAt`, 그래프 없으면 `200 {status:'building'}`, 모르는 arn·VPC 404, 잘못된 입력 400, 500은 오류 이름만) |
 | `api/inventory/export/route.ts` | 인벤토리 XLSX 내보내기 (리소스별 시트 + Summary) |
-| `api/diagram/route.ts` | 2D 다이어그램 PNG 생성 (라이브 쿼리 → Python 렌더러) |
+| `api/diagram/route.ts` | 아키텍처 다이어그램 SVG 생성 (라이브 쿼리 → `src/lib/arch-diagram`) |
 | `api/diagram-chat/route.ts` | 다이어그램 채팅 — 자연어 → 다이어그램 생성 옵션 |
 | `api/topology-chat/route.ts` | 토폴로지 채팅 — 자연어 → JSON 패치 / 생성 옵션 / 답변 |
 
@@ -145,7 +145,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 - `dependency-graph/page.tsx` — Dependency graph (resource search -> React Flow map, affected-resources panel, project cleanup preview; guidance only)
 - `root-cause/page.tsx` — Incident root cause (incident list + detail, suspect table + timeline, verified AI explanation, manual analysis; read-only)
 - `terraform-export/page.tsx` — Terraform export (pick seed -> preview -> build progress -> pass rate, files, zip; install notice only when not installed; no `apply`)
-- `diagram/page.tsx` — 2D report-style diagram (PNG) + natural-language chat
+- `diagram/page.tsx` — architecture diagram (SVG, PNG and SVG download) + natural-language chat
 
 ### Storage & DB (7)
 - `ebs/page.tsx` — EBS volumes/snapshots (encryption, EC2 attachment mapping)
@@ -211,7 +211,7 @@ Next.js 14 App Router pages and API routes. Each subdirectory is a route segment
 | `api/terraform-export/route.ts` | Terraform code export (GET `?op=status\|list\|stats\|job&id=\|file&id=&name=\|download&id=` — file serves only names in job.files as `text/plain`, download is `application/zip` + `attachment; filename="terraform-<id>.zip"`; POST `{op:'preview'\|'start',accountId,seed:{tag:{key,value}}\|{prefix}\|{vpc}\|{arns}}` → start 202 `{jobId}`, 429 busy, 409 not installed, 404, 400; preview 404 `no-graph` without a graph; 500 carries the error name only; `no-store`) |
 | `api/graph/route.ts` | Dependency graph (read-only GET: `?op=stats\|search\|hubs\|neighborhood\|impact\|deps\|project`; `arn` (starts with `arn:`, max 1024), `depth` (out of range uses default), `q`/`prefix` (max 100), `tag=key=value`, `vpc=<arn>` (tag key/value and prefix trimmed, whitespace-only is 400); `search` takes `type` (one of the 15 kinds, else 400); `project` responses add `managed`, `edges` (among members) and `warnings` (failed queries); responses carry `builtAt`; `200 {status:'building'}` until a graph exists; 404 unknown arn or VPC seed, 400 bad input, 500 carries the error name only) |
 | `api/inventory/export/route.ts` | Inventory XLSX export (one sheet per resource type + Summary) |
-| `api/diagram/route.ts` | 2D diagram PNG generation (live queries -> Python renderer) |
+| `api/diagram/route.ts` | Architecture diagram SVG (live queries -> `src/lib/arch-diagram`) |
 | `api/diagram-chat/route.ts` | Diagram chat — natural language -> diagram generation options |
 | `api/topology-chat/route.ts` | Topology chat — natural language -> JSON patch / generator options / answer |
 
