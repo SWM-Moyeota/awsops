@@ -20,6 +20,7 @@ export const queries = {
   vpcSubnets: `
     SELECT
       v.account_id,
+      v.region,
       v.vpc_id,
       v.cidr_block AS vpc_cidr,
       v.tags ->> 'Name' AS vpc_name,
@@ -135,6 +136,8 @@ export const queries = {
     FROM aws_elasticache_cluster c
     JOIN aws_elasticache_subnet_group g
       ON c.cache_subnet_group_name = g.cache_subnet_group_name
+     AND c.account_id = g.account_id
+     AND c.region = g.region
   `,
 
   // MSK clusters -> client subnets
@@ -178,16 +181,16 @@ export const queries = {
 
   // Account-global resources for the external tray (default-off layers)
   s3Buckets: `
-    SELECT name, region FROM aws_s3_bucket
+    SELECT account_id, name, region FROM aws_s3_bucket
   `,
   dynamodbTables: `
-    SELECT name FROM aws_dynamodb_table
+    SELECT account_id, name FROM aws_dynamodb_table
   `,
   cloudfrontDists: `
     SELECT id, domain_name, aliases FROM aws_cloudfront_distribution
   `,
   route53Zones: `
-    SELECT name, private_zone FROM aws_route53_zone
+    SELECT account_id, name, private_zone FROM aws_route53_zone
   `,
 
   // Architecture diagram: instances with their Auto Scaling group / 아키텍처 다이어그램: 오토 스케일링 그룹이 있는 인스턴스
@@ -223,7 +226,7 @@ export const queries = {
 
   // Architecture diagram: CloudFront origins, to link a distribution to a load balancer / 아키텍처 다이어그램: CloudFront 원본 (로드밸런서 연결 확인용)
   diagramCloudfront: `
-    SELECT id, domain_name, aliases, origins FROM aws_cloudfront_distribution
+    SELECT account_id, id, domain_name, aliases, origins FROM aws_cloudfront_distribution
   `,
 
   // EKS nodes -> instances

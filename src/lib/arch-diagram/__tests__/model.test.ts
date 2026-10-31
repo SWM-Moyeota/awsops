@@ -77,4 +77,56 @@ describe('buildModel', () => {
     const ns = allResources(m).map(x => x.n);
     expect(ns).toEqual(ns.map((_, i) => i + 1));
   });
+  it('reads public and private from the default route only', () => {
+    const r = bigRows();
+    r.routeTables[1].routes = [
+      { DestinationCidrBlock: '0.0.0.0/0', NatGatewayId: 'nat-a', State: 'active' },
+      { DestinationIpv6CidrBlock: '::/0', GatewayId: 'igw-demo', State: 'active' },
+      { DestinationCidrBlock: '52.95.0.0/16', GatewayId: 'igw-demo', State: 'active' },
+    ];
+    r.routeTables[2].routes = [{ DestinationCidrBlock: '0.0.0.0/0', GatewayId: 'igw-demo', State: 'blackhole' }];
+    const m = buildModel(r, { vpc: DEMO_VPC });
+    expect(subnet(m, 'subnet-app-a').tier).toBe('private');
+    expect(m.edges.some(e => e.from === 'subnet:subnet-app-a' && e.to === 'nat-a')).toBe(true);
+    expect(subnet(m, 'subnet-app-c').tier).toBe('private');
+    expect(m.edges.some(e => e.from === 'subnet:subnet-app-c')).toBe(false);
+  });
+  it('refuses a VPC name shared by two VPCs instead of merging them', () => {
+    const r = bigRows();
+    r.vpcSubnets.push({ vpc_id: 'vpc-other', vpc_name: 'demo-vpc', subnet_id: 'subnet-x', availability_zone: 'ap-northeast-2a' });
+    expect(() => buildModel(r, { vpc: 'demo-vpc' })).toThrow(expect.objectContaining({ name: 'VpcAmbiguous' }));
+  });
+  it('places only what the data proves', () => {
+    const r = bigRows();
+    r.rds![0].subnets = [{ SubnetIdentifier: 'subnet-db-c' }];
+    r.targetGroups[0].target_health_descriptions = [{ Target: { Id: '10.0.10.77' } }, { Target: { Id: 'i-web00000a' }, TargetHealth: { State: 'draining' } }];
+    r.elasticache![0].availability_zone = 'ap-northeast-2z';
+    const m = buildModel(r, { vpc: DEMO_VPC });
+    expect(m.attachments.map(x => x.kind)).toEqual(expect.arrayContaining(['rds', 'elasticache']));
+    expect(subnet(m, 'subnet-db-c')?.resources.some(x => x.kind === 'rds') ?? false).toBe(false);
+    expect(m.edges.some(e => e.from === 'arn:alb' && e.to !== 'igw-demo')).toBe(false);
+  });
+  it('fades only stopped things and skips unusable NAT and TGW states', () => {
+    const r = bigRows();
+    r.ec2[1].instance_state = 'pending';
+    r.ec2[1].asg_name = null;
+    r.nat[0].state = 'failed';
+    r.tgw = [{ resource_id: DEMO_VPC, resource_type: 'vpc', transit_gateway_id: 'tgw-1', state: 'deleted' }];
+    r.rds![0].status = 'backing-up';
+    const m = buildModel(r, { vpc: DEMO_VPC });
+    const all = allResources(m);
+    expect(all.find(x => x.id === 'i-web00000a')).toMatchObject({ faded: false, detail: 't3.medium · pending' });
+    expect(all.some(x => x.id === 'nat-a' || x.kind === 'tgw')).toBe(false);
+    expect(all.find(x => x.id === 'rds:demo-mysql')!.faded).toBe(false);
+  });
+  it('keeps account-wide counts to the VPC account, reads the VPC region, and dedupes subnets', () => {
+    const r = bigRows();
+    r.vpcSubnets = r.vpcSubnets.map(s => ({ ...s, region: 'us-east-1' }));
+    r.vpcSubnets.push({ ...r.vpcSubnets[0] });
+    r.s3 = [{ account_id: '111122223333', name: 'a' }, { account_id: '999999999999', name: 'b' }];
+    const m = buildModel(r, { vpc: DEMO_VPC, region: 'ap-northeast-2', includeEmpty: true });
+    expect(m.vpc.region).toBe('us-east-1');
+    expect(m.services.find(x => x.kind === 's3')!.count).toBe(1);
+    expect(m.azs.flatMap(a => [...a.public, ...a.private]).length).toBe(7);
+  });
 });

@@ -3,7 +3,7 @@ export interface Rect { x: number; y: number; w: number; h: number }
 export interface Pt { x: number; y: number }
 export type Side = 'top' | 'bottom' | 'left' | 'right';
 export interface Port extends Pt { side: Side }
-export interface RouteRequest { from: Port[]; to: Port[]; ignore: Rect[]; group: string; group2?: string }
+export interface RouteRequest { from: Port[]; to: Port[]; group: string; group2?: string }
 
 const STUB = 12; // straight run out of a port / 포트에서 곧게 나오는 길이
 const CLEAR = 9; // distance kept from obstacles / 장애물과 띄우는 거리
@@ -12,7 +12,7 @@ const CROSS = 28; // crossing another group's line / 다른 묶음의 선과 교
 const OVERLAP = 3; // per px along another group's line / 다른 묶음의 선과 겹칠 때 px당
 const REUSE = 0.25; // per px along this group's own line, so edges merge into a tree / 같은 묶음의 선을 따라갈 때 px당 (나무 모양으로 합쳐짐)
 const PORT_SHARED = 160; // a port another line already uses / 다른 선이 이미 쓰는 포트
-const BUDGET_MS = 4000;
+const BUDGET_MS = 3000;
 
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 const outward = (s: Side): Pt => (s === 'top' ? { x: 0, y: -1 } : s === 'bottom' ? { x: 0, y: 1 } : s === 'left' ? { x: -1, y: 0 } : { x: 1, y: 0 });
@@ -53,8 +53,8 @@ class Heap {
 const near = (rects: Rect[], at: number, axis: 'x' | 'y'): number[] => rects.flatMap(r => (axis === 'x' ? [r.x - CLEAR, r.x + r.w + CLEAR] : [r.y - CLEAR, r.y + r.h + CLEAR])).concat(at);
 const sortedUnique = (a: number[]) => Array.from(new Set(a.map(Math.round))).sort((x, y) => x - y);
 
-// Route every request in order; a failed search falls back to a plain elbow / 차례로 경로를 찾고, 실패하면 단순 꺾은선
-export function routeAll(reqs: RouteRequest[], obstacles: Rect[], gutters: Rect[], bounds: Rect): Pt[][] {
+// Route every request in order; null when there is no route or the time budget ran out (never a line through icons) / 차례로 경로를 찾음. 경로가 없거나 시간을 넘기면 null (아이콘을 뚫는 선은 만들지 않음)
+export function routeAll(reqs: RouteRequest[], obstacles: Rect[], gutters: Rect[], bounds: Rect): Array<Pt[] | null> {
   const ports = reqs.flatMap(r => [...r.from, ...r.to]);
   const stubs = ports.map(stubOf);
   const xs = sortedUnique([...near(obstacles, bounds.x, 'x'), ...near(gutters, bounds.x + bounds.w, 'x'), ...stubs.map(p => p.x)]).filter(x => x >= bounds.x && x <= bounds.x + bounds.w);
@@ -84,13 +84,16 @@ export function routeAll(reqs: RouteRequest[], obstacles: Rect[], gutters: Rect[
     }
   };
 
-  const paths: Pt[][] = [];
-  for (const req of reqs) {
-    const ignoreSet = new Set(req.ignore);
-    const hBlocked = new Uint8Array(nx * ny);
-    const vBlocked = new Uint8Array(nx * ny);
-    for (const o of obstacles) if (!ignoreSet.has(o)) blockInto(hBlocked, vBlocked, o);
+  const hBlocked = new Uint8Array(nx * ny);
+  const vBlocked = new Uint8Array(nx * ny);
+  for (const o of obstacles) blockInto(hBlocked, vBlocked, o);
+  const size = nx * ny * 4;
+  const dist = new Float64Array(size);
+  const prev = new Int32Array(size);
 
+  const paths: Array<Pt[] | null> = [];
+  for (const req of reqs) {
+    if (Date.now() - startedAt > BUDGET_MS) { paths.push(null); continue; }
     const portCost = (p: Port) => (other(portUsers.get(portKey(p))) ? PORT_SHARED : 0);
     const mine = (s: Set<string> | undefined) => !!s && (s.has(req.group) || (!!req.group2 && s.has(req.group2)));
     const other = (s: Set<string> | undefined) => !!s && !mine(s);
@@ -99,9 +102,8 @@ export function routeAll(reqs: RouteRequest[], obstacles: Rect[], gutters: Rect[
     const tx = req.to.map(p => stubOf(p));
     const h = (i: number, j: number) => Math.min(...tx.map(t => Math.abs(xs[i] - t.x) + Math.abs(ys[j] - t.y))) * REUSE;
 
-    const size = nx * ny * 4;
-    const dist = new Float64Array(size).fill(Infinity);
-    const prev = new Int32Array(size).fill(-1);
+    dist.fill(Infinity);
+    prev.fill(-1);
     const heap = new Heap();
     const starts = new Map<number, Port>();
     req.from.forEach(p => {
@@ -154,11 +156,7 @@ export function routeAll(reqs: RouteRequest[], obstacles: Rect[], gutters: Rect[
       }
     }
 
-    if (end < 0) {
-      const a = req.from[0], b = req.to[0];
-      paths.push(simplify([a, stubOf(a), { x: stubOf(a).x, y: stubOf(b).y }, stubOf(b), b]));
-      continue;
-    }
+    if (end < 0) { paths.push(null); continue; }
     const cells: Pt[] = [];
     let cur = end;
     let first = end;

@@ -23,7 +23,8 @@ export async function POST(request: NextRequest) {
     const accountId: string | undefined = typeof body.accountId === 'string' ? body.accountId : undefined;
     const lang: Lang = body.lang === 'en' || body.lang === 'zh' ? body.lang : 'ko';
 
-    const { rows, skipped } = await collectRows(sql => runQuery(sql, { accountId }), includeServices);
+    const bustCache = body.refresh === true;
+    const { rows, skipped } = await collectRows(sql => runQuery(sql, { accountId, bustCache }), includeServices);
     const cfg = getConfig();
     const account = cfg.accounts?.find(a => a.accountId === accountId) ?? cfg.accounts?.find(a => a.isHost);
     const model = buildModel(rows, { vpc, includeEmpty, excludeSubnets, includeServices, region: account?.region, skipped });
@@ -33,6 +34,6 @@ export async function POST(request: NextRequest) {
   } catch (err) {
     const name = err instanceof Error ? err.name : 'Error';
     console.error('[Diagram] render failed:', name);
-    return NextResponse.json({ error: name }, { status: name === 'VpcNotFound' ? 404 : 500 });
+    return NextResponse.json({ error: name }, { status: name === 'VpcNotFound' ? 404 : name === 'VpcAmbiguous' ? 400 : 500 });
   }
 }

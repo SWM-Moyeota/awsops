@@ -1,15 +1,15 @@
 // Render the layout to a standalone SVG string; every data value goes through esc() / 배치를 독립 SVG 문자열로 그린다. 모든 데이터 값은 esc()를 거친다
 import { ICONS, type IconKey } from './icons';
-import { computeLayout, ICON, MARGIN, textWidth, type Box, type PlacedEdge, type PlacedNode } from './layout';
+import { clipText, computeLayout, ICON, MARGIN, textWidth, type Box, type PlacedEdge, type PlacedNode } from './layout';
 import { allResources } from './model';
 import type { DiagramModel, Direction, Res } from './types';
 
 export type Lang = 'ko' | 'en' | 'zh';
 
 const TEXT = {
-  ko: { title: '아키텍처', azs: 'AZ', subnets: '서브넷', res: '리소스', legend: '범례', traffic: '요청 흐름', outbound: '아웃바운드·복제', hidden: (n: number) => `빈 서브넷 ${n}개 숨김`, skipped: (s: string) => `조회 못 한 항목: ${s}`, noRel: 'EC2와 RDS·캐시 사이의 연결은 데이터로 확인할 수 없어 그리지 않았어요', also: (n: string) => `${n}번도 이 서브넷을 함께 사용`, lb: '로드밸런서 노드', empty: '리소스 없음', account: '계정 공통 (이 VPC 전용 아님)', group: 'Auto Scaling 그룹', stopped: '흐리게 = 정지됨', generated: '생성' },
-  en: { title: 'Architecture', azs: 'AZs', subnets: 'subnets', res: 'resources', legend: 'Legend', traffic: 'Request flow', outbound: 'Outbound / replication', hidden: (n: number) => `${n} empty subnets hidden`, skipped: (s: string) => `Could not read: ${s}`, noRel: 'Links between EC2 and RDS/cache cannot be proven from this data, so they are not drawn', also: (n: string) => `#${n} also use this subnet`, lb: 'Load balancer nodes', empty: 'No resources', account: 'Account-wide, not only this VPC', group: 'Auto Scaling group', stopped: 'Faded = stopped', generated: 'Generated' },
-  zh: { title: '架构', azs: '可用区', subnets: '子网', res: '资源', legend: '图例', traffic: '请求流', outbound: '出站 / 复制', hidden: (n: number) => `已隐藏 ${n} 个空子网`, skipped: (s: string) => `无法读取：${s}`, noRel: 'EC2 与 RDS/缓存之间的连接无法从数据确认，因此未绘制', also: (n: string) => `${n} 号也使用此子网`, lb: '负载均衡器节点', empty: '无资源', account: '账户通用（不仅限此 VPC）', group: 'Auto Scaling 组', stopped: '淡色 = 已停止', generated: '生成于' },
+  ko: { title: '아키텍처', azs: 'AZ', subnets: '서브넷', res: '리소스', legend: '범례', traffic: '요청 흐름', outbound: '아웃바운드·복제', hidden: (n: number) => `빈 서브넷 ${n}개 숨김`, skipped: (s: string) => `조회 못 한 항목: ${s}`, noRel: 'EC2와 RDS·캐시 사이의 연결은 데이터로 확인할 수 없어 그리지 않았어요', lbScope: '로드밸런서는 ALB·NLB만 표시해요 (Gateway LB·Classic LB 제외)', dropped: (n: number) => `연결선이 너무 많아 ${n}개는 생략했어요`, also: (n: string) => `${n}번도 이 서브넷을 함께 사용`, lb: '로드밸런서 노드', empty: '리소스 없음', account: '계정 공통 (이 VPC 전용 아님)', group: 'Auto Scaling 그룹', stopped: '흐리게 = 정지됨', generated: '생성' },
+  en: { title: 'Architecture', azs: 'AZs', subnets: 'subnets', res: 'resources', legend: 'Legend', traffic: 'Request flow', outbound: 'Outbound / replication', hidden: (n: number) => `${n} empty subnets hidden`, skipped: (s: string) => `Could not read: ${s}`, noRel: 'Links between EC2 and RDS/cache cannot be proven from this data, so they are not drawn', lbScope: 'Only ALB and NLB are shown (not Gateway or Classic load balancers)', dropped: (n: number) => `${n} connections left out, too many to draw`, also: (n: string) => `#${n} also use this subnet`, lb: 'Load balancer nodes', empty: 'No resources', account: 'Account-wide, not only this VPC', group: 'Auto Scaling group', stopped: 'Faded = stopped', generated: 'Generated' },
+  zh: { title: '架构', azs: '可用区', subnets: '子网', res: '资源', legend: '图例', traffic: '请求流', outbound: '出站 / 复制', hidden: (n: number) => `已隐藏 ${n} 个空子网`, skipped: (s: string) => `无法读取：${s}`, noRel: 'EC2 与 RDS/缓存之间的连接无法从数据确认，因此未绘制', lbScope: '仅显示 ALB 和 NLB（不含 Gateway LB、Classic LB）', dropped: (n: number) => `连接过多，已省略 ${n} 条`, also: (n: string) => `${n} 号也使用此子网`, lb: '负载均衡器节点', empty: '无资源', account: '账户通用（不仅限此 VPC）', group: 'Auto Scaling 组', stopped: '淡色 = 已停止', generated: '生成于' },
 } as const;
 
 const FONT = "'Noto Sans KR','Apple SD Gothic Neo','Malgun Gothic','Segoe UI',Helvetica,Arial,sans-serif";
@@ -124,7 +124,7 @@ function badge(n: number, x: number, y: number): string {
 }
 
 // Legend: numbers to full names, then line meanings and notes / 범례: 번호와 전체 이름, 선의 뜻, 참고
-function drawLegend(m: DiagramModel, y0: number, width: number, lang: Lang): { svg: string; height: number } {
+function drawLegend(m: DiagramModel, y0: number, width: number, lang: Lang, droppedEdges: number): { svg: string; height: number } {
   const T = TEXT[lang];
   const items = allResources(m);
   const colW = 292;
@@ -157,7 +157,8 @@ function drawLegend(m: DiagramModel, y0: number, width: number, lang: Lang): { s
   key(`<rect x="@G" y="${y - 7}" width="24" height="14" rx="3" fill="none" stroke="#ED7100" stroke-width="1.3" stroke-dasharray="4 2"/>`, T.group, 22);
   out += `<text x="${x}" y="${y + 4}" font-size="10.5" fill="${MUTED}">${esc(T.stopped)}</text>`;
   y += 20;
-  const notes: string[] = [T.noRel];
+  const notes: string[] = [T.noRel, T.lbScope];
+  if (droppedEdges) notes.unshift(T.dropped(droppedEdges));
   if (m.hiddenEmpty) notes.unshift(T.hidden(m.hiddenEmpty));
   if (m.skipped.length) notes.push(T.skipped(m.skipped.join(', ')));
   for (const note of notes) {
@@ -172,7 +173,7 @@ export interface RenderOptions { direction: Direction; lang: Lang; generatedAt?:
 export function renderSvg(m: DiagramModel, opt: RenderOptions): string {
   const L = computeLayout(m, opt.direction);
   const T = TEXT[opt.lang];
-  const legend = drawLegend(m, L.contentBottom + 22, L.width, opt.lang);
+  const legend = drawLegend(m, L.contentBottom + 22, L.width, opt.lang, L.droppedEdges);
   const height = L.contentBottom + 22 + legend.height + 8;
   const subnetCount = m.azs.reduce((p, a) => p + a.public.length + a.private.length, 0);
   const used = Array.from(new Set(L.nodes.map(n => n.res.kind).filter((k): k is IconKey => k !== 'internet')));
@@ -187,7 +188,7 @@ export function renderSvg(m: DiagramModel, opt: RenderOptions): string {
     `<marker id="arrow-soft" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" markerUnits="userSpaceOnUse"><path d="M0 0L10 5L0 10z" fill="${LINE_SOFT}"/></marker>`,
     '</defs>',
     `<rect width="${L.width}" height="${height}" fill="#fff"/>`,
-    `<text x="${MARGIN}" y="38" font-size="22" font-weight="700" fill="${INK}">${esc(m.vpc.name)} ${esc(T.title)}</text>`,
+    `<text x="${MARGIN}" y="38" font-size="22" font-weight="700" fill="${INK}">${esc(clipText(m.vpc.name, L.width - 2 * MARGIN - 420, 22))} ${esc(T.title)}</text>`,
     `<text x="${MARGIN}" y="60" font-size="12" fill="${MUTED}">${esc(meta)}</text>`,
     `<text x="${L.width - MARGIN}" y="38" text-anchor="end" font-size="12" font-weight="600" fill="${INK}">${esc(stats)}</text>`,
     opt.generatedAt ? `<text x="${L.width - MARGIN}" y="60" text-anchor="end" font-size="11" fill="${MUTED}">${esc(T.generated)} ${esc(opt.generatedAt)}</text>` : '',

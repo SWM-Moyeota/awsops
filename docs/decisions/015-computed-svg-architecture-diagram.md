@@ -35,11 +35,11 @@ Rendered from real sandbox rows for four VPCs and from a synthetic 2-AZ fixture 
 - `tools/diagram/` and the Step 2 `graphviz` + `diagrams` install are gone. Servers that already have them are unaffected.
 - Links between EC2 and databases or caches are not drawn, because the rows do not prove them. Security-group analysis could add them later.
 - ElastiCache is placed by AZ only.
-- The router has a 4-second budget per diagram; past it, the remaining edges become plain elbows, which may cross icons.
+- The router has a 3-second budget per diagram; past it, the remaining edges are left out and the legend says how many.
 - Icons are a 2021 release, copied in as data rather than added as a dependency.
 
 - `tools/diagram/`과 Step 2의 `graphviz`·`diagrams` 설치를 없앴다. 이미 깔린 서버는 영향 없다.
 - EC2와 DB·캐시 사이의 선은 행으로 확인할 수 없어 그리지 않는다. 나중에 보안그룹 분석으로 더할 수 있다.
 - ElastiCache는 AZ 단위로만 놓인다.
-- 경로 탐색은 그림당 4초 예산이고, 넘으면 남은 선은 단순 꺾은선이라 아이콘을 지날 수 있다.
+- 경로 탐색은 그림당 3초 예산이고, 넘으면 남은 선은 그리지 않고 범례에 개수를 적는다.
 - 아이콘은 2021년 릴리스이며 의존성이 아니라 데이터로 복사해 넣었다.

@@ -46,6 +46,9 @@ function DiagramContent() {
   // VPC/subnet inventory for the selector and chat context
   // VPC/서브넷 목록 (셀렉터 + 채팅 컨텍스트용)
   useEffect(() => {
+    setVpcRows([]);
+    setOptions((p) => ({ ...p, excludeSubnets: [] }));
+    let stale = false;
     (async () => {
       try {
         const res = await fetch('/api/steampipe', {
@@ -57,9 +60,12 @@ function DiagramContent() {
           }),
         });
         const d = await res.json();
-        setVpcRows(d.vpcSubnets?.rows || []);
+        if (!stale) setVpcRows(d.vpcSubnets?.rows || []);
       } catch {}
     })();
+    return () => {
+      stale = true;
+    };
   }, [currentAccountId]);
 
   const vpcs = useMemo(() => {
@@ -72,7 +78,8 @@ function DiagramContent() {
     return Array.from(seen.values());
   }, [vpcRows]);
 
-  const activeVpc = vpc || vpcs[0]?.vpcId || '';
+  // A choice from another account is not in this list: fall back to the first VPC / 다른 계정에서 고른 VPC는 목록에 없으니 첫 VPC로
+  const activeVpc = vpcs.find((v) => v.vpcId === vpc || v.name === vpc)?.vpcId || vpcs[0]?.vpcId || '';
   const activeVpcName = vpcs.find((v) => v.vpcId === activeVpc)?.name || activeVpc;
 
   const subnets = useMemo(
@@ -83,8 +90,15 @@ function DiagramContent() {
     [vpcRows, activeVpc]
   );
 
-  const render = useCallback(async () => {
-    if (!activeVpc) return;
+  // Only the latest request may touch the picture / 가장 최근 요청만 그림을 바꿀 수 있음
+  const requestSeq = useRef(0);
+  const render = useCallback(async (refresh = false) => {
+    const seq = ++requestSeq.current;
+    if (!activeVpc) {
+      setSvgText(null);
+      setRendering(false);
+      return;
+    }
     setRendering(true);
     setRenderError(null);
     try {
@@ -99,17 +113,22 @@ function DiagramContent() {
           excludeSubnets: options.excludeSubnets,
           includeServices: options.includeServices,
           lang,
+          refresh,
         }),
       });
+      if (seq !== requestSeq.current) return;
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
-      setSvgText(await res.text());
+      const text = await res.text();
+      if (seq === requestSeq.current) setSvgText(text);
     } catch (err: any) {
+      if (seq !== requestSeq.current) return;
+      setSvgText(null);
       setRenderError(err.message);
     } finally {
-      setRendering(false);
+      if (seq === requestSeq.current) setRendering(false);
     }
   }, [activeVpc, currentAccountId, options, lang]);
 
@@ -177,12 +196,15 @@ function DiagramContent() {
       if (out.action === 'options' && out.options) {
         const o = out.options as Record<string, any>;
         if (o.vpc) setVpc(o.vpc);
+        const switchedVpc = !!o.vpc && o.vpc !== activeVpc;
         setOptions((p) => ({
           direction: o.direction === 'LR' || o.direction === 'TB' ? o.direction : p.direction,
           includeEmpty: o.includeEmpty !== undefined ? Boolean(o.includeEmpty) : p.includeEmpty,
           excludeSubnets: Array.isArray(o.excludeSubnets)
             ? o.excludeSubnets.filter((s: any) => typeof s === 'string')
-            : p.excludeSubnets,
+            : switchedVpc
+              ? []
+              : p.excludeSubnets,
           includeServices: o.includeServices !== undefined ? Boolean(o.includeServices) : p.includeServices,
         }));
         setChatMsgs((m) => [...m, { role: 'assistant', content: out.message || 'OK' }]);
@@ -201,7 +223,7 @@ function DiagramContent() {
 
   return (
     <div className="p-6 space-y-4 animate-fade-in">
-      <Header title={t('diagram.title')} subtitle={t('diagram.subtitle')} onRefresh={render} />
+      <Header title={t('diagram.title')} subtitle={t('diagram.subtitle')} onRefresh={() => render(true)} />
 
       <div className="flex items-center gap-3 flex-wrap">
         <select

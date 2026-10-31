@@ -46,9 +46,7 @@ describe.each<Direction>(['TB', 'LR'])('computeLayout %s', dir => {
   });
   it('routes every edge orthogonally, around icons and titles', () => {
     expect(L.edges.length).toBe(model().edges.length);
-    const m = model();
-    const ordered = m.edges.slice();
-    expect(ordered.length).toBeGreaterThan(0);
+    expect(L.droppedEdges).toBe(0);
     const icons = L.nodes.map(n => n.icon), labels = L.nodes.map(n => n.label);
     for (const e of L.edges) {
       expect(e.points.length).toBeGreaterThanOrEqual(2);
@@ -57,7 +55,6 @@ describe.each<Direction>(['TB', 'LR'])('computeLayout %s', dir => {
         expect(p.x === q.x || p.y === q.y).toBe(true);
         for (const r of labels) expect(hits(p, q, r)).toBe(false);
         for (const b of L.boxes) expect(hits(p, q, b.titleRect)).toBe(false);
-        // Only the first and last runs touch their own icons / 첫·끝 구간만 자기 아이콘에 닿음
         for (const r of icons) expect(hits(p, q, r)).toBe(false);
       }
     }
@@ -88,6 +85,40 @@ describe('computeLayout alignment', () => {
     const L = computeLayout(buildModel(r, { vpc: DEMO_VPC }), 'TB');
     expect(L.nodes.find(n => n.res.kind === 'alb')!.icon.x).toBe(L.nodes.find(n => n.res.kind === 'igw')!.icon.x);
   });
+  it('keeps a load balancer and attachments apart, and the VPC title clear of the IGW', () => {
+    const r = bigRows();
+    r.vpcSubnets = r.vpcSubnets.filter(s => s.availability_zone.endsWith('a'));
+    r.elb = [{ ...r.elb[0], elb_name: 'lb-number-0-frontend' }];
+    r.tgw = [{ resource_id: DEMO_VPC, resource_type: 'vpc', transit_gateway_id: 'tgw-1', state: 'available' }];
+    for (const dir of ['TB', 'LR'] as const) {
+      const L = computeLayout(buildModel(r, { vpc: DEMO_VPC }), dir);
+      const rects = L.nodes.flatMap(n => [n.icon, n.label]);
+      for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) expect(overlap(rects[i], rects[j])).toBe(false);
+      const vpc = L.boxes.find(b => b.kind === 'vpc')!, igw = L.nodes.find(n => n.res.kind === 'igw')!;
+      expect(overlap(vpc.titleRect, igw.icon)).toBe(false);
+    }
+  });
+  it('LR stacks the subnets of a tier, so width does not grow with their number', () => {
+    const L = computeLayout(model(), 'LR');
+    const x = (name: string) => L.boxes.find(b => b.title.startsWith(name))!.rect.x;
+    expect(x('AppA')).toBe(x('DbA'));
+    const y = (name: string) => L.boxes.find(b => b.title.startsWith(name))!.rect.y;
+    expect(y('AppA')).toBeLessThan(y('DbA'));
+  });
+  it('leaves out edges past the time budget instead of drawing through icons, and says so', () => {
+    const big = bigRows();
+    const targets = [];
+    for (let i = 0; i < 700; i++) {
+      big.ec2.push({ instance_id: `i-n${i}`, name: `n-${i}`, vpc_id: DEMO_VPC, subnet_id: 'subnet-app-a', instance_type: 'm5.large', instance_state: 'running' });
+      targets.push({ Target: { Id: `i-n${i}` } });
+    }
+    big.targetGroups[0].target_health_descriptions = targets;
+    const t = Date.now();
+    const L = computeLayout(buildModel(big, { vpc: DEMO_VPC }), 'TB');
+    expect(Date.now() - t).toBeLessThan(20000);
+    for (const e of L.edges) for (let i = 0; i + 1 < e.points.length; i++) for (const n of L.nodes) expect(hits(e.points[i], e.points[i + 1], n.icon)).toBe(false);
+    expect(L.droppedEdges + L.edges.length).toBe(buildModel(big, { vpc: DEMO_VPC }).edges.length);
+  }, 60000);
   it('handles a VPC with nothing in it, and a crowded subnet', () => {
     const empty = bigRows();
     empty.ec2 = []; empty.elb = []; empty.nat = []; empty.rds = []; empty.elasticache = []; empty.lambda = []; empty.endpoints = []; empty.s3 = []; empty.cloudfront = []; empty.route53 = [];

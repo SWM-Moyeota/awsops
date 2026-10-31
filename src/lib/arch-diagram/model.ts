@@ -6,23 +6,12 @@ const shortId = (id: string) => { const i = id.indexOf('-'); return i > 0 ? `${i
 const arr = (v: unknown): Row[] => (Array.isArray(v) ? (v as Row[]) : []);
 const zoneSuffix = (az: string) => az.split('-').pop() || az;
 
-// Parse a v4 CIDR; null when malformed / IPv4 CIDR 파싱, 잘못되면 null
-function parseCidr(cidr: string): { base: number; mask: number } | null {
-  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/.exec(cidr || '');
-  if (!m) return null;
-  const bits = Number(m[5]);
-  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
-  return { base: (((Number(m[1]) << 24) | (Number(m[2]) << 16) | (Number(m[3]) << 8) | Number(m[4])) & mask) >>> 0, mask };
-}
-function inCidr(ip: string, cidr: string): boolean {
-  const c = parseCidr(cidr), a = parseCidr(`${ip}/32`);
-  return !!c && !!a && ((a.base & c.mask) >>> 0) === c.base;
-}
-
 // Throws VpcNotFound when the VPC is not in the rows / 행에 VPC가 없으면 VpcNotFound
 export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   const vpcRows = rows.vpcSubnets.filter(r => r.vpc_id === opt.vpc || (r.vpc_name && r.vpc_name === opt.vpc));
   if (!vpcRows.length) { const e = new Error('VPC not found'); e.name = 'VpcNotFound'; throw e; }
+  // A name can match several VPCs; never merge them / 이름이 여러 VPC에 맞을 수 있으니 합치지 않음
+  if (new Set(vpcRows.map(r => r.vpc_id)).size > 1) { const e = new Error('VPC name is ambiguous'); e.name = 'VpcAmbiguous'; throw e; }
   const meta = vpcRows[0];
   const vpcId: string = meta.vpc_id;
   const exclude = new Set(opt.excludeSubnets ?? []);
@@ -37,9 +26,17 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
     if (a.Main) mainTable = t;
   }
   const tableOf = (sid: string) => bySubnet.get(sid) ?? mainTable;
-  const tierOf = (sid: string): Tier => (arr(tableOf(sid)?.routes).some(r => String(r.GatewayId ?? '').startsWith('igw-')) ? 'public' : 'private');
+  // Public = the default route goes to an IGW; IPv6 counts only without any IPv4 default / 퍼블릭 = 기본 경로가 IGW. IPv6는 IPv4 기본 경로가 없을 때만 인정
+  const liveRoutes = (sid: string) => arr(tableOf(sid)?.routes).filter(r => r.State !== 'blackhole');
+  const tierOf = (sid: string): Tier => {
+    const routes = liveRoutes(sid);
+    const v4 = routes.find(r => r.DestinationCidrBlock === '0.0.0.0/0');
+    const toIgw = (r: Row | undefined) => String(r?.GatewayId ?? '').startsWith('igw-');
+    return (v4 ? toIgw(v4) : toIgw(routes.find(r => r.DestinationIpv6CidrBlock === '::/0'))) ? 'public' : 'private';
+  };
 
-  const subnets = vpcRows.filter(r => r.subnet_id && !exclude.has(r.subnet_id) && !exclude.has(r.subnet_name ?? '')).map((r): SubnetModel => ({
+  const uniqueRows = Array.from(new Map(vpcRows.filter(r => r.subnet_id).map(r => [r.subnet_id as string, r] as const)).values());
+  const subnets = uniqueRows.filter(r => !exclude.has(r.subnet_id) && !exclude.has(r.subnet_name ?? '')).map((r): SubnetModel => ({
     id: r.subnet_id, name: leaf(r.subnet_name || r.subnet_id), cidr: r.subnet_cidr || '', az: r.availability_zone || 'unknown',
     tier: tierOf(r.subnet_id), resources: [], lbNodes: false, also: [],
   }));
@@ -50,7 +47,7 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
 
   // NAT gateways / NAT 게이트웨이
   const natIds = new Set<string>();
-  const nats = rows.nat.filter(r => inVpc(r) && r.state !== 'deleted');
+  const nats = rows.nat.filter(r => inVpc(r) && r.state === 'available');
   for (const r of nats) {
     const s = subnetById.get(r.subnet_id);
     if (!s) continue;
@@ -65,7 +62,8 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   for (const r of instances) {
     const s = subnetById.get(r.subnet_id);
     if (!s) continue;
-    const stopped = r.instance_state !== 'running';
+    const down = r.instance_state !== 'running';
+    const stopped = r.instance_state === 'stopped' || r.instance_state === 'stopping' || r.instance_state === 'shutting-down';
     const grpName: string | null = r.eks_cluster || r.asg_name || null;
     if (grpName) {
       const key = `${s.id}|${grpName}`;
@@ -76,13 +74,13 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
         s.resources.push(g.res);
       }
       g.res.count = (g.res.count ?? 0) + 1;
-      if (!stopped) g.running++;
+      if (!down) g.running++;
       if (r.instance_type) g.types.add(r.instance_type);
       g.res.detail = `${Array.from(g.types).join(', ')} · ${r.eks_cluster ? 'EKS' : 'Auto Scaling'} ${g.running}/${g.res.count}`;
       g.res.faded = g.running === 0;
       instanceIcon.set(r.instance_id, g.res.id);
     } else {
-      s.resources.push({ id: r.instance_id, kind: 'ec2', name: r.name || shortId(r.instance_id), detail: [r.instance_type, stopped ? r.instance_state : null].filter(Boolean).join(' · '), faded: stopped });
+      s.resources.push({ id: r.instance_id, kind: 'ec2', name: r.name || shortId(r.instance_id), detail: [r.instance_type, down ? r.instance_state : null].filter(Boolean).join(' · '), faded: stopped });
       instanceIcon.set(r.instance_id, r.instance_id);
     }
   }
@@ -104,10 +102,12 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
     const inAz = (az: string | null | undefined) => privateFirst(group.filter(s => s.az === az))[0];
     const id = `rds:${r.db_instance_identifier}`;
     const detail = [r.engine, r.db_instance_class, r.status && r.status !== 'available' ? r.status : null].filter(Boolean).join(' · ');
-    const home = inAz(r.availability_zone) ?? privateFirst(group)[0];
-    if (!home) continue;
-    const faded = !!r.status && r.status !== 'available';
-    home.resources.push({ id, kind: 'rds', name: r.db_instance_identifier, detail: r.multi_az ? `${detail} · Multi-AZ` : detail, faded });
+    const faded = r.status === 'stopped' || r.status === 'stopping';
+    const res: Res = { id, kind: 'rds', name: r.db_instance_identifier, detail: r.multi_az ? `${detail} · Multi-AZ` : detail, faded };
+    // Only the primary AZ's subnet proves the place; else VPC level, unless the user hid subnets / 주 AZ 서브넷만 위치의 근거. 없으면 VPC 수준 (사용자가 서브넷을 뺀 경우는 그리지 않음)
+    const home = inAz(r.availability_zone);
+    if (!home) { if (!exclude.size) attachments.push(res); continue; }
+    home.resources.push(res);
     const standby = r.multi_az && r.secondary_availability_zone ? inAz(r.secondary_availability_zone) : undefined;
     if (standby && standby !== home) {
       standby.resources.push({ id: `${id}:standby`, kind: 'rds', name: `${r.db_instance_identifier} standby`, detail: `${r.engine} · Multi-AZ standby`, faded });
@@ -118,7 +118,7 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   // ElastiCache knows only its AZ: first private subnet in that AZ, else the VPC band / ElastiCache는 AZ만 앎: 그 AZ의 첫 프라이빗 서브넷, 없으면 VPC 띠
   for (const r of (rows.elasticache ?? []).filter(inVpc)) {
     const res: Res = { id: `cache:${r.cache_cluster_id}`, kind: 'elasticache', name: r.cache_cluster_id, detail: r.engine };
-    const home = privateFirst(subnets.filter(s => s.az === r.availability_zone))[0];
+    const home = subnets.filter(s => s.az === r.availability_zone && s.tier === 'private').sort((a, b) => a.id.localeCompare(b.id))[0];
     if (home) home.resources.push(res); else attachments.push(res);
   }
   for (const r of (rows.lambda ?? []).filter(inVpc)) {
@@ -134,7 +134,7 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   const lbs: Res[] = lbRows.map(r => ({ id: r.arn, kind: r.type === 'network' ? 'nlb' : 'alb', name: r.elb_name, detail: r.scheme }));
   for (const r of lbRows) for (const z of arr(r.availability_zones)) { const s = subnetById.get(z.SubnetId); if (s) s.lbNodes = true; }
 
-  // Load balancer -> target: exact instance id, exact private IP, or EKS nodes in the IP's subnet / 인스턴스 id, 정확한 사설 IP, 또는 그 IP 서브넷의 EKS 노드
+  // Load balancer -> target: exact instance id or private IP; draining and unused targets carry nothing / 로드밸런서 -> 대상: 정확한 인스턴스 id나 사설 IP. draining·unused 대상은 제외
   const seenTarget = new Set<string>();
   const addTarget = (lb: string, icon: string | undefined) => {
     if (!icon || seenTarget.has(`${lb}|${icon}`)) return;
@@ -146,12 +146,11 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
     for (const lb of arr(tg.load_balancer_arns) as unknown as string[]) {
       if (!lbs.some(l => l.id === lb)) continue;
       for (const t of arr(tg.target_health_descriptions)) {
+        const state = t.TargetHealth?.State;
+        if (state === 'draining' || state === 'unused') continue;
         const tid = String(t.Target?.Id ?? '');
-        if (tid.startsWith('i-')) { addTarget(lb, instanceIcon.get(tid)); continue; }
-        const exact = byIp.get(tid);
-        if (exact) { addTarget(lb, instanceIcon.get(exact)); continue; }
-        const s = subnets.find(x => inCidr(tid, x.cidr));
-        if (s) for (const res of s.resources) if (res.kind === 'eks') addTarget(lb, res.id);
+        const instance = tid.startsWith('i-') ? tid : byIp.get(tid);
+        if (instance) addTarget(lb, instanceIcon.get(instance));
       }
     }
   }
@@ -165,8 +164,8 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   // Private subnet -> NAT from its real route / 프라이빗 서브넷 -> NAT는 실제 라우트로
   for (const s of shown) {
     if (!s.resources.length || s.tier === 'public') continue;
-    for (const r of arr(tableOf(s.id)?.routes)) {
-      if (r.NatGatewayId && natIds.has(r.NatGatewayId) && (r.DestinationCidrBlock === '0.0.0.0/0' || !r.DestinationCidrBlock)) {
+    for (const r of liveRoutes(s.id)) {
+      if (r.NatGatewayId && natIds.has(r.NatGatewayId) && r.DestinationCidrBlock === '0.0.0.0/0') {
         edges.push({ from: `subnet:${s.id}`, to: r.NatGatewayId, dashed: true });
         break;
       }
@@ -192,9 +191,11 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   // CloudFront only when an origin is this VPC's load balancer / 원본이 이 VPC의 로드밸런서일 때만 CloudFront
   const edgeServices: Res[] = [];
   const services: Res[] = [];
+  // Account-wide lists stay within this VPC's account / 계정 공통 목록은 이 VPC의 계정 안에서만
+  const sameAccount = (r: Row) => !r.account_id || !meta.account_id || r.account_id === meta.account_id;
   const dnsToLb = new Map(lbRows.filter(r => r.dns_name).map(r => [String(r.dns_name).toLowerCase(), r.arn as string] as const));
   let otherCf = 0;
-  for (const r of rows.cloudfront ?? []) {
+  for (const r of (rows.cloudfront ?? []).filter(sameAccount)) {
     const lbsHit = arr(r.origins).map(o => dnsToLb.get(String(o.DomainName ?? '').toLowerCase())).filter((x): x is string => !!x);
     if (!lbsHit.length) { otherCf++; continue; }
     const alias = arr(r.aliases?.Items)[0] as unknown as string | undefined;
@@ -205,16 +206,16 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
   }
   if (opt.includeServices !== false) {
     const svc = (kind: Res['kind'], name: string, n: number) => { if (n > 0) services.push({ id: `svc:${kind}`, kind, name, detail: `×${n}`, count: n }); };
-    svc('route53', 'Route 53', (rows.route53 ?? []).length);
+    svc('route53', 'Route 53', (rows.route53 ?? []).filter(sameAccount).length);
     svc('cloudfront', 'CloudFront', otherCf);
-    svc('s3', 'S3', (rows.s3 ?? []).length);
-    svc('dynamodb', 'DynamoDB', (rows.dynamodb ?? []).length);
+    svc('s3', 'S3', (rows.s3 ?? []).filter(sameAccount).length);
+    svc('dynamodb', 'DynamoDB', (rows.dynamodb ?? []).filter(sameAccount).length);
   }
 
   // VPC attachments / VPC 연결
   const eps = (rows.endpoints ?? []).filter(inVpc);
   if (eps.length) attachments.push({ id: 'vpce', kind: 'endpoint', name: 'VPC Endpoints', detail: `×${eps.length}`, count: eps.length });
-  const tgwIds = Array.from(new Set((rows.tgw ?? []).filter(r => r.resource_id === vpcId && r.resource_type === 'vpc').map(r => String(r.transit_gateway_id))));
+  const tgwIds = Array.from(new Set((rows.tgw ?? []).filter(r => r.resource_id === vpcId && r.resource_type === 'vpc' && r.state === 'available').map(r => String(r.transit_gateway_id))));
   for (const id of tgwIds) attachments.push({ id, kind: 'tgw', name: 'Transit Gateway', detail: id });
 
   // AZ > tier, in stable order / AZ > 티어, 안정된 순서
@@ -227,7 +228,7 @@ export function buildModel(rows: DiagramRows, opt: BuildOptions): DiagramModel {
 
   // Drop edges whose ends were hidden; number the legend in reading order / 숨겨진 끝점의 선 제거, 읽는 순서로 번호
   const model: DiagramModel = {
-    vpc: { id: vpcId, name: meta.vpc_name || vpcId, cidr: meta.vpc_cidr || '', accountId: meta.account_id || '', region: opt.region || '' },
+    vpc: { id: vpcId, name: meta.vpc_name || vpcId, cidr: meta.vpc_cidr || '', accountId: meta.account_id || '', region: meta.region || opt.region || '' },
     internet: edges.some(e => e.from === internet.id) ? internet : undefined,
     igw, lbs, attachments, azs, edgeServices, services, edges, hiddenEmpty, skipped: opt.skipped ?? [],
   };
